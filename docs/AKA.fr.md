@@ -72,6 +72,26 @@ en RAM, avec persistance .SAV sur la carte. La partition application conserve
 Ne pas extrapoler ces vérifications à une compatibilité générale avec les
 firmwares ESP-IDF ni à une mesure de performance de l'AKA.
 
+## Conversion simple (une ROM, un zip)
+
+```bash
+tools/aka/convert.sh jeu.gg                 # -> ./aka-out/<Jeu>.zip
+tools/aka/convert.sh -r jeu.sms             # -r : couverture courte, plus rapide
+tools/aka/convert.sh -o sortie dossier_de_roms/
+```
+Sous Windows : double-clic sur `tools\aka\convert_gui.bat` (Python 3 requis) : une
+fenêtre permet de choisir des ROMs ou un dossier et le dossier de sortie, puis
+« Convertir » ; le dossier des `.zip` s'ouvre à la fin. Elle lance `convert.sh` avec
+MSYS2 (`C:\msys64` ; `pacman -S --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake
+mingw-w64-x86_64-ninja mingw-w64-x86_64-zlib mingw-w64-x86_64-python`) ou, à défaut,
+WSL ; PlatformIO s'installe côté Windows (`pip install platformio`).
+Le script construit le recompilateur à la première utilisation, copie les ROMs
+dans un dossier de travail, lance `TARGET=aka ./compile.sh` sans question et
+range les `.zip` à plat. Décompresser un zip à la racine de la carte SD.
+Game Boy/Color, SG-1000, Game Gear, Master System et, en expérimental, Mega Drive (`.md`, `.gen`, `.smd`) :
+pour le Mega Drive, le script rejoue une partie automatique (entrées aléatoires) sur PC pour établir le profil natif, puis
+génère le projet AKA et le compile. Un zip ou un dossier de ROMs est accepté.
+
 ## Conversion et essai
 
 `TARGET=aka ./compile.sh` produit le dossier du launcher : `firmware.bin`,

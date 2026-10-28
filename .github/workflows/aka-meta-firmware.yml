@@ -1,0 +1,48 @@
+name: Firmware AKA depuis un jeu META
+# Recompile un .bin Gamebuino META en firmware natif pour l'AKA (m0recomp --system meta --target aka),
+# le compile avec PlatformIO et publie firmware.bin dans les artefacts.
+# Actions > Firmware AKA depuis un jeu META > Run workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      rom:
+        description: "Chemin du .bin META dans le depot"
+        type: string
+        default: "tools/aka/samples/CatsAndCoinsDemo.bin"
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Outils
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake g++
+          python3 -m pip install platformio
+      - name: Recompilateur
+        run: |
+          cmake -G Ninja -B build .
+          ninja -C build m0recomp
+      - name: Projet AKA
+        run: |
+          rom="${{ inputs.rom }}"
+          name="$(basename "$rom" .bin)"
+          echo "NAME=$name" >> "$GITHUB_ENV"
+          ./build/bin/m0recomp "$rom" --system meta --target aka -o "$RUNNER_TEMP/aka"
+      - name: Compilation PlatformIO
+        working-directory: ${{ runner.temp }}/aka
+        run: pio run
+      - name: Paquet
+        run: |
+          out="$RUNNER_TEMP/pack/$NAME"
+          mkdir -p "$out"
+          cd "$RUNNER_TEMP/aka/.pio/build/aka"
+          cp firmware.bin bootloader.bin partitions.bin "$out/" 2>/dev/null || true
+          cp "$RUNNER_TEMP/aka/aka.csv" "$out/"
+          ls -la "$out"
+          echo "PACK=$RUNNER_TEMP/pack" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-aka-${{ env.NAME }}
+          path: ${{ env.PACK }}

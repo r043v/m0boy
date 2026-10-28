@@ -1,0 +1,138 @@
+name: Convertisseur AKA (Windows)
+# Fabrique un paquet Windows autonome : AKA-Convertisseur.exe (interface : glisser-deposer ou
+# parcourir une ROM) + MSYS2 + recompilateur + PlatformIO avec la chaine ESP32-S3 deja telechargee.
+# Lancer a la main (Actions > Convertisseur AKA > Run workflow) ; le zip est dans les artefacts.
+on:
+  workflow_dispatch:
+    inputs:
+      complet:
+        description: "Paquet COMPLET (MSYS2 + PlatformIO inclus, plusieurs Go) au lieu du paquet leger (exe + sources, ~15 Mo)"
+        type: boolean
+        default: false
+      publier:
+        description: "Creer aussi une release GitHub ?"
+        type: boolean
+        default: false
+      version:
+        description: "Numero de version de la release (ex. 1.0.0), si publier est coche"
+        type: string
+        default: "1.0.0"
+  push:
+    tags: ['aka-convertisseur-v*']
+
+permissions:
+  contents: write
+
+jobs:
+  paquet:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        if: ${{ inputs.complet }}
+        id: msys
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            zip unzip
+            mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-zlib mingw-w64-x86_64-SDL2 mingw-w64-x86_64-python mingw-w64-x86_64-python-pip
+
+      - name: Recompilateur m0boy
+        if: ${{ inputs.complet }}
+        shell: msys2 {0}
+        run: |
+          cmake -G Ninja -B build .
+          ninja -C build
+
+      - name: PlatformIO + chaine ESP32-S3 (pre-chargement)
+        if: ${{ inputs.complet }}
+        shell: msys2 {0}
+        run: |
+          pip install --break-system-packages platformio
+          export PLATFORMIO_CORE_DIR="$(cygpath -w "$PWD/pio-core")"
+          rm -rf /tmp/pre && mkdir -p /tmp/pre/src
+          cp -r targets/consoles/aka/boards /tmp/pre/boards
+          cp targets/consoles/aka/aka.csv.in /tmp/pre/aka.csv
+          sed -e '/^extra_scripts/d' -e '/^    post:aka_size/d' targets/consoles/aka/platformio.ini.in > /tmp/pre/platformio.ini
+          printf '#include <Arduino.h>\nvoid setup(){}\nvoid loop(){}\n' > /tmp/pre/src/main.cpp
+          pio run -d "$(cygpath -w /tmp/pre)"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Interface (exe)
+        shell: pwsh
+        run: |
+          pip install pyinstaller tkinterdnd2
+          pyinstaller --onefile --windowed --name AKA-Convertisseur --collect-all tkinterdnd2 tools/aka/convert_gui.pyw
+
+      - name: Assemblage du paquet
+        shell: pwsh
+        env:
+          COMPLET: ${{ inputs.complet }}
+        run: |
+          # Le paquet est assemble HORS du depot : sinon robocopy se recopie lui-meme (imbrication sans fin).
+          $racine = (Get-Location).Path
+          $pack = Join-Path $env:RUNNER_TEMP "pack"
+          $d = Join-Path $pack "AKA-Convertisseur"
+          New-Item -ItemType Directory -Force $d | Out-Null
+          Copy-Item dist/AKA-Convertisseur.exe $d/
+          # m0boy : sans .git, sorties, ROMs, pre-chargement PlatformIO ni dossier PyInstaller
+          robocopy $racine "$d/m0boy" /E /XD .git out roms pio-core dist "$racine\build\AKA-Convertisseur" /XF *.sms *.gg *.gb *.gbc *.sg *.spec | Out-Null
+          if ($env:COMPLET -eq "true") {
+            # MSYS2 allege (pas de doc, pages man, langues, cache pacman)
+            $m = "${{ steps.msys.outputs.msys2-location }}"
+            robocopy $m "$d/msys64" /E /XD "$m\var\cache" "$m\mingw64\share\doc" "$m\mingw64\share\man" "$m\mingw64\share\info" "$m\mingw64\share\locale" "$m\usr\share\doc" "$m\usr\share\man" "$m\usr\share\info" "$m\usr\share\locale" | Out-Null
+            Move-Item "$racine\pio-core" "$d/pio-core"
+          }
+          @"
+          AKA-Convertisseur : double-clic sur AKA-Convertisseur.exe, glisser une ROM (.gb .gbc .sg .gg .sms .md)
+          dans la fenetre (ou « Ajouter des ROMs »), « Convertir ». Les .zip sortent dans le dossier choisi :
+          les decompresser a la racine de la carte SD de l'AKA.
+          Premiere conversion : quelques minutes. Ne rien deplacer : l'exe cherche m0boy (et msys64, pio-core si presents) a cote de lui.
+          Paquet leger : utilise MSYS2 (C:\msys64 : gcc, cmake, ninja, zlib, SDL2, python) et PlatformIO deja installes sur le PC.
+          "@ | Set-Content "$d/LISEZ-MOI.txt"
+          # Tailles (pour reperer un dossier trop gros)
+          Get-ChildItem $d | ForEach-Object { $t = (Get-ChildItem $_.FullName -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum; "{0,-14} {1,8:N0} Mo" -f $_.Name, ($t/1MB) }
+          Push-Location $pack
+          7z a -tzip -mx=5 "$racine\AKA-Convertisseur-win64.zip" AKA-Convertisseur | Out-Null
+          Pop-Location
+          "Zip : {0:N0} Mo" -f ((Get-Item "$racine\AKA-Convertisseur-win64.zip").Length / 1MB)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AKA-Convertisseur-win64
+          path: AKA-Convertisseur-win64.zip
+          compression-level: 0
+
+      # Release : sur un tag aka-convertisseur-v*, ou au lancement manuel si "publier" est coche.
+      # Limite GitHub : 2 Gio par fichier ; au-dela, le paquet est decoupe en volumes 7z (.7z.001, .002...).
+      - name: Preparer la release
+        id: rel
+        if: ${{ startsWith(github.ref, 'refs/tags/aka-convertisseur-v') || (github.event_name == 'workflow_dispatch' && inputs.publier) }}
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") { $tag = "aka-convertisseur-v${{ inputs.version }}" } else { $tag = "${{ github.ref_name }}" }
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          New-Item -ItemType Directory -Force release | Out-Null
+          if ((Get-Item AKA-Convertisseur-win64.zip).Length -lt 1900MB) {
+            Copy-Item AKA-Convertisseur-win64.zip release/
+          } else {
+            7z a -t7z -v1900m -mx=1 release/AKA-Convertisseur-win64.7z (Join-Path $env:RUNNER_TEMP 'pack\AKA-Convertisseur') | Out-Null
+            "Paquet decoupe : telecharger tous les .7z.00N dans le meme dossier, puis ouvrir le .7z.001 avec 7-Zip." | Set-Content release/LISEZ-MOI-volumes.txt
+          }
+          Get-ChildItem release | Select-Object Name, @{n="Mo";e={[int]($_.Length/1MB)}}
+
+      - name: Release
+        if: ${{ steps.rel.outcome == 'success' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.rel.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Convertisseur AKA ${{ steps.rel.outputs.tag }}
+          files: release/*
+          body: "Glisser une ROM (Game Boy, SG-1000, Game Gear, Master System, Mega Drive experimental) dans AKA-Convertisseur.exe ; les .zip de sortie vont a la racine de la carte SD de l'AKA."
