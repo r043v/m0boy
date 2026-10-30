@@ -89,7 +89,7 @@ const std::vector<OpInfo>& table() {
                          unsigned abs_base, bool keeps_a = false) {
             set(c[0], op, shape, Mode::imm, 2, 2, P_M, keeps_a);
             set(c[1], op, shape, Mode::dp, dp_base, 2, P_M | P_DP, keeps_a);
-            set(c[2], op, shape, Mode::dpx, dp_base + 1, 2, P_M | P_DP, keeps_a);
+            set(c[2], op, shape, Mode::dpx, dp_base, 2, P_M | P_DP, keeps_a);
             set(c[3], op, shape, Mode::abs, abs_base, 3, P_M, keeps_a);
             set(c[4], op, shape, Mode::absx, abs_base, 3, P_M | P_CROSS_X, keeps_a);
             set(c[5], op, shape, Mode::absy, abs_base, 3, P_M | P_CROSS_Y, keeps_a);
@@ -150,12 +150,12 @@ const std::vector<OpInfo>& table() {
         set(0xA6, Op::ldx, Shape::load, Mode::dp, 4, 2, P_X | P_DP, true);
         set(0xB6, Op::ldx, Shape::load, Mode::dpy, 4, 2, P_X | P_DP, true);
         set(0xAE, Op::ldx, Shape::load, Mode::abs, 4, 3, P_X, true);
-        set(0xBE, Op::ldx, Shape::load, Mode::absy, 4, 3, P_X | P_CROSS_Y, true);
+        set(0xBE, Op::ldx, Shape::load, Mode::absy, 4, 3, P_CROSS_Y, true);
         set(0xA0, Op::ldy, Shape::load, Mode::imm, 2, 2, P_X, true);
         set(0xA4, Op::ldy, Shape::load, Mode::dp, 4, 2, P_X | P_DP, true);
         set(0xB4, Op::ldy, Shape::load, Mode::dpx, 4, 2, P_X | P_DP, true);
         set(0xAC, Op::ldy, Shape::load, Mode::abs, 4, 3, P_X, true);
-        set(0xBC, Op::ldy, Shape::load, Mode::absx, 4, 3, P_X | P_CROSS_X, true);
+        set(0xBC, Op::ldy, Shape::load, Mode::absx, 4, 3, P_CROSS_X, true);
         set(0x86, Op::stx, Shape::store, Mode::dp, 4, 2, P_X | P_DP);
         set(0x96, Op::stx, Shape::store, Mode::dpy, 4, 2, P_X | P_DP);
         set(0x8E, Op::stx, Shape::store, Mode::abs, 4, 3, P_X);
@@ -1190,9 +1190,10 @@ void Emitter::emit_ins(std::ostream& o, const Ins& in) {
             return;
         }
         if (op == Op::jmp && m == Mode::ind) {
+            /* the pointer table sits in the program bank, not DBR */
             o << "    { const uint16_t ptr_ = " << hex(in.o[0] | in.o[1] << 8) << ";"
-              << " pc_ = (uint16_t)(SNES_RD((uint32_t)" << hex((uint32_t)ctx_dbr(in.ctx) << 16) << "u | ptr_) |"
-              << " SNES_RD((uint32_t)" << hex((uint32_t)ctx_dbr(in.ctx) << 16)
+              << " pc_ = (uint16_t)(SNES_RD((uint32_t)" << hex((uint32_t)ctx_k(in.ctx) << 16) << "u | ptr_) |"
+              << " SNES_RD((uint32_t)" << hex((uint32_t)ctx_k(in.ctx) << 16)
               << "u | (uint16_t)((ptr_ & 0xFF00u) | ((ptr_ + 1u) & 0xFFu))) << 8); } budget -= 5;\n"
               << "    goto dyn;\n";
             return;
@@ -1200,16 +1201,17 @@ void Emitter::emit_ins(std::ostream& o, const Ins& in) {
         if (op == Op::jmp && m == Mode::absx) {
             o << "    { const uint16_t ptr_ = (uint16_t)(" << hex(in.o[0] | in.o[1] << 8) << "u + "
               << (xf ? "(x_ & 0xFF)" : "x_") << ");"
-              << " pc_ = (uint16_t)(SNES_RD((uint32_t)" << hex((uint32_t)ctx_dbr(in.ctx) << 16) << "u | ptr_) |"
-              << " SNES_RD((uint32_t)" << hex((uint32_t)ctx_dbr(in.ctx) << 16)
+              << " pc_ = (uint16_t)(SNES_RD((uint32_t)" << hex((uint32_t)ctx_k(in.ctx) << 16) << "u | ptr_) |"
+              << " SNES_RD((uint32_t)" << hex((uint32_t)ctx_k(in.ctx) << 16)
               << "u | (uint16_t)(ptr_ + 1u)) << 8); } budget -= 6;\n"
               << "    goto dyn;\n";
             return;
         }
         if (op == Op::jmp && m == Mode::indlp) {
-            o << "    { const uint16_t q_ = " << hex(in.o[0] | in.o[1] << 8) << "u;"
-              << " const unsigned lo_ = SNES_RD(q_), hi_ = SNES_RD((uint16_t)(q_ + 1));"
-              << " k_ = SNES_RD((uint16_t)(q_ + 2)); pc_ = (uint16_t)(lo_ | hi_ << 8); } budget -= 6;\n"
+            o << "    { const uint32_t q_ = (uint32_t)" << hex((uint32_t)ctx_k(in.ctx) << 16)
+              << "u | (uint16_t)(" << hex(in.o[0] | in.o[1] << 8) << "u);"
+              << " const unsigned lo_ = SNES_RD(q_), hi_ = SNES_RD(q_ + 1);"
+              << " k_ = SNES_RD(q_ + 2); pc_ = (uint16_t)(lo_ | hi_ << 8); } budget -= 6;\n"
               << "    goto dyn;\n";
             return;
         }
@@ -1242,11 +1244,12 @@ void Emitter::emit_ins(std::ostream& o, const Ins& in) {
             return;
         }
         if (op == Op::jsr && m == Mode::absx) {
+            /* the pointer table sits in the program bank, not DBR */
             o << "    { const uint16_t ptr_ = (uint16_t)(" << hex(in.o[0] | in.o[1] << 8) << "u + "
               << (xf ? "(x_ & 0xFF)" : "x_") << ");"
-              << " const unsigned lo_ = SNES_RD((uint32_t)" << hex((uint32_t)ctx_dbr(in.ctx) << 16) << "u | ptr_);"
+              << " const unsigned lo_ = SNES_RD((uint32_t)" << hex((uint32_t)ctx_k(in.ctx) << 16) << "u | ptr_);"
               << " SNES_PUSH16(" << hex(unsigned(in.addr & 0xFFFF) + 3) << "u);"
-              << " pc_ = (uint16_t)(lo_ | SNES_RD((uint32_t)" << hex((uint32_t)ctx_dbr(in.ctx) << 16)
+              << " pc_ = (uint16_t)(lo_ | SNES_RD((uint32_t)" << hex((uint32_t)ctx_k(in.ctx) << 16)
               << "u | (uint16_t)(ptr_ + 1u)) << 8); } budget -= 8;\n"
               << "    goto dyn;\n";
             return;
@@ -1270,7 +1273,7 @@ void Emitter::emit_ins(std::ostream& o, const Ins& in) {
             return;
         }
         if (op == Op::brk || op == Op::cop) {
-            const unsigned vector = op == Op::brk ? (ef ? 0xFFFE : 0xFFE6) : (ef ? 0xFFF4 : 0xFFE4);
+            const unsigned vector = op == Op::brk ? (ef ? 0xFFE6 : 0xFFF6) : (ef ? 0xFFE4 : 0xFFF4);
             o << "    { pc_ = (uint16_t)(" << hex(unsigned(in.addr & 0xFFFF) + 2) << "u);"
               << " if (!e_) SNES_PUSH(k_); SNES_PUSH16(pc_); SNES_PUSH((uint8_t)(e_ ? (p_ | 0x30u) : p_));"
               << " p_ |= SNES_P_I; p_ &= (uint8_t)~SNES_P_D;"
@@ -1329,9 +1332,15 @@ void Emitter::emit_region(std::ostream& o, int r) {
         emit_ins(o, in);
         /* the region's last instruction falls into the next one's place
          * (the branches' not-taken path and the return sites included;
-         * the exits and the breaks never fall) */
+         * the exits and the breaks never fall).  A breaks instruction the
+         * walk keeps falling from (a context change: SEP/REP/XCE/PLB/PLD/
+         * PLP/TCD/MVN) hands the pc to the dispatcher explicitly — its
+         * body never touches pc_, and falling into out: would save the
+         * region's entry pc and re-run the whole region. */
         if (i + 1 == keys.size() && in.falls && !in.breaks)
             o << "    " << go(in, in.next) << "\n";
+        else if (i + 1 == keys.size() && in.breaks && in.falls)
+            o << "    pc_ = " << hex(in.next & 0xFFFF) << "; goto out;\n";
     }
     o << "out:\n    SNES_SAVE(); machine.cpu.pc = pc_; return budget;\n"
       << "chain:\n    SNES_SAVE(); machine.cpu.pc = pc_; snes_gen_next = ni; return budget;\n"

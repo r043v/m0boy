@@ -80,7 +80,7 @@ static uint32_t snes_run_hash(void) {
         machine.smp.control, machine.smp.dsp_addr, machine.smp.halted,
         machine.smp.timer_phase[0], machine.smp.timer_phase[1], machine.smp.timer_phase[2],
         machine.smp.timer_out[0], machine.smp.timer_out[1], machine.smp.timer_out[2],
-        machine.smp.ipl_state, machine.smp.ipl_fresh,
+        machine.smp.ipl_state, machine.smp.ipl_y,
         (uint8_t)machine.smp.ipl_addr, (uint8_t)(machine.smp.ipl_addr >> 8),
         machine.smp.ports_in[0], machine.smp.ports_in[1], machine.smp.ports_in[2], machine.smp.ports_in[3],
         machine.smp.ports_out[0], machine.smp.ports_out[1], machine.smp.ports_out[2], machine.smp.ports_out[3],

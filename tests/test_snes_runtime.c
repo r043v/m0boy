@@ -216,11 +216,13 @@ static void modes_test(void) {
  * at their documented rates. */
 static void apu_test(void) {
     snes_init(rom, sizeof rom, 0, 0);
-    /* the boot: $2141 = $BB, $2140 = $AA, the block at $0200, the go */
-    snes_bus_write(0x2141, 0xbb);
-    snes_bus_write(0x2140, 0xaa);
-    CHECK(machine.smp.ipl_state == 1 && machine.smp.ports_out[0] == 0xbb);
+    /* the boot: the IPL's ready signature, the $CC command with the
+     * block's page, the bytes with their counter on port 0, the go */
+    CHECK(machine.smp.ipl_state == 0 && machine.smp.ports_out[0] == 0xaa);
+    CHECK(machine.smp.ports_out[1] == 0xbb);
     snes_bus_write(0x2142, 0x00); snes_bus_write(0x2143, 0x02);
+    snes_bus_write(0x2140, 0xcc); /* the upload command, the block at $0200 */
+    CHECK(machine.smp.ipl_state == 2 && machine.smp.ports_out[0] == 0xcc);
     static const uint8_t prog[] = {
         0xe8, 0x4c,             /* MOV A,#$4C */
         0xc4, 0xf2,             /* MOV $F2,A */
@@ -228,10 +230,16 @@ static void apu_test(void) {
         0xc4, 0xf3,             /* MOV $F3,A: KON = voice 0 */
         0x80, 0xfe,             /* BRA $FE */
     };
-    for (unsigned i = 0; i < sizeof prog; i++) snes_bus_write(0x2140, prog[i]);
+    for (unsigned i = 0; i < sizeof prog; i++) {
+        snes_bus_write(0x2140, (uint8_t)i);   /* the byte's counter */
+        snes_bus_write(0x2141, prog[i]);      /* the byte */
+        CHECK(machine.smp.ports_out[0] == i); /* the counter echoed */
+    }
+    CHECK(machine.smp.ram[0x200] == prog[0] && machine.smp.ram[0x208] == prog[8]);
     snes_bus_write(0x2142, 0x00); snes_bus_write(0x2143, 0x02);
-    snes_bus_write(0x2140, 0x00); /* the go: the game starts at $0200 */
-    CHECK(machine.smp.ipl_state == 2 && machine.smp.pc == 0x0200);
+    snes_bus_write(0x2141, 0x00);
+    snes_bus_write(0x2140, 0x80); /* terminate: counter ahead, port 1 = 0: jump */
+    CHECK(machine.smp.ipl_state == 3 && machine.smp.pc == 0x0200);
 
     /* the voice's sample source: the directory at $0300, the BRR block at
      * $0400 (block addresses in 8-byte units), one block of two $7
@@ -478,6 +486,25 @@ static void irq_test(void) {
     snes_bus_write(0x4200, 0x00);
 }
 
+/* The hardware multiply/divide unit: signed 8x8 -> $4216/7, unsigned
+ * 16/8 -> quotient $4214/5 and remainder $4216, /0 = $FFFF/$FF. */
+static void muldiv_test(void) {
+    snes_bus_write(0x4202, 15);
+    snes_bus_write(0x4203, 17);
+    CHECK(snes_bus_read(0x4216) == 255 && snes_bus_read(0x4217) == 0);
+    snes_bus_write(0x4202, 0xFF); /* -1 times -13 = 13 */
+    snes_bus_write(0x4203, 0xF3);
+    CHECK(snes_bus_read(0x4216) == 13 && snes_bus_read(0x4217) == 0);
+    snes_bus_write(0x4204, 0x39); snes_bus_write(0x4205, 0x05); /* $0539 = 1337 */
+    snes_bus_write(0x4206, 42);
+    const unsigned quot = snes_bus_read(0x4214) | snes_bus_read(0x4215) << 8;
+    CHECK(quot == 1337 / 42 && snes_bus_read(0x4216) == 1337 % 42);
+    snes_bus_write(0x4204, 0x00); snes_bus_write(0x4205, 0x01);
+    snes_bus_write(0x4206, 0);
+    CHECK(snes_bus_read(0x4214) == 0xFF && snes_bus_read(0x4215) == 0xFF);
+    CHECK(snes_bus_read(0x4216) == 0xFF); /* the /0 remainder */
+}
+
 int main(void) {
     rom[0] = 0x42;
     rom[0x7ffa] = rom[0x7fea] = rom[0x7ffc] = 0;
@@ -485,6 +512,7 @@ int main(void) {
     snes_init(rom, sizeof rom, 0, 0);
     CHECK(snes_bus_read(0x808000) == 0x42);
     hdma_test();
+    muldiv_test();
     irq_test();
     object_limits_test();
     modes_test();

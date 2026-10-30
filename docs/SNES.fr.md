@@ -26,9 +26,18 @@ recompilateur.
 ## La machine
 
 - **65C816** : les 256 opcodes interprétés (la matrice WDC : pénalités de
-  page, de largeur et de page directe ; le mode décimal ; l'émulation) et
+  page, de largeur et de page directe ; le mode décimal dans les deux
+  largeurs, la même formule BCD des deux chemins ; l'émulation) et
   recompilés — l'émetteur pose le MDR du fetch à chaque instruction, si bien
   que les lectures en bus ouvert donnent la même valeur des deux chemins.
+  Les vecteurs suivent le mode du processeur (BRK/COP/NMI/IRQ prennent la
+  table d'émulation $FFE4-$FFEE ou la native $FFF4-$FFFE), et les JMP
+  indirects (abs), (abs,X) et [abs] lisent leur pointeur dans le banc
+  programme K, jamais DBR.
+- **Unité de multiplication/division** ($4202-$4217) : WRMPYA (8×8 signé →
+  produit $4216/7) et WRDIV (16/8 non signé → quotient $4214/5, reste dans
+  $4216 ; division par zéro = $FFFF/$FF), les opérandes verrouillées à
+  l'écriture comme sur la puce.
   La SRAM de la cartouche ($6000-$7FFF, taille de l'en-tête) et le port WRAM
   sont mappés.
 - **PPU** : VRAM/CGRAM/OAM et leurs ports, le DMA général (modes 0-7) et le
@@ -40,10 +49,14 @@ recompilateur.
   que le code les a laissés : une écriture pendant le HBlank d'une ligne
   atteint la suivante.
 - **APU** : le SPC700 interprété (les 256 opcodes, les timers à 8/64 kHz,
-  leurs sorties à source/(cible+1)), la RAM A de 64 Kio et le protocole
-  d'amorce simulé en C (pas de ROM IPL : le $BB/$AA ouvre le transfert, les
-  octets de $2140 atterrissent en A-RAM et reviennent sur le port 0, un
-  zéro après $2142/3 frais lance le jeu). Le S-DSP rend huit voix BRR
+  leurs sorties à source/(cible+1)), la RAM A de 64 Kio et l'amorce IPL
+  simulée en C suivant le protocole réel de la ROM IPL (pas de ROM exécutée) :
+  à la remise à zéro le S-SMP répond $AA/$BB sur les ports 0/1 ; $CC sur le
+  port 0 avec le mot de destination dans $2142/3 ouvre un transfert (octet
+  haut non nul = blocs, nul = saut) ; chaque octet porte son compteur sur
+  $2140, que le S-SMP renvoie en guise d'accusé ; un compteur signé en avance
+  termine le transfert (port 1 nul = sauter à l'adresse, sinon bloc suivant,
+  compteur reparti à zéro). Le S-DSP rend huit voix BRR
   (filtres, bouclage, drapeaux de fin) avec ADSR ou GAIN, le pitch compteur
   et les volumes, dans un anneau que le harness et la fenêtre drainent à
   32000 Hz.
@@ -82,6 +95,13 @@ host/build/cart_host --interp --coverage cov.txt   # le profil, 120 images de je
 build/bin/m0recomp --system snes cart.sfc --target desktop -o projet --meta-precise --coverage cov.txt
 ```
 
+Le balayage de la collection (`tools/snes_sweep.py`) enchaîne les deux pour
+chaque `.sfc`/`.smc` d'un répertoire : le harnais interpréteur joue les
+trames (le profil), le convertisseur repasse avec, et l'hôte du projet
+construit doit imprimer le run_hash et les cycles de son `--interp` —
+`python3 tools/snes_sweep.py roms/snes --frames 300`, le bilan va dans
+`logs/snes_sweep.txt`. Un répertoire sans ROM se déclare et sort à zéro.
+
 ## Ce qui a été vérifié
 
 - Les tests C (`ctest -R snes_runtime`) : le bus et ses miroirs, la SRAM,
@@ -89,27 +109,40 @@ build/bin/m0recomp --system snes cart.sfc --target desktop -o projet --meta-prec
   longs, WAI/STP, le DMA et le HDMA (table qui peint la CGRAM), les timers
   d'IRQ (H chaque ligne, V une ligne, le niveau sans lecture de $4211), le
   DMA vidéo, les ports OAM/CGRAM, les limites d'objets, les modes 2/3/7,
-  l'amorce APU complète (un programme uploadé arme une voix, l'échantillon
-  attendu arrive dans le ring) et les périodes des timers SPC700.
+  l'amorce APU complète (un programme uploadé par le protocole IPL réel arme
+  une voix, l'échantillon attendu arrive dans le ring ; la signature $AA/$BB
+  de la remise à zéro vérifiée), la multiplication et la division ($4202-
+  $4217, division par zéro comprise) et les périodes des timers SPC700.
 - Le e2e (`snes_native_end_to_end`) : un ROM synthétique dont la queue
   charge par LDA long,X, stocke en STA long et lit un bus ouvert — le
   projet `--meta-precise` imprime le run_hash de son `--interp` (marche
   statique puis profil), la capture est le fond rouge attendu, et la même
   égalité tient en mode rapide, seul mode où ces instructions restent dans
   une région.
+- **Dr. Mario (Japan)** (LoROM rapide, 512 Kio, hors dépôt) démarre : écran
+  titre, menu d'options puis partie jouable avec l'input scripté de
+  `logs/dm_play.txt` (Start au titre, Start pour lancer). À 900 images le
+  projet `--meta-precise` imprime
+  `run_hash=8194517e image_hash=29a1c939 audio_hash=eab62375`, identiques à
+  son `--interp`, cycles compris. Le jeu sert son programme APU par le
+  protocole IPL et se sert de l'unité de multiplication/division — les deux
+  sont venues avec lui. Avec le profil du balayage (`tools/snes_sweep.py`,
+  300 images), le contrat tient aussi : `run_hash=56323b6b` des deux chemins,
+  5 475 instructions compilées (1 786 jouées).
 - **Bucket** (homebrew, 256 Kio LoROM) démarre : après 120 images l'écran
   montre son fond pointillé animé (l'empreinte d'image change d'une image à
-  l'autre) et le seau — les sprites du bas — suit la croix ; avec un script
-  d'input, 180 images du projet `--meta-precise` impriment
-  `run_hash=f14cae21 image_hash=921e794f audio_hash=9c2bf1b5`, identiques à
-  son `--interp`. Bucket ne boote pas le S-SMP (A-RAM vide, pas de poignée
-  de main) : son silence est le silence du jeu, pas un manque du cœur. Ces
-  observations restent une comparaison avec rien : aucun émulateur de
-  référence n'a tourné ici.
-- Les cartouches de diagnostic locales (`output/snes/`, hors dépôt) :
-  CPUMSC `run_hash=296f869a image_hash=4eaf47f3`, CPUMOV
-  `run_hash=ddd1c500 image_hash=53b0775f`, CPUADC
-  `run_hash=91786669 image_hash=a713d1ab` à 120 images.
+  l'autre) et le seau — les sprites du bas — suit la croix ; sur le harnais,
+  le chemin natif imprime `run_hash=6d91fdf7 image_hash=b295c090
+  audio_hash=50c84b85` à 120 images, identiques à son `--interp`. Bucket ne
+  boote pas le S-SMP (A-RAM vide, pas de poignée de main) : son silence est
+  le silence du jeu, pas un manque du cœur. Ces observations restent une
+  comparaison avec rien : aucun émulateur de référence n'a tourné ici.
+- Les cartouches de diagnostic locales (`output/snes/`, hors dépôt) : le
+  projet `--meta-precise` imprime le run_hash de son `--interp` sur les
+  trois, cycles compris — CPUADC `run_hash=7dbfb4a8 image_hash=a713d1ab` (le
+  mode décimal, l'écart qui a révélé le BCD incomplet du code généré),
+  CPUMOV `run_hash=c35d727d image_hash=53b0775f`, CPUMSC
+  `run_hash=3b61fc48 image_hash=78729dc5`, à 120 images.
 
 ## La cible PC
 

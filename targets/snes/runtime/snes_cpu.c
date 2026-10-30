@@ -16,7 +16,6 @@
 #include "snes_config.h"
 #endif
 #include "snes.h"
-
 /* the debug tracer's per-instruction hook (the harness builds with
  * -DSNES_TRACE and provides snes_trace_step); the dyn hook marks the
  * addresses a dynamic transfer (RTS, RTL, RTI, a jump through a pointer,
@@ -267,13 +266,13 @@ SNES_INTERP_FN(snes_cpu_t *cpu, uint32_t until) {
         const uint16_t pc0 = pc_;
         if (machine.cpu.nmi_pending) {
             machine.cpu.nmi_pending = 0;
-            INTERRUPT(e_ ? 0xFFFA : 0xFFEA);
+            INTERRUPT(e_ ? 0xFFEA : 0xFFFA);
             budget -= e_ ? 7 : 8;
             SNES_DYN_HOOK((uint32_t)k_ << 16 | pc_);
             continue;
         }
         if (machine.cpu.irq_line && !(p_ & SNES_P_I)) {
-            INTERRUPT(e_ ? 0xFFFE : 0xFFEE);
+            INTERRUPT(e_ ? 0xFFEE : 0xFFFE);
             budget -= e_ ? 7 : 8;
             SNES_DYN_HOOK((uint32_t)k_ << 16 | pc_);
             continue;
@@ -652,17 +651,19 @@ SNES_INTERP_FN(snes_cpu_t *cpu, uint32_t until) {
         case 0x62: left = 6; { const unsigned t_ = OP16(1); PUSH16((uint16_t)(pc_ + 3 + (int16_t)t_)); } pc_ += 3; break; /* PER */
         /* ---- jumps, calls, returns ---- */
         case 0x4C: pc_ = (uint16_t)OP16(1); left = 3; pc_set = 1; break;
-        case 0x6C: { const uint16_t ptr_ = (uint16_t)OP16(1); /* the 6502's page-wrap bug, kept */
-            pc_ = (uint16_t)(rd((uint32_t)dbr_ << 16 | ptr_) |
-                             rd((uint32_t)dbr_ << 16 | (uint16_t)((ptr_ & 0xFF00u) | ((ptr_ + 1) & 0xFFu))) << 8);
+        case 0x6C: { const uint16_t ptr_ = (uint16_t)OP16(1); /* the pointer in the program bank, the 6502's page-wrap bug kept */
+            pc_ = (uint16_t)(rd((uint32_t)k_ << 16 | ptr_) |
+                             rd((uint32_t)k_ << 16 | (uint16_t)((ptr_ & 0xFF00u) | ((ptr_ + 1) & 0xFFu))) << 8);
             left = 5; pc_set = 1; SNES_DYN_HOOK((uint32_t)k_ << 16 | pc_); break; }
         case 0x7C: { const uint16_t ptr_ = (uint16_t)(OP16(1) + (XF ? (x_ & 0xFF) : x_));
-            pc_ = (uint16_t)(rd((uint32_t)dbr_ << 16 | ptr_) |
-                             rd((uint32_t)dbr_ << 16 | (uint16_t)(ptr_ + 1)) << 8);
+            pc_ = (uint16_t)(rd((uint32_t)k_ << 16 | ptr_) |
+                             rd((uint32_t)k_ << 16 | (uint16_t)(ptr_ + 1)) << 8);
             left = 6; pc_set = 1; SNES_DYN_HOOK((uint32_t)k_ << 16 | pc_); break; }
         case 0xDC: { const uint16_t ptr_ = (uint16_t)OP16(1);
-            const unsigned lo_ = rd(ptr_), hi_ = rd((uint16_t)(ptr_ + 1));
-            k_ = rd((uint16_t)(ptr_ + 2)); pc_ = (uint16_t)(lo_ | hi_ << 8); /* JMP [abs] */
+            const unsigned lo_ = rd((uint32_t)k_ << 16 | ptr_),
+                           hi_ = rd((uint32_t)k_ << 16 | (uint16_t)(ptr_ + 1));
+            k_ = rd((uint32_t)k_ << 16 | (uint16_t)(ptr_ + 2));
+            pc_ = (uint16_t)(lo_ | hi_ << 8); /* JMP [abs], the pointer in the program bank */
             left = 6; pc_set = 1; SNES_DYN_HOOK((uint32_t)k_ << 16 | pc_); break; }
         case 0x5C: { const uint32_t dest_ = OP24(1); k_ = (uint8_t)(dest_ >> 16); pc_ = (uint16_t)dest_; /* JML */
             left = 4; pc_set = 1; SNES_DYN_HOOK((uint32_t)k_ << 16 | pc_); break; }
@@ -684,9 +685,9 @@ SNES_INTERP_FN(snes_cpu_t *cpu, uint32_t until) {
             const unsigned w_ = POP16(); pc_ = (uint16_t)w_;
             if (!e_) k_ = POP();
             pc_set = 1; SNES_DYN_HOOK((uint32_t)k_ << 16 | pc_); break; }
-        case 0x00: { pc_ += 2; left = e_ ? 7 : 8; SOFTWARE(e_ ? 0xFFFE : 0xFFE6); /* BRK */
+        case 0x00: { pc_ += 2; left = e_ ? 7 : 8; SOFTWARE(e_ ? 0xFFE6 : 0xFFF6); /* BRK */
             pc_set = 1; SNES_DYN_HOOK((uint32_t)k_ << 16 | pc_); break; }
-        case 0x02: { pc_ += 2; left = e_ ? 7 : 8; SOFTWARE(e_ ? 0xFFF4 : 0xFFE4); /* COP */
+        case 0x02: { pc_ += 2; left = e_ ? 7 : 8; SOFTWARE(e_ ? 0xFFE4 : 0xFFF4); /* COP */
             pc_set = 1; SNES_DYN_HOOK((uint32_t)k_ << 16 | pc_); break; }
         case 0x80: { const int8_t off_ = (int8_t)OP8(1); /* BRA */
             if (e_) { const uint16_t t_ = (uint16_t)(pc_ + 2 + off_);
@@ -804,12 +805,12 @@ void snes_run(snes_cpu_t *cpu, uint32_t until) {
         }
         if (machine.cpu.nmi_pending) {
             machine.cpu.nmi_pending = 0;
-            snes_take_interrupt(cpu, cpu->e ? 0xFFFA : 0xFFEA);
+            snes_take_interrupt(cpu, cpu->e ? 0xFFEA : 0xFFFA);
             budget -= cpu->e ? 7 : 8;
             continue;
         }
         if (machine.cpu.irq_line && !(cpu->p & SNES_P_I)) {
-            snes_take_interrupt(cpu, cpu->e ? 0xFFFE : 0xFFEE);
+            snes_take_interrupt(cpu, cpu->e ? 0xFFEE : 0xFFFE);
             budget -= cpu->e ? 7 : 8;
             continue;
         }

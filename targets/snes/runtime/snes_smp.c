@@ -16,7 +16,6 @@
  * the TEST register ($F0), $F1's bit 4, and the SPC700's own cycle-level
  * bus interleaving with the DMA. */
 #include "snes.h"
-
 #define PSW_N 0x80
 #define PSW_V 0x40
 #define PSW_P 0x20
@@ -570,40 +569,79 @@ commit:
 #undef PSW_Z
 #undef PSW_C
 
-/* the CPU-side comm port: the IPL state machine lives on these writes,
- * $2142/3 carry the upload address and then the entry point */
+/* the CPU-side comm port: the simulated IPL state machine (the real 64
+ * bytes are Nintendo ROM, never shipped here) lives on these writes,
+ * following the boot ROM's own protocol: at reset the S-SMP answers $AA
+ * on port 0 and $BB on port 1; a $CC on port 0 (sent last) takes the
+ * $2142/3 word as either the next block's address (high byte nonzero) or
+ * the entry point (high byte zero, execution starts); during a block the
+ * SNES sends each byte on port 1 with its counter on port 0, the counter
+ * equal to the IPL's means store and echo, a counter signed-ahead means
+ * the block ended and the ROM waits for the next $CC. */
 void snes_smp_port_write(unsigned n, uint8_t v) {
-    machine.smp.ports_in[n] = v;
+    snes_smp_t *s = &machine.smp;
+    s->ports_in[n] = v;
     if (n == 2) {
-        machine.smp.ipl_addr = (uint16_t)((machine.smp.ipl_addr & 0xFF00u) | v);
-        machine.smp.ipl_fresh = 1;
+        s->ipl_addr = (uint16_t)((s->ipl_addr & 0xFF00u) | v);
         return;
     }
     if (n == 3) {
-        machine.smp.ipl_addr = (uint16_t)((machine.smp.ipl_addr & 0x00FFu) | (uint16_t)v << 8);
-        machine.smp.ipl_fresh = 1;
+        s->ipl_addr = (uint16_t)((s->ipl_addr & 0x00FFu) | (uint16_t)v << 8);
         return;
     }
-    if (machine.smp.ipl_state == 0) {
-        if (n == 0 && v == 0xAA && machine.smp.ports_in[1] == 0xBB) {
-            machine.smp.ipl_state = 1;
-            machine.smp.ports_out[0] = 0xBB;
-            machine.smp.ports_out[1] = 0xAA;
+    if (n == 0) {
+        if (s->ipl_state == 2) { /* inside a block: counter semantics */
+            if (v == s->ipl_y) {
+                if (s->ipl_fresh1) { /* the byte arrived first: commit it */
+                    s->ipl_fresh1 = 0;
+                    s->ram[(s->ipl_addr & 0xFF00u) | s->ipl_y] = s->ports_in[1];
+                    s->ports_out[0] = s->ipl_y;
+                    if (++s->ipl_y == 0) /* the counter wrapped: next page */
+                        s->ipl_addr = (uint16_t)(s->ipl_addr + 0x100u);
+                } else {
+                    s->ipl_pending = 1; /* the byte follows on port 1 */
+                }
+            } else if ((int8_t)(v - s->ipl_y) > 0) { /* the block's terminate */
+                s->ports_out[0] = v;
+                s->ports_out[1] = 0xBB;
+                s->ipl_pending = 0;
+                if (s->ports_in[1] == 0) { /* port 1 clear: jump to $2142/3 */
+                    s->pc = s->ipl_addr;
+                    s->halted = 0;
+                    s->ipl_state = 3;
+                } else { /* the next block starts at the $2142/3 word,
+                          * its counter back at zero */
+                    s->ipl_y = 0;
+                }
+            }
+            return;
+        }
+        if (v == 0xCC && s->ipl_state != 3) { /* the transfer or go command */
+            s->ports_out[0] = 0xCC;
+            s->ports_out[1] = 0xBB;
+            s->ipl_pending = 0;
+            if ((s->ipl_addr >> 8) != 0) { /* block upload into that page */
+                s->ipl_state = 2;
+                s->ipl_y = 0;
+            } else { /* entry point: the uploaded program takes over */
+                s->pc = s->ipl_addr;
+                s->halted = 0;
+                s->ipl_state = 3;
+            }
         }
         return;
     }
-    if (machine.smp.ipl_state != 1) return;
-    if (v == 0x00 && machine.smp.ipl_fresh) {
-        machine.smp.pc = machine.smp.ipl_addr;
-        machine.smp.ports_out[0] = (uint8_t)machine.smp.ipl_addr;
-        machine.smp.ports_out[1] = (uint8_t)(machine.smp.ipl_addr >> 8);
-        machine.smp.ipl_state = 2;
-        return;
+    if (n == 1 && s->ipl_state == 2 && (s->ipl_pending || s->ports_in[0] == s->ipl_y)) {
+        /* the byte arrives with its counter already on port 0 */
+        s->ipl_pending = 0;
+        s->ipl_fresh1 = 0;
+        s->ram[(s->ipl_addr & 0xFF00u) | s->ipl_y] = v;
+        s->ports_out[0] = s->ipl_y;
+        if (++s->ipl_y == 0)
+            s->ipl_addr = (uint16_t)(s->ipl_addr + 0x100u);
+    } else if (n == 1) {
+        s->ipl_fresh1 = 1; /* the byte precedes its counter */
     }
-    machine.smp.ram[machine.smp.ipl_addr] = v;
-    machine.smp.ipl_addr = (uint16_t)(machine.smp.ipl_addr + 1);
-    machine.smp.ports_out[0] = v;
-    machine.smp.ipl_fresh = 0;
 }
 
 /* the timers tick at 8 kHz (T0/T1) and 64 kHz (T2); the outputs count at
@@ -644,7 +682,8 @@ void snes_apu_run(uint32_t cpu_cycles) {
         while (s->dsp_acc >= 1024) { s->dsp_acc -= 1024; snes_dsp_sample(); }
         if (s->halted) continue; /* SLEEP/STOP: time passes, nothing runs */
         int64_t left = (int64_t)chunk;
-        while (left > 0) left -= smp_step(); /* an instruction overruns the slice */
+        while (left > 0)
+            left -= smp_step(); /* an instruction overruns the slice */
     }
 }
 

@@ -74,9 +74,10 @@ typedef struct {
     uint8_t dsp_addr;   /* $F2 */
     uint8_t halted;     /* SLEEP/STOP */
     uint8_t timer_phase[3], timer_out[3];
-    uint8_t ipl_state;  /* 0: the boot wait, 1: the upload, 2: the game */
-    uint8_t ipl_fresh;  /* $2142/3 written since the last upload byte */
-    uint16_t ipl_addr;
+    uint8_t ipl_state;  /* 0: ready, 1: command wait, 2: uploading, 3: program runs */
+    uint8_t ipl_y;      /* the block's byte counter, echoed on port 0 */
+    uint8_t ipl_pending, ipl_fresh1; /* the byte-transfer handshaking */
+    uint16_t ipl_addr;  /* $2142/3: the block's page or the entry point */
     uint8_t tick8k, tick64k;
     uint64_t acc, dsp_acc;
 } snes_smp_t;
@@ -121,6 +122,9 @@ typedef struct {
     uint8_t m7_lo, m7_phase; /* the write-twice latch of $211B-$2120 */
     uint8_t obj_range_over, obj_time_over; /* the $213F flags of the last evaluated line */
     uint8_t timer_latch;
+    uint8_t mpy_a, div_l, div_h; /* the multiply/divide unit's operands */
+    uint16_t mpy_product, div_quot; /* the unit's latched results */
+    uint8_t div_rem, mpyed; /* $4216 shows the remainder until a new multiply */
     uint16_t htime, vtime; /* $4207-$420A, the H/V compare values */
     uint8_t timeup;        /* $4211 bit 7, cleared by the read */
     uint8_t h_irq_en, v_irq_en; /* $4200 bits 4-5 */

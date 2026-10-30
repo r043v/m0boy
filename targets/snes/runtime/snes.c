@@ -67,6 +67,10 @@ static uint8_t io_read(uint16_t at) {
         return v;
     }
     case 0x4212: return (machine.vblank ? 0x80 : 0) | (machine.hblank ? 0x40 : 0) | machine.joy_busy;
+    case 0x4214: return (uint8_t)machine.div_quot; /* the division's quotient */
+    case 0x4215: return (uint8_t)(machine.div_quot >> 8);
+    case 0x4216: return machine.mpyed ? (uint8_t)machine.mpy_product : machine.div_rem;
+    case 0x4217: return machine.mpyed ? (uint8_t)(machine.mpy_product >> 8) : (uint8_t)(c->mdr & 0x40);
     case 0x2180: { /* the WRAM port */
         const uint8_t v = machine.wram[c->wram_addr & 0x1FFFF];
         c->wram_addr = (c->wram_addr + 1) & 0x1FFFF;
@@ -98,6 +102,20 @@ static void io_write(uint16_t at, uint8_t v) {
         break;
     case 0x420b: snes_dma_start(v); break;
     case 0x420c: machine.hdma_enable = v; break;
+    case 0x4202: machine.mpy_a = v; break;
+    case 0x4203: /* signed 8x8 -> 16, the product latched by the B write */
+        machine.mpy_product = (uint16_t)((int16_t)(int8_t)machine.mpy_a * (int8_t)v);
+        machine.mpyed = 1;
+        break;
+    case 0x4204: machine.div_l = v; break;
+    case 0x4205: machine.div_h = v; break;
+    case 0x4206: { /* unsigned 16/8 -> quotient + remainder 8; /0 = $FFFF/$FF */
+        const uint16_t n = (uint16_t)(machine.div_l | machine.div_h << 8);
+        machine.div_quot = v ? (uint16_t)(n / v) : 0xFFFFu;
+        machine.div_rem = v ? (uint8_t)(n % v) : 0xFFu;
+        machine.mpyed = 0;
+        break;
+    }
     case 0x4207: case 0x4208:
         machine.htime = (uint16_t)(((unsigned)v << 8 | machine.timer_latch) & 0x1FF);
         machine.timer_latch = v;
@@ -210,10 +228,13 @@ void snes_reset(void) {
     c->wram_addr = 0;
     machine.joypad = machine.joy_auto = machine.joy_shift = 0;
     machine.joy_strobe = machine.joy_count = machine.joy_auto_enable = machine.joy_busy = 0;
-    /* the S-SMP waits for the boot handshake, the DSP silent */
+    /* the S-SMP waits for the boot handshake, the DSP silent; the IPL's
+     * ready signature answers $AA/$BB on ports 0/1 */
     memset(&machine.smp, 0, offsetof(snes_smp_t, ram) + sizeof machine.smp.ram);
     machine.smp.sp = 0xEF;
     machine.smp.psw = 0x02;
+    machine.smp.ports_out[0] = 0xAA;
+    machine.smp.ports_out[1] = 0xBB;
     /* the reset vector, always of bank $00 in emulation mode */
     c->pc = (uint16_t)(snes_bus_read(0x00FFFC) | snes_bus_read(0x00FFFD) << 8);
 }

@@ -86,15 +86,34 @@ extern int snes_native;
 #define SNES_ZN16(v_) do { const uint16_t zn_v_ = (v_); \
     p_ = (uint8_t)((p_ & ~(SNES_P_Z | SNES_P_N)) | (zn_v_ ? (zn_v_ & 0x8000u ? SNES_P_N : 0) : SNES_P_Z)); } while (0)
 
-/* ADC/SBC: binary, decimal (+1 cycle, 8 bits only) and the widths compose;
- * the same formulas as the interpreter's */
+/* ADC/SBC: binary, decimal (+1 cycle, the 65C816's BCD in both widths) and
+ * the widths compose; the same formulas as the interpreter's */
+/* the BCD add, nibble by nibble with the carry chained; the subtract with
+ * the borrow chained the same way (the NMOS algorithms) */
+#define SNES_ADC_DEC_BYTE(x_, y_, c_, out_, carry_) do { \
+    unsigned adc_t_ = ((x_) & 0x0F) + ((y_) & 0x0F) + (c_); \
+    if (adc_t_ >= 0x0A) adc_t_ = ((adc_t_ + 0x06) & 0x0F) + 0x10; \
+    adc_t_ += ((x_) & 0xF0) + ((y_) & 0xF0); \
+    if (adc_t_ >= 0xA0) adc_t_ += 0x60; \
+    (out_) = (unsigned)(adc_t_ & 0xFF); (carry_) = (adc_t_ >> 8) & 1; \
+} while (0)
+#define SNES_SBC_DEC_BYTE(x_, y_, borrow_, out_, bout_) do { \
+    unsigned sbc_t_ = ((x_) & 0x0F) - ((y_) & 0x0F) - (borrow_); \
+    unsigned sbc_b_ = 0; \
+    if (sbc_t_ & 0x10u) { sbc_b_ = 1; sbc_t_ = ((sbc_t_ - 0x06) & 0x0F) - 0x10; } \
+    sbc_t_ += ((x_) & 0xF0) - ((y_) & 0xF0); \
+    if (sbc_t_ & 0x100u) { sbc_b_ = 1; sbc_t_ -= 0x60; } \
+    (out_) = (unsigned)(sbc_t_ & 0xFF); (bout_) = sbc_b_; \
+} while (0)
 #define SNES_ADC8(m_) do { const uint8_t adc_m_ = (m_); \
     if (p_ & SNES_P_D) { budget -= 1; \
+        const unsigned adc_v_ = (a_ & 0xFF) + adc_m_ + (p_ & 1); \
         unsigned adc_t_ = (a_ & 0x0F) + (adc_m_ & 0x0F) + (p_ & 1); \
-        if (adc_t_ >= 0x0A) adc_t_ += 0x06; \
+        if (adc_t_ >= 0x0A) adc_t_ = ((adc_t_ + 0x06) & 0x0F) + 0x10; \
         adc_t_ += (a_ & 0xF0) + (adc_m_ & 0xF0); \
-        p_ &= (uint8_t)~(SNES_P_Z | SNES_P_N | SNES_P_C); \
-        if (adc_t_ & 0xFF00u) p_ |= SNES_P_C; \
+        if (adc_t_ >= 0xA0) adc_t_ += 0x60; \
+        p_ = (uint8_t)((p_ & ~SNES_P_C) | (adc_t_ >> 8 ? SNES_P_C : 0) \
+            | (((((a_ ^ adc_m_) & 0x80u) ^ 0x80u) & ((a_ ^ adc_v_) & 0x80u)) >> 1)); \
         a_ = (uint16_t)((a_ & 0xFF00u) | (uint8_t)adc_t_); SNES_ZN8((uint8_t)adc_t_); \
     } else { const unsigned adc_l_ = (a_ & 0xFF) + adc_m_ + (p_ & 1); \
         p_ = (uint8_t)((p_ & ~(SNES_P_Z | SNES_P_C | SNES_P_N | SNES_P_V)) \
@@ -118,16 +137,28 @@ extern int snes_native;
         a_ = (uint16_t)((a_ & 0xFF00u) | (uint8_t)sbc_l_); SNES_ZN8((uint8_t)sbc_l_); } } while (0)
 #define SNES_ADC16(m_) do { const unsigned adc_m_ = (m_); \
     const unsigned adc_l_ = a_ + adc_m_ + (p_ & 1); \
+    unsigned adc_r_ = adc_l_, adc_c_ = (unsigned)((adc_l_ >> 16) & 1); \
+    if (p_ & SNES_P_D) { budget -= 1; unsigned adc_lo_, adc_hi_; \
+        SNES_ADC_DEC_BYTE(a_ & 0xFF, adc_m_ & 0xFF, p_ & 1, adc_lo_, adc_c_); \
+        SNES_ADC_DEC_BYTE(a_ >> 8, adc_m_ >> 8, adc_c_, adc_hi_, adc_c_); \
+        adc_r_ = (adc_hi_ << 8) | adc_lo_; \
+    } \
     p_ = (uint8_t)((p_ & ~(SNES_P_Z | SNES_P_C | SNES_P_N | SNES_P_V)) \
         | (((((a_ ^ adc_m_) & 0x8000u) ^ 0x8000u) & ((a_ ^ adc_l_) & 0x8000u)) >> 9) \
-        | ((adc_l_ >> 16) & 1)); \
-    a_ = (uint16_t)adc_l_; SNES_ZN16(a_); } while (0)
+        | (p_ & SNES_P_D ? (uint8_t)(adc_c_ ? SNES_P_C : 0) : (uint8_t)((adc_l_ >> 16) & 1))); \
+    a_ = (uint16_t)adc_r_; SNES_ZN16(a_); } while (0)
 #define SNES_SBC16(m_) do { const unsigned sbc_m_ = (m_); \
     const unsigned sbc_l_ = a_ - sbc_m_ - ((p_ & 1) ^ 1); \
+    unsigned sbc_r_ = sbc_l_, sbc_nb_ = (unsigned)((((sbc_l_ >> 16) & 1) ^ 1)); \
+    if (p_ & SNES_P_D) { budget -= 1; unsigned sbc_lo_, sbc_hi_, sbc_b_ = (p_ & 1) ^ 1; \
+        SNES_SBC_DEC_BYTE(a_ & 0xFF, sbc_m_ & 0xFF, sbc_b_, sbc_lo_, sbc_b_); \
+        SNES_SBC_DEC_BYTE(a_ >> 8, sbc_m_ >> 8, sbc_b_, sbc_hi_, sbc_b_); \
+        sbc_r_ = (sbc_hi_ << 8) | sbc_lo_; sbc_nb_ = sbc_b_ ^ 1; \
+    } \
     p_ = (uint8_t)((p_ & ~(SNES_P_Z | SNES_P_C | SNES_P_N | SNES_P_V)) \
         | ((((a_ ^ sbc_l_) & (a_ ^ sbc_m_) & 0x8000u)) >> 9) \
-        | ((((sbc_l_ >> 16) & 1) ^ 1))); \
-    a_ = (uint16_t)sbc_l_; SNES_ZN16(a_); } while (0)
+        | (sbc_nb_ ? SNES_P_C : 0)); \
+    a_ = (uint16_t)sbc_r_; SNES_ZN16(a_); } while (0)
 #define SNES_CMP8(r_, m_) do { const unsigned t_ = ((r_) & 0xFF) - ((m_) & 0xFF); SNES_ZN8((uint8_t)t_); \
     p_ = (uint8_t)((p_ & ~SNES_P_C) | (((t_ >> 8) & 1) ^ 1)); } while (0)
 #define SNES_CMP16(r_, m_) do { const unsigned t_ = (r_) - (m_); SNES_ZN16((uint16_t)t_); \
