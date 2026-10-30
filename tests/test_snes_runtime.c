@@ -467,11 +467,20 @@ static void irq_test(void) {
 
     machine.wram[0x30] = 0;
     snes_bus_write(0x4200, 0x00);
+    snes_bus_write(0x4207, 44); /* HTIME = 300: past the visible cut, the
+                                 * match waits for the HDMA boundary */
+    snes_bus_write(0x4208, 1);
+    snes_bus_write(0x4200, 0x10);
+    snes_frame();
+    CHECK(machine.wram[0x30] == 262u % 256u);
+    snes_bus_write(0x4200, 0x00);
     snes_bus_write(0x4209, 100); /* VTIME = 100 */
     snes_bus_write(0x420a, 0);
     snes_bus_write(0x4200, 0x20); /* V-IRQ enabled */
+    machine.wram[0x30] = 0;
     snes_frame();
     CHECK(machine.wram[0x30] == 1);
+    machine.wram[0x30] = 0;
     snes_bus_write(0x4200, 0x00);
     /* without the $4211 read the level stays asserted: the handler loops
      * until the line's budget is spent */
@@ -484,6 +493,45 @@ static void irq_test(void) {
     snes_frame();
     CHECK(machine.timeup == 1 && machine.cpu.irq_line == 1);
     snes_bus_write(0x4200, 0x00);
+}
+
+/* The bus time of DMA and HDMA comes off the CPU's slices: the transfers
+ * book into dma_stolen (16 cycles of channel start-up, 8 a byte), and a
+ * frame of idle loops spends the frame's cycles less what the HDMA took. */
+static void timing_test(void) {
+    rom[0] = 0x80; rom[1] = 0xfe;
+    snes_init(rom, sizeof rom, 0, 0);
+    /* one channel, 256 bytes, mode 0 to the WRAM port, A fixed on the
+     * ROM's first byte ($00:0000 is the WRAM mirror, $00:8000 is ROM) */
+    snes_bus_write(0x4300, 0x08);
+    snes_bus_write(0x4301, 0x80); /* B = $2180 */
+    snes_bus_write(0x4302, 0x00);
+    snes_bus_write(0x4303, 0x80); /* A = $00:8000 */
+    snes_bus_write(0x4304, 0x00);
+    snes_bus_write(0x4305, 0x00);
+    snes_bus_write(0x4306, 0x01); /* 256 bytes */
+    snes_bus_write(0x420b, 0x01);
+    CHECK(machine.dma_stolen == 16 + 8u * 256);
+    CHECK(machine.wram[0] == 0x80); /* the transfer happened */
+    /* one HDMA channel, mode 0, direct: a one-unit table at $00:8100 */
+    snes_bus_write(0x4300, 0x00);
+    snes_bus_write(0x4301, 0x80);
+    snes_bus_write(0x4304, 0x00); /* the table's bank */
+    snes_bus_write(0x4302, 0x00);
+    snes_bus_write(0x4303, 0x81);
+    memset(rom + 0x100, 0, 0x10); /* the earlier tests left tables there */
+    rom[0x100] = 0x01; /* one unit */
+    rom[0x101] = 0x00; /* then done */
+    snes_bus_write(0x420c, 0x01);
+    const uint32_t before = machine.cpu.cycles;
+    snes_frame();
+    /* the frame's full cycles, less what the HDMA took (a table read and
+     * one unit): the frame's CPU spend and the stolen time add up */
+    const uint32_t spent = machine.cpu.cycles - before;
+    CHECK(machine.dma_stolen == 24); /* the table read and unit, then the
+                                      * next line's zero count byte */
+    CHECK(spent == SNES_FRAME_CYCLES - machine.dma_stolen);
+    snes_bus_write(0x420c, 0x00);
 }
 
 /* The hardware multiply/divide unit: signed 8x8 -> $4216/7, unsigned
@@ -514,6 +562,7 @@ int main(void) {
     hdma_test();
     muldiv_test();
     irq_test();
+    timing_test();
     object_limits_test();
     modes_test();
     apu_test();

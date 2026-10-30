@@ -128,6 +128,8 @@ typedef struct {
     uint16_t htime, vtime; /* $4207-$420A, the H/V compare values */
     uint8_t timeup;        /* $4211 bit 7, cleared by the read */
     uint8_t h_irq_en, v_irq_en; /* $4200 bits 4-5 */
+    uint32_t dma_stolen;   /* the bus time DMA/HDMA took this frame, paid by
+                            * the CPU slices at their next boundary */
     uint8_t vblank, hblank;
     uint8_t screen[224 * 256 * 3]; /* the frame as the lines displayed it */
     uint16_t joypad, joy_auto, joy_shift;

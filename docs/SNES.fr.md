@@ -62,6 +62,13 @@ recompilateur.
   32000 Hz.
 - **Pad** : un contrôleur en lecture série ($4016) et automatique ($4218,
   temps approximé à trois lignes).
+- **Timing du bus** : le DMA général et le HDMA volent leur temps de bus au
+  CPU (modèle : 16 cycles de démarrage par canal, 8 par octet ; la tranche
+  d'atterrissage d'un DMA lancé en plein milieu est approximative, le total
+  sur la trame est exact) ; le S-SMP et le S-DSP gardent le temps complet de
+  leur ligne (ils tournent en parallèle sur la machine). Le H-IRQ en
+  dessous du dot 256 coupe la partie visible à son dot ; au-delà, il reste
+  sur la frontière après le HDMA.
 
 ### Ce qui n'est pas modélisé
 
@@ -69,13 +76,13 @@ Le son de l'écho (la zone RAM, le feedback, les filtres), le bruit du DSP,
 la modulation de pitch, l'interpolation gaussienne (les voix lisent leur
 plus proche échantillon), les tables ADSR exactes ; les modes PPU 5 et 6,
 l'EXBG du mode 7, les fenêtres, la mosaïque, la math de couleur et le
-sous-écran ; le coût temporel du DMA et du HDMA (les transferts sont
-instantanés) ; le point exact du HTIME dans la ligne (la comparaison tombe
-sur l'une des deux frontières de tranches) ; le résultat exact du DIV en
-dépassement du SPC700 ; les jeux qui remettent le S-SMP à zéro en cours de
-jeu ; le temps de lecture automatique exact. Les jeux dont les régions
-recompilées s'étendent au-delà d'une frontière de ligne s'arrêtent à
-l'instruction suivante du mode rapide : le contrat native == interpréteur
+sous-écran ; la tranche où atterrit un DMA lancé en plein milieu d'une
+tranche (le total sur la trame est exact) ; le HTIME au-delà du dot 256
+(la comparaison tombe sur la frontière après le HDMA) ; le résultat exact
+du DIV en dépassement du SPC700 ; les jeux qui remettent le S-SMP à zéro
+en cours de jeu ; le temps de lecture automatique exact. Les jeux dont les
+régions recompilées s'étendent au-delà d'une frontière de ligne s'arrêtent
+à l'instruction suivante du mode rapide : le contrat native == interpréteur
 est celui du mode précis.
 
 ## Le recompilateur 65C816 → C
@@ -123,26 +130,26 @@ construit doit imprimer le run_hash et les cycles de son `--interp` —
   titre, menu d'options puis partie jouable avec l'input scripté de
   `logs/dm_play.txt` (Start au titre, Start pour lancer). À 900 images le
   projet `--meta-precise` imprime
-  `run_hash=8194517e image_hash=29a1c939 audio_hash=eab62375`, identiques à
+  `run_hash=a6c2a068 image_hash=251726a3 audio_hash=e6f1d555`, identiques à
   son `--interp`, cycles compris. Le jeu sert son programme APU par le
   protocole IPL et se sert de l'unité de multiplication/division — les deux
   sont venues avec lui. Avec le profil du balayage (`tools/snes_sweep.py`,
-  300 images), le contrat tient aussi : `run_hash=56323b6b` des deux chemins,
-  5 475 instructions compilées (1 786 jouées).
+  300 images), le contrat tient aussi : `run_hash=fcb19a29` des deux chemins,
+  5 399 instructions compilées (1 803 jouées).
 - **Bucket** (homebrew, 256 Kio LoROM) démarre : après 120 images l'écran
   montre son fond pointillé animé (l'empreinte d'image change d'une image à
   l'autre) et le seau — les sprites du bas — suit la croix ; sur le harnais,
-  le chemin natif imprime `run_hash=6d91fdf7 image_hash=b295c090
-  audio_hash=50c84b85` à 120 images, identiques à son `--interp`. Bucket ne
+  le chemin natif imprime `run_hash=36ce60c9 image_hash=b295c090
+  audio_hash=10d3e0a5` à 120 images, identiques à son `--interp`. Bucket ne
   boote pas le S-SMP (A-RAM vide, pas de poignée de main) : son silence est
   le silence du jeu, pas un manque du cœur. Ces observations restent une
   comparaison avec rien : aucun émulateur de référence n'a tourné ici.
 - Les cartouches de diagnostic locales (`output/snes/`, hors dépôt) : le
   projet `--meta-precise` imprime le run_hash de son `--interp` sur les
-  trois, cycles compris — CPUADC `run_hash=7dbfb4a8 image_hash=a713d1ab` (le
+  trois, cycles compris — CPUADC `run_hash=fe22828c image_hash=a713d1ab` (le
   mode décimal, l'écart qui a révélé le BCD incomplet du code généré),
-  CPUMOV `run_hash=c35d727d image_hash=53b0775f`, CPUMSC
-  `run_hash=3b61fc48 image_hash=78729dc5`, à 120 images.
+  CPUMOV `run_hash=369f787f image_hash=53b0775f`, CPUMSC
+  `run_hash=c0effa8f image_hash=78729dc5`, à 120 images.
 
 ## La cible PC
 
@@ -158,7 +165,8 @@ et la fenêtre tourne tête-bêche sur la CI (SDL2 requis).
 ## Chantiers suivants
 
 Les fenêtres et la math de couleur (les effets de la quasi-totalité des
-jeux), l'écho du DSP, l'EXBG du mode 7, le coût temporel du DMA/HDMA, le
-point exact du HTIME, la précision des tables ADSR, une comparaison contre
-un émulateur de référence (le bilan mednafen de la PCE), et — si un jour
-les budgets de RAM le permettent — le streaming des ROMs pour les consoles.
+jeux), l'écho du DSP (le bruit, la gaussienne, la modulation de pitch, les
+tables ADSR), l'EXBG du mode 7, les coprocesseurs de cartouche (DSP-1,
+SuperFX, SA-1), une comparaison contre un émulateur de référence (le bilan
+mednafen de la PCE), et — si un jour les budgets de RAM le permettent — le
+streaming des ROMs pour les consoles.

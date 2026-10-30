@@ -56,6 +56,8 @@ static uint32_t snes_run_hash(void) {
         (uint8_t)machine.vtime, (uint8_t)(machine.vtime >> 8),
         machine.timeup, machine.h_irq_en, machine.v_irq_en,
         machine.hdma_enable,
+        (uint8_t)machine.dma_stolen, (uint8_t)(machine.dma_stolen >> 8),
+        (uint8_t)(machine.dma_stolen >> 16), (uint8_t)(machine.dma_stolen >> 24),
         machine.hdma_run[0], machine.hdma_run[1], machine.hdma_run[2], machine.hdma_run[3],
         machine.hdma_run[4], machine.hdma_run[5], machine.hdma_run[6], machine.hdma_run[7],
         machine.hdma_done[0], machine.hdma_done[1], machine.hdma_done[2], machine.hdma_done[3],

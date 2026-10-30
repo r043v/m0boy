@@ -273,15 +273,20 @@ static void irq_fire(void) {
  * reaches the next line), the CPU runs the visible part, the HBlank flag
  * rises and the rest of the line runs.  VBlank and the NMI enter at line
  * 225; the auto-read latches there and its time is approximated at three
- * lines.  The H/V timers compare at the line's start (a V match without
- * H) and at one of the line's two slice boundaries for the H match: the
- * visible part is 3/4 of the line, HTIME's exact dot is not modelled. */
+ * lines.  The V match without H fires at the line's start; the H match
+ * below dot 256 cuts the visible part at its own dot, above it stays on
+ * the boundary after the HDMA.  The DMA and the HDMA pay
+ * their bus time out of the CPU's slices at their next boundary (the
+ * total across the frame is exact, the slice where a mid-slice transfer
+ * lands is not); the S-SMP and the S-DSP keep their line's full time —
+ * they run in parallel on hardware. */
 void snes_frame(void) {
     const uint32_t start = machine.cpu.cycles;
     uint32_t at_line = start;
     machine.frames++;
     machine.vblank = 0;
     machine.hblank = 0;
+    machine.dma_stolen = 0;
     machine.cpu.vblank_flag = 0;
     memset(machine.hdma_run, 0, sizeof machine.hdma_run);
     memset(machine.hdma_done, 0, sizeof machine.hdma_done);
@@ -301,25 +306,32 @@ void snes_frame(void) {
         const int v_match = line == machine.vtime;
         machine.cpu.irq_line = machine.timeup; /* the level persists */
         if (machine.v_irq_en && v_match && !machine.h_irq_en) irq_fire();
-        if (machine.h_irq_en && (!machine.v_irq_en || v_match) && machine.htime < 256) irq_fire();
         if (line < 224) snes_render_line(line, machine.screen + line * 256u * 3u);
-        const uint32_t until = start + (uint32_t)(((uint64_t)(line + 1) * SNES_FRAME_CYCLES) / 262);
+        const uint32_t line_start = start + (uint32_t)(((uint64_t)line * SNES_FRAME_CYCLES) / 262);
+        const uint32_t line_cy = start + (uint32_t)(((uint64_t)(line + 1) * SNES_FRAME_CYCLES) / 262) - line_start;
         /* three quarters of the line's cycles before the HBlank flag, as
          * the visible part's share of the 1364 dots, rounded */
-        const uint32_t visible = start +
-            (uint32_t)(((uint64_t)line * SNES_FRAME_CYCLES) / 262 +
-                       ((((uint64_t)(line + 1) * SNES_FRAME_CYCLES) / 262 -
-                         ((uint64_t)line * SNES_FRAME_CYCLES) / 262) * 3) / 4);
-        snes_run(&machine.cpu, visible);
-        const uint32_t at_visible = machine.cpu.cycles;
+        const uint32_t visible = line_start + line_cy - line_cy / 4;
+        uint32_t at_slice = at_line;
+        const int h_match = machine.h_irq_en && (!machine.v_irq_en || v_match);
+        if (h_match && machine.htime < 256) {
+            /* the H compare cuts the visible part at its own dot */
+            const uint32_t h_at = line_start +
+                (uint32_t)((uint64_t)machine.htime * line_cy / 1364) -
+                machine.dma_stolen;
+            snes_run(&machine.cpu, h_at);
+            snes_apu_run(machine.cpu.cycles - at_slice);
+            at_slice = machine.cpu.cycles;
+            irq_fire();
+        }
+        snes_run(&machine.cpu, visible - machine.dma_stolen);
+        snes_apu_run(machine.cpu.cycles - at_slice);
+        at_slice = machine.cpu.cycles;
         machine.hblank = 1;
         snes_hdma_line();
-        if (machine.h_irq_en && (!machine.v_irq_en || v_match) && machine.htime >= 256) irq_fire();
-        snes_run(&machine.cpu, until);
-        /* the S-SMP and the S-DSP follow the CPU's clock through both
-         * slices of the line */
-        snes_apu_run(at_visible - at_line);
-        snes_apu_run(machine.cpu.cycles - at_visible);
+        if (h_match && machine.htime >= 256) irq_fire();
+        snes_run(&machine.cpu, line_start + line_cy - machine.dma_stolen);
+        snes_apu_run(machine.cpu.cycles - at_slice);
         at_line = machine.cpu.cycles;
     }
     machine.hblank = 0;

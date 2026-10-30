@@ -115,12 +115,18 @@ static const uint8_t dma_offsets[8][4] = {
 };
 static const uint8_t dma_periods[8] = {1,2,2,4,4,4,2,4};
 
+/* The general DMA: the transfers run at once from the $420B write, and the
+ * CPU pays their bus time — a model of 16 cycles of channel start-up then 8
+ * cycles per byte (the full-speed transfer), accounted into dma_stolen and
+ * taken off the CPU slices at their next boundary.  The model's shape is an
+ * estimate: no SNES has measured it here. */
 void snes_dma_start(uint8_t mask) {
     for (unsigned ch = 0; ch < 8; ch++) if (mask & (1u << ch)) {
         uint8_t *d = machine.dma[ch];
         unsigned mode = d[0] & 7, addr = d[2] | d[3] << 8;
         unsigned n = d[5] | d[6] << 8;
         if (!n) n = 65536;
+        machine.dma_stolen += 16 + 8u * n;
         for (unsigned i = 0; i < n; i++) {
             uint32_t a = (uint32_t)d[4] << 16 | addr;
             uint32_t b = 0x2100u | (uint8_t)(d[1] + dma_offsets[mode][i % dma_periods[mode]]);
@@ -132,8 +138,9 @@ void snes_dma_start(uint8_t mask) {
     }
 }
 
-/* The HDMA: one unit per line, run at the line's H-Blank (no bus time
- * stolen, as the general DMA).  Each enabled channel walks its table at
+/* The HDMA: one unit per line, run at the line's H-Blank, its bus time
+ * paid like the general DMA's (8 cycles a byte, 16 the table read, 16 more
+ * an indirect pointer).  Each enabled channel walks its table at
  * A1Bx/A2Ax: a 0 count byte ends the channel for the frame, bit 7 of the
  * count byte repeats the entry's unit every line for count lines, and
  * 01h-7Fh transfer one unit then pause count-1 lines.  Indirect mode
@@ -154,10 +161,12 @@ void snes_hdma_line(void) {
             uint16_t table = d[8] | d[9] << 8;
             const uint32_t at = (uint32_t)d[4] << 16 | table;
             const uint8_t b = snes_bus_read(at);
+            machine.dma_stolen += 8;
             table++;
             if (d[0] & 0x40) {
                 const uint16_t p = (uint16_t)(snes_bus_read((uint32_t)d[4] << 16 | table) |
                                              snes_bus_read((uint32_t)d[4] << 16 | (uint16_t)(table + 1)) << 8);
+                machine.dma_stolen += 16;
                 table += 2;
                 d[5] = (uint8_t)p; d[6] = (uint8_t)(p >> 8); /* DASx: the data address */
             }
@@ -173,6 +182,7 @@ void snes_hdma_line(void) {
         }
         if ((machine.hdma_rep[ch] && machine.hdma_count[ch]) ||
             (!machine.hdma_rep[ch] && machine.hdma_count[ch] == machine.hdma_len[ch])) {
+            machine.dma_stolen += 8u * period;
             for (unsigned j = 0; j < period; j++) {
                 const uint32_t bport = 0x2100u | (uint8_t)(d[1] + dma_offsets[mode][j]);
                 if (d[0] & 0x40) { /* indirect: the data at DASBx/DASx */
