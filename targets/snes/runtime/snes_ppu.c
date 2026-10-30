@@ -72,6 +72,11 @@ void snes_ppu_write(uint16_t at, uint8_t v) {
         vram_inc(r & 1);
         break;
     case 0x21: machine.cgaddr = (unsigned)v << 1; break;
+    case 0x32: /* COLDATA: the fixed color, one channel per write */
+        if (v & 0x20) machine.fixed_color = (uint16_t)((machine.fixed_color & ~31u) | (v & 31));
+        if (v & 0x40) machine.fixed_color = (uint16_t)((machine.fixed_color & ~0x3e0u) | ((v & 31) << 5));
+        if (v & 0x80) machine.fixed_color = (uint16_t)((machine.fixed_color & ~0x7c00u) | ((v & 31) << 10));
+        break;
     case 0x22:
         if (!(machine.cgaddr & 1)) machine.cg_latch = v;
         else {
@@ -386,48 +391,124 @@ static void mode7_pixel(const uint8_t *r, unsigned x, unsigned y, unsigned *out_
     *out_prio = 7;
 }
 
-void snes_render_line(unsigned y, uint8_t *row) {
-    const uint8_t *r = machine.ppu_regs;
-    unsigned mode = r[5] & 7, bright = r[0] & 15;
-    uint8_t obj_color[256] = {0}, obj_prio[256] = {0};
-    if (!(r[0] & 0x80) && (r[0x2c] & 0x10) && (mode <= 4 || mode == 7))
-        object_line(y, obj_color, obj_prio);
+/* Where the windows leave a layer visible: layers 0-3 the BGs, 4 the
+ * objects, 5 the color window the math regions use.  A disabled window
+ * stays neutral (visible); the color window with no window enabled is
+ * "outside" everywhere, per the register doc. */
+static unsigned layer_window(const uint8_t *r, unsigned layer, unsigned x) {
+    const uint8_t sel = r[0x23 + (layer >> 1)] >> ((layer & 1) * 4);
+    const unsigned e1 = sel & 1, i1 = (sel >> 1) & 1, e2 = (sel >> 2) & 1, i2 = (sel >> 3) & 1;
+    const unsigned op = ((layer < 4 ? r[0x2a] : r[0x2b]) >> ((layer & 3) * 2)) & 3;
+    if (!e1 && !e2) return layer == 5 ? 0 : 1;
+    const unsigned neutral = (op == 1 || op == 3);
+    unsigned v1 = neutral, v2 = neutral;
+    if (e1) { const unsigned in = x >= r[0x26] && x < r[0x27]; v1 = i1 ^ in; }
+    if (e2) { const unsigned in = x >= r[0x28] && x < r[0x29]; v2 = i2 ^ in; }
+    unsigned v;
+    if (op == 0) v = v1 | v2;
+    else if (op == 1) v = v1 & v2;
+    else if (op == 2) v = v1 ^ v2;
+    else v = (v1 ^ v2) ^ 1;
+    return v;
+}
+
+/* One screen's row: each pixel's BGR555 color and the layer that painted
+ * it (0-3 the BGs, 4 the objects, 5 the backdrop, 6 nothing — black).
+ * The sub flag picks TM/TS and the sub windows; the sub screen exists for
+ * the color math's addend (and one day the hires modes).  Mosaic samples
+ * the mosaic-sized block's first pixel of the enabled BGs. */
+static void compose_row(const uint8_t *r, unsigned mode, unsigned y, unsigned sub,
+                        const uint8_t win[6][256], const uint8_t *obj_color,
+                        const uint8_t *obj_prio, uint16_t *color_row, uint8_t *layer_row) {
+    const unsigned tm = sub ? r[0x2d] : r[0x2c];
+    const unsigned tw = sub ? r[0x2f] : r[0x2e];
+    const unsigned mosa = r[6], msize = (mosa >> 4) + 1;
+    static const uint8_t sprite_priority[2][4] = {{3,6,9,12}, {3,5,8,11}};
     for (unsigned x = 0; x < 256; x++) {
-        unsigned color = 0, best = 0, painted = 0;
+        unsigned color = 0, best = 0, layer = 6;
         if (!(r[0] & 0x80) && (mode <= 4 || mode == 7)) {
-            if (obj_color[x]) {
-                static const uint8_t sprite_priority[2][4] = {{3,6,9,12}, {3,5,8,11}};
+            const unsigned w4 = (tw & 0x10) ? win[4][x] : 1;
+            if ((tm & 0x10) && obj_color[x] && w4) {
                 best = sprite_priority[mode == 0 ? 0 : 1][obj_prio[x]];
                 const unsigned oc = obj_color[x];
                 color = machine.cgram[(oc * 2) & 511] | machine.cgram[(oc * 2 + 1) & 511] << 8;
-                painted = 1;
+                layer = 4;
             }
             if (mode == 7) {
+                const unsigned mx = (mosa & 1) ? (x / msize) * msize : x;
                 unsigned c7 = 0, p7 = 0;
-                mode7_pixel(r, x, y, &c7, &p7);
-                if (c7 && p7 > best) {
+                mode7_pixel(r, mx, y, &c7, &p7);
+                if (c7 && p7 > best && ((tw & 1) ? win[0][x] : 1)) {
                     best = p7;
                     color = c7;
-                    painted = 1;
+                    layer = 0;
                 }
             } else if (mode <= 4) {
                 for (int bg = 3; bg >= 0; bg--) {
-                    if (!(r[0x2c] & (1 << bg))) continue;
+                    if (!(tm & (1 << bg))) continue;
+                    if ((tw & (1 << bg)) && !win[bg][x]) continue;
+                    /* mosaic: the block's first pixel stands for the block */
+                    const unsigned mx = (mosa & (1 << bg)) ? (x / msize) * msize : x;
                     unsigned c = 0, p = 0;
-                    tile_pixel(r, mode, (unsigned)bg, x, y, &c, &p);
+                    tile_pixel(r, mode, (unsigned)bg, mx, y, &c, &p);
                     if (c && p > best) {
                         best = p;
                         color = c;
-                        painted = 1;
+                        layer = (unsigned)bg;
                     }
                 }
             }
         }
-        /* nothing painted: the backdrop, CGRAM's color 0 */
-        unsigned c = painted ? color : machine.cgram[0] | machine.cgram[1] << 8;
-        if (r[0] & 0x80) c = 0;
+        /* nothing painted: the backdrop, CGRAM's color 0 (also behind the
+         * layers' transparent pixels: the screens compose over it) */
+        if (layer == 6 && !(r[0] & 0x80)) {
+            color = machine.cgram[0] | machine.cgram[1] << 8;
+            layer = 5;
+        }
+        color_row[x] = (uint16_t)color;
+        layer_row[x] = (uint8_t)layer;
+    }
+}
+
+void snes_render_line(unsigned y, uint8_t *row) {
+    const uint8_t *r = machine.ppu_regs;
+    unsigned mode = r[5] & 7, bright = r[0] & 15;
+    uint8_t obj_color[256] = {0}, obj_prio[256] = {0};
+    if (!(r[0] & 0x80) && ((r[0x2c] | r[0x2d]) & 0x10) && (mode <= 4 || mode == 7))
+        object_line(y, obj_color, obj_prio);
+    uint8_t win[6][256];
+    for (unsigned l = 0; l < 6; l++)
+        for (unsigned x = 0; x < 256; x++)
+            win[l][x] = (uint8_t)layer_window(r, l, x);
+    uint16_t main_c[256], sub_c[256];
+    uint8_t main_l[256], sub_l[256];
+    compose_row(r, mode, y, 0, win, obj_color, obj_prio, main_c, main_l);
+    compose_row(r, mode, y, 1, win, obj_color, obj_prio, sub_c, sub_l);
+    /* the color math ($2130 ccmm--sd): the main pixel clips to black in
+     * the color window's region (the spotlight's trick), math is prevented
+     * in another region, and the painted main pixel adds or subtracts the
+     * subscreen (or the fixed color), half if $2131.6 */
+    const unsigned clip = (r[0x30] >> 6) & 3, prevent = (r[0x30] >> 4) & 3;
+    const unsigned from_sub = r[0x30] & 2, half = r[0x31] & 0x40, op_sub = r[0x31] & 0x80;
+    for (unsigned x = 0; x < 256; x++) {
+        unsigned m = main_c[x], l = main_l[x];
+        if (clip == 3 || (clip && (clip == 1 ? !win[5][x] : win[5][x]))) m = 0;
+        const unsigned stopped =
+            prevent == 3 || (prevent && (prevent == 1 ? !win[5][x] : win[5][x]));
+        if (l < 6 && !stopped && (r[0x31] & (1u << l))) {
+            /* the sprites' math reaches their palettes 4-7 only */
+            if (l != 4 || obj_color[x] >= 0xc0) {
+                unsigned a = from_sub ? sub_c[x] : machine.fixed_color;
+                for (unsigned k = 0; k < 3; k++) {
+                    unsigned av = (a >> (k * 5)) & 31, mv = (m >> (k * 5)) & 31;
+                    if (half) av = (av >> 1) + (op_sub ? 1 : 0);
+                    mv = op_sub ? (mv > av ? mv - av : 0) : (mv + av > 31 ? 31 : mv + av);
+                    m = (m & ~(31u << (k * 5))) | (mv << (k * 5));
+                }
+            }
+        }
         for (unsigned k = 0; k < 3; k++) {
-            unsigned v = (c >> (k * 5)) & 31;
+            unsigned v = (m >> (k * 5)) & 31;
             *row++ = (uint8_t)((v * 255u * bright + 232u) / (31u * 15u));
         }
     }

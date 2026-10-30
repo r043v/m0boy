@@ -168,6 +168,84 @@ static void object_limits_test(void) {
     CHECK((snes_bus_read(0x213f) & 0x60) == 0x40); /* time over */
 }
 
+/* The windows ($2123-$212F) mask the layers, the color math ($2130-$2132)
+ * adds or subtracts the subscreen or the fixed color, the mosaic
+ * quantifies the BGs: mode 1's pixels against the model. */
+static void window_math_test(void) {
+    snes_init(rom, sizeof rom, 0, 0);
+    /* mode 1, BG1: map at $0400, entry 0 = tile 1 whose row 0 is eight
+     * red pixels; entries 1-2 = an empty tile (the backdrop shows) */
+    snes_bus_write(0x2105, 1);
+    snes_bus_write(0x2107, 4);
+    snes_bus_write(0x2121, 1);
+    snes_bus_write(0x2122, 0x1f);
+    snes_bus_write(0x2122, 0x00); /* CGRAM color 1 = red */
+    snes_bus_write(0x212c, 1);    /* TM: BG1 */
+    snes_bus_write(0x2100, 15);
+    machine.vram[0x20] = 0xff;    /* tile 1, row 0, plane 0 */
+    for (unsigned i = 0; i < 64; i += 2) { /* the row's map: tile 1 */
+        machine.vram[0x800 + i] = 0x01;
+        machine.vram[0x801 + i] = 0x00;
+    }
+    machine.vram[0x802] = 0x02;   /* entries 1-2 = tile 2, empty */
+    machine.vram[0x804] = 0x02;
+    snes_render(image);
+    CHECK(image[0] == 255 && image[1] == 0 && image[2] == 0);
+    CHECK(image[8 * 3] == 0 && image[16 * 3] == 0);
+
+    /* window 1 on BG1, applied to the main screen: visible in [100,200) */
+    snes_bus_write(0x2126, 100);
+    snes_bus_write(0x2127, 200);
+    snes_bus_write(0x2123, 0x01);
+    snes_bus_write(0x212e, 0x01);
+    snes_render(image);
+    CHECK(image[50 * 3] == 0 && image[150 * 3] == 255);
+    snes_bus_write(0x2123, 0x03); /* inverted */
+    snes_render(image);
+    CHECK(image[50 * 3] == 255 && image[150 * 3] == 0);
+    snes_bus_write(0x2123, 0x05); /* window 2 [0,200) as well */
+    snes_bus_write(0x2128, 0);
+    snes_bus_write(0x2129, 200);
+    snes_bus_write(0x212a, 0x01); /* AND: as window 1 alone */
+    snes_render(image);
+    CHECK(image[50 * 3] == 0 && image[150 * 3] == 255);
+    snes_bus_write(0x212a, 0x02); /* XOR with [0,200): only [0,100) shows */
+    snes_render(image);
+    CHECK(image[50 * 3] == 255 && image[150 * 3] == 0);
+    snes_bus_write(0x212a, 0);
+    snes_bus_write(0x2123, 0);
+
+    /* color math: BG1's red plus or minus the fixed color */
+    snes_bus_write(0x2130, 0x00); /* the addend is the fixed color */
+    snes_bus_write(0x2132, 0x9f); /* fixed = blue 31 (bits 7-5 pick B, G, R) */
+    snes_bus_write(0x2131, 0x01); /* BG1, add */
+    snes_render(image);
+    CHECK(image[0] == 255 && image[1] == 0 && image[2] == 255);
+    snes_bus_write(0x2131, 0x81); /* subtract */
+    snes_render(image);
+    CHECK(image[0] == 255 && image[1] == 0 && image[2] == 0);
+    snes_bus_write(0x2131, 0x41); /* add, half: +15 blue */
+    snes_render(image);
+    CHECK(image[2] == (15 * 255u * 15u + 232u) / (31u * 15u));
+    snes_bus_write(0x2131, 0x20); /* only the backdrop joins the math */
+    snes_render(image);
+    CHECK(image[0] == 255 && image[1] == 0 && image[2] == 0);
+    CHECK(image[8 * 3] == 0 && image[8 * 3 + 1] == 0 && image[8 * 3 + 2] == 255);
+    snes_bus_write(0x2131, 0x01);
+    snes_bus_write(0x2130, 0x02); /* the addend is the subscreen: its
+                                   * backdrop is black, nothing adds */
+    snes_render(image);
+    CHECK(image[0] == 255 && image[1] == 0 && image[2] == 0);
+    snes_bus_write(0x2131, 0);
+    snes_bus_write(0x2130, 0);
+
+    /* mosaic 16x16 on BG1: x=8-15 sample x=0, the red tile */
+    snes_bus_write(0x2106, 0xf1);
+    snes_render(image);
+    CHECK(image[8 * 3] == 255 && image[16 * 3] == 0);
+    snes_bus_write(0x2106, 0);
+}
+
 /* Modes 3 (direct color), 2 (offset-per-tile) and 7 (the identity
  * matrix fetches the map and tileset bytes). */
 static void modes_test(void) {
@@ -564,6 +642,7 @@ int main(void) {
     irq_test();
     timing_test();
     object_limits_test();
+    window_math_test();
     modes_test();
     apu_test();
     /* the SRAM window: mirrored through the $6000-$7FFF offsets of the

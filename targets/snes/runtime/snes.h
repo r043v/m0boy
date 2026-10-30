@@ -120,6 +120,7 @@ typedef struct {
     uint8_t cg_latch, oam_latch, scroll_latch;
     uint8_t m7[12];      /* the mode 7 matrix A-D, then the center X and Y */
     uint8_t m7_lo, m7_phase; /* the write-twice latch of $211B-$2120 */
+    uint16_t fixed_color; /* $2132's latched fixed color, BGR555 */
     uint8_t obj_range_over, obj_time_over; /* the $213F flags of the last evaluated line */
     uint8_t timer_latch;
     uint8_t mpy_a, div_l, div_h; /* the multiply/divide unit's operands */

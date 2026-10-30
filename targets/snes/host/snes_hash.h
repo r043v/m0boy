@@ -54,6 +54,7 @@ static uint32_t snes_run_hash(void) {
         machine.timer_latch,
         (uint8_t)machine.htime, (uint8_t)(machine.htime >> 8),
         (uint8_t)machine.vtime, (uint8_t)(machine.vtime >> 8),
+        (uint8_t)machine.fixed_color, (uint8_t)(machine.fixed_color >> 8),
         machine.timeup, machine.h_irq_en, machine.v_irq_en,
         machine.hdma_enable,
         (uint8_t)machine.dma_stolen, (uint8_t)(machine.dma_stolen >> 8),
