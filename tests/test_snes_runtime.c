@@ -342,6 +342,49 @@ static void apu_test(void) {
     const int expected = (7 * 4096) * 0x7f0 / 2048 * 0x7f / 128 * 0x7f / 128;
     CHECK(s0 > expected - 500 && s0 < expected + 500);
 
+    /* the echo: EON hears voice 0, the FIR's first tap only, no feedback,
+     * the buffer at page $05 with EDL 1; its writes stop with ECEN */
+    machine.dsp.regs[0x4f] = 0x01;  /* EON */
+    machine.dsp.regs[0x6d] = 0x05;  /* ESA: the buffer at $0500 */
+    machine.dsp.regs[0x7d] = 0x01;  /* EDL: 512 stereo samples */
+    machine.dsp.regs[0x0f] = 0x7f;  /* FIR C0 */
+    machine.dsp.regs[0x2c] = machine.dsp.regs[0x3c] = 0x7f; /* EVOL */
+    memset(machine.smp.ram + 0x500, 0, 0x800);
+    snes_frame();
+    CHECK(machine.smp.ram[0x500] || machine.smp.ram[0x501] ||
+          machine.smp.ram[0x502] || machine.smp.ram[0x503]);
+    machine.dsp.regs[0x6c] = 0x20;  /* ECEN off: the writes stop */
+    memset(machine.smp.ram + 0x500, 0, 0x800);
+    snes_frame();
+    CHECK(!machine.smp.ram[0x500] && !machine.smp.ram[0x502]);
+    machine.dsp.regs[0x6c] = 0x00;
+    machine.dsp.regs[0x4f] = 0;
+
+    /* the noise: voice 1 keyed on nothing, NON on, the ring carries the
+     * LFSR's two-level output */
+    machine.dsp.regs[0x4e] = 0x02;  /* NON voice 1 */
+    machine.dsp.regs[0x10] = machine.dsp.regs[0x11] = 0x7f;
+    machine.dsp.regs[0x12] = 0x00; machine.dsp.regs[0x13] = 0x10;
+    machine.dsp.regs[0x14] = 0x00;
+    machine.dsp.regs[0x17] = 0x7f;  /* GAIN direct */
+    machine.dsp.regs[0x6c] = 0x1f;  /* the noise's fastest rate */
+    machine.dsp.key_on = 0x02;      /* KON voice 1, through the latch */
+    snes_frame();
+    CHECK(machine.dsp.noise_lfsr);
+    {
+        int nonzero = 0, negative = 0, positive = 0;
+        /* the ring is circular: the frame's samples end at ring_w */
+        for (unsigned k = 0; k < 15; k++) { /* ~17 samples a frame */
+            const int v = machine.dsp.ring[(machine.dsp.ring_w - 2 - 2 * k) & 8191];
+            if (v) nonzero++;
+            if (v < 0) negative++;
+            if (v > 0) positive++;
+        }
+        CHECK(nonzero > 10 && negative > 1 && positive > 1);
+    }
+    machine.dsp.regs[0x4e] = 0;
+    machine.dsp.regs[0x6c] = 0;
+
     /* the timers: T0 at 8000/(7+1) = 1000 Hz, T2 at 64000/(7+1) */
     machine.smp.control = 0x07;
     machine.smp.ram[0xfa] = 7; machine.smp.ram[0xfc] = 7;

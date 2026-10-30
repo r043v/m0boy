@@ -55,7 +55,13 @@ recompilateur.
   atteint la suivante.
 - **APU** : le SPC700 interprété (les 256 opcodes, les timers à 8/64 kHz,
   leurs sorties à source/(cible+1)), la RAM A de 64 Kio et l'amorce IPL
-  simulée en C suivant le protocole réel de la ROM IPL (pas de ROM exécutée) :
+  simulée en C suivant le protocole réel de la ROM IPL (pas de ROM exécutée).
+  Le DSP rend l'écho (le tampon dans la RAM A, le FIR à huit prises, le
+  feedback, le EDL et les EVOL, les écritures coupées par ECEN), le bruit
+  ($4E, le LFSR de $6C), la modulation de pitch (PMON) et l'interpolation
+  gaussienne — les algorithmes du noyau bsnes ; l'échantillon stéréo sort
+  tous les 1024 cycles SPC (~1000 Hz), le WAV du harnais l'étiquette
+  32000 Hz : le rythme réel du ring n'est pas celui d'une SNS.
   à la remise à zéro le S-SMP répond $AA/$BB sur les ports 0/1 ; $CC sur le
   port 0 avec le mot de destination dans $2142/3 ouvre un transfert (octet
   haut non nul = blocs, nul = saut) ; chaque octet porte son compteur sur
@@ -77,9 +83,9 @@ recompilateur.
 
 ### Ce qui n'est pas modélisé
 
-Le son de l'écho (la zone RAM, le feedback, les filtres), le bruit du DSP,
-la modulation de pitch, l'interpolation gaussienne (les voix lisent leur
-plus proche échantillon), les tables ADSR exactes ; les modes PPU 5 et 6,
+Le délai de cinq échantillons du KON, les entrées EXTL/EXTR, le half du
+fixed color, les tables ADSR prises une à une (les formes et les périodes
+documentées sont celles du code) ; les modes PPU 5 et 6,
 l'EXBG du mode 7 ; le half sur l'addend fixe (le modèle halve toujours le
 second opérande, la quirk matérielle du fixed color n'est pas tranchée) ;
 la tranche où atterrit un DMA lancé en plein milieu d'une
@@ -124,7 +130,9 @@ construit doit imprimer le run_hash et les cycles de son `--interp` —
   DMA vidéo, les ports OAM/CGRAM, les limites d'objets, les modes 2/3/7,
   l'amorce APU complète (un programme uploadé par le protocole IPL réel arme
   une voix, l'échantillon attendu arrive dans le ring ; la signature $AA/$BB
-  de la remise à zéro vérifiée), la multiplication et la division ($4202-
+  de la remise à zéro vérifiée), l'écho du DSP (les écritures dans le
+  tampon, stoppées par ECEN) et le bruit (le LFSR sème et alterne les
+  signes), la multiplication et la division ($4202-
   $4217, division par zéro comprise), les fenêtres (les deux fenêtres, leurs
   inversions, ET/OU/XOR/XNOR par couche, TMW/TSW), la math de couleur
   ($2130-$2132 : le clip noir, la prévention, l'addend fixe ou sous-écran,
@@ -140,26 +148,26 @@ construit doit imprimer le run_hash et les cycles de son `--interp` —
   titre, menu d'options puis partie jouable avec l'input scripté de
   `logs/dm_play.txt` (Start au titre, Start pour lancer). À 900 images le
   projet `--meta-precise` imprime
-  `run_hash=ac1e4b48 image_hash=f2a41fc5 audio_hash=e6f1d555`, identiques à
+  `run_hash=9daadc39 image_hash=f2a41fc5 audio_hash=e6f1d555`, identiques à
   son `--interp`, cycles compris. Le jeu sert son programme APU par le
   protocole IPL et se sert de l'unité de multiplication/division — les deux
   sont venues avec lui. Avec le profil du balayage (`tools/snes_sweep.py`,
-  300 images), le contrat tient aussi : `run_hash=e2b29de1` des deux chemins,
+  300 images), le contrat tient aussi : `run_hash=9655a595` des deux chemins,
   5 399 instructions compilées (1 803 jouées).
 - **Bucket** (homebrew, 256 Kio LoROM) démarre : après 120 images l'écran
   montre son fond pointillé animé (l'empreinte d'image change d'une image à
   l'autre) et le seau — les sprites du bas — suit la croix ; sur le harnais,
-  le chemin natif imprime `run_hash=9dd56c31 image_hash=b295c090
+  le chemin natif imprime `run_hash=fcd7e14c image_hash=b295c090
   audio_hash=10d3e0a5` à 120 images, identiques à son `--interp`. Bucket ne
   boote pas le S-SMP (A-RAM vide, pas de poignée de main) : son silence est
   le silence du jeu, pas un manque du cœur. Ces observations restent une
   comparaison avec rien : aucun émulateur de référence n'a tourné ici.
 - Les cartouches de diagnostic locales (`output/snes/`, hors dépôt) : le
   projet `--meta-precise` imprime le run_hash de son `--interp` sur les
-  trois, cycles compris — CPUADC `run_hash=8d8e6d5c image_hash=a713d1ab` (le
+  trois, cycles compris — CPUADC `run_hash=8c3b5971 image_hash=a713d1ab` (le
   mode décimal, l'écart qui a révélé le BCD incomplet du code généré),
-  CPUMOV `run_hash=a94f066f image_hash=53b0775f`, CPUMSC
-  `run_hash=aecf6017 image_hash=78729dc5`, à 120 images.
+  CPUMOV `run_hash=0bb94aeb image_hash=53b0775f`, CPUMSC
+  `run_hash=147af44c image_hash=78729dc5`, à 120 images.
 
 ## La cible PC
 
@@ -174,8 +182,7 @@ et la fenêtre tourne tête-bêche sur la CI (SDL2 requis).
 
 ## Chantiers suivants
 
-L'écho du DSP (le bruit, la gaussienne, la modulation de pitch, les
-tables ADSR), les modes PPU 5/6 et l'EXBG du mode 7, les coprocesseurs de cartouche (DSP-1,
+Les modes PPU 5/6 et l'EXBG du mode 7, les coprocesseurs de cartouche (DSP-1,
 SuperFX, SA-1), une comparaison contre un émulateur de référence (le bilan
 mednafen de la PCE), et — si un jour les budgets de RAM le permettent — le
 streaming des ROMs pour les consoles.

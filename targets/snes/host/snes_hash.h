@@ -92,6 +92,16 @@ static uint32_t snes_run_hash(void) {
     h = snes_fnv(machine.smp.ram, sizeof machine.smp.ram, h);
     h = snes_fnv(machine.dsp.regs, sizeof machine.dsp.regs, h);
     h = snes_fnv(&machine.dsp.key_on, 3, h);
+    { /* the echo's ring position and taps, the noise generator */
+        const uint8_t es[] = {
+            (uint8_t)machine.dsp.echo_offset, (uint8_t)(machine.dsp.echo_offset >> 8),
+            (uint8_t)machine.dsp.echo_length, (uint8_t)(machine.dsp.echo_length >> 8),
+            machine.dsp.echo_hist_pos,
+            (uint8_t)machine.dsp.noise_lfsr, (uint8_t)(machine.dsp.noise_lfsr >> 8),
+        };
+        h = snes_fnv(es, sizeof es, h);
+        h = snes_fnv(machine.dsp.echo_hist, sizeof machine.dsp.echo_hist, h);
+    }
     for (unsigned v = 0; v < 8; v++) {
         const uint8_t vs[] = {
             (uint8_t)machine.dsp.voice[v].env, (uint8_t)(machine.dsp.voice[v].env >> 8),
@@ -101,6 +111,11 @@ static uint32_t snes_run_hash(void) {
             (uint8_t)machine.dsp.voice[v].src, (uint8_t)(machine.dsp.voice[v].src >> 8),
             (uint8_t)machine.dsp.voice[v].start, (uint8_t)(machine.dsp.voice[v].start >> 8),
             (uint8_t)machine.dsp.voice[v].loop, (uint8_t)(machine.dsp.voice[v].loop >> 8),
+            (uint8_t)machine.dsp.voice[v].buf_pos,
+            (uint8_t)machine.dsp.voice[v].hist[0], (uint8_t)(machine.dsp.voice[v].hist[0] >> 8),
+            (uint8_t)machine.dsp.voice[v].hist[1], (uint8_t)(machine.dsp.voice[v].hist[1] >> 8),
+            (uint8_t)machine.dsp.voice[v].hist[2], (uint8_t)(machine.dsp.voice[v].hist[2] >> 8),
+            (uint8_t)machine.dsp.voice[v].hist[3], (uint8_t)(machine.dsp.voice[v].hist[3] >> 8),
         };
         h = snes_fnv(vs, sizeof vs, h);
     }

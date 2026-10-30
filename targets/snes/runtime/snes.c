@@ -235,6 +235,7 @@ void snes_reset(void) {
     machine.smp.psw = 0x02;
     machine.smp.ports_out[0] = 0xAA;
     machine.smp.ports_out[1] = 0xBB;
+    machine.dsp.noise_lfsr = 0x4000; /* the noise generator's seed */
     /* the reset vector, always of bank $00 in emulation mode */
     c->pc = (uint16_t)(snes_bus_read(0x00FFFC) | snes_bus_read(0x00FFFD) << 8);
 }

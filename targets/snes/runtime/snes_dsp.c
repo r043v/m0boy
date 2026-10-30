@@ -3,12 +3,13 @@
  * at 32000 Hz (one sample per 1024 SPC cycles, from snes_smp.c's clock).
  * The register file is what the SPC700 sees at $F2/$F3.
  *
- * Deliberately not modelled: the echo (its RAM area, feedback, filters,
- * the EDL delay), the noise source, pitch modulation (PMON), the 4-point
- * gaussian interpolation (the voices read their nearest sample), the
- * sample-accurate ADSR step tables (the envelopes follow the shapes with
- * the documented period table), the soft reset's exact clears, and the
- * EXTL/EXTR inputs.  The mute and reset bits of $6C are honoured. */
+ * The echo (its A-RAM buffer, the FIR, the feedback, the EDL delay and
+ * EVOL), the noise source ($4E, the LFSR of $6C), pitch modulation (PMON,
+ * the previous voice's output bent into the pitch) and the 4-point
+ * gaussian interpolation follow the algorithms of the bsnes core; the
+ * envelopes follow the documented shapes with the period table.  Not
+ * modelled: the soft reset's exact clears, the EXTL/EXTR inputs, the
+ * KON's five-sample delay.  The mute and reset bits of $6C are honoured. */
 #include "snes.h"
 
 #include <string.h>
@@ -21,6 +22,44 @@ static const uint16_t rate_period[32] = {
     384, 320, 256, 192, 160, 128, 96, 80,
     64, 48, 40, 32, 24, 20, 16, 12,
     10, 8, 6, 5, 4, 3, 2, 1
+};
+
+/* the gaussian interpolation's table, the one every emulator replicates
+ * from the S-SMP's reverse engineering (bsnes's gaussian_table) */
+static const int16_t gauss_table[512] = {
+
+     0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,
+     1,    1,    1,    1,    1,    1,    1,    1,    1,    1,    1,    2,    2,    2,    2,    2,
+     2,    2,    3,    3,    3,    3,    3,    4,    4,    4,    4,    4,    5,    5,    5,    5,
+     6,    6,    6,    6,    7,    7,    7,    8,    8,    8,    9,    9,    9,   10,   10,   10,
+    11,   11,   11,   12,   12,   13,   13,   14,   14,   15,   15,   15,   16,   16,   17,   17,
+    18,   19,   19,   20,   20,   21,   21,   22,   23,   23,   24,   24,   25,   26,   27,   27,
+    28,   29,   29,   30,   31,   32,   32,   33,   34,   35,   36,   36,   37,   38,   39,   40,
+    41,   42,   43,   44,   45,   46,   47,   48,   49,   50,   51,   52,   53,   54,   55,   56,
+    58,   59,   60,   61,   62,   64,   65,   66,   67,   69,   70,   71,   73,   74,   76,   77,
+    78,   80,   81,   83,   84,   86,   87,   89,   90,   92,   94,   95,   97,   99,  100,  102,
+   104,  106,  107,  109,  111,  113,  115,  117,  118,  120,  122,  124,  126,  128,  130,  132,
+   134,  137,  139,  141,  143,  145,  147,  150,  152,  154,  156,  159,  161,  163,  166,  168,
+   171,  173,  175,  178,  180,  183,  186,  188,  191,  193,  196,  199,  201,  204,  207,  210,
+   212,  215,  218,  221,  224,  227,  230,  233,  236,  239,  242,  245,  248,  251,  254,  257,
+   260,  263,  267,  270,  273,  276,  280,  283,  286,  290,  293,  297,  300,  304,  307,  311,
+   314,  318,  321,  325,  328,  332,  336,  339,  343,  347,  351,  354,  358,  362,  366,  370,
+   374,  378,  381,  385,  389,  393,  397,  401,  405,  410,  414,  418,  422,  426,  430,  434,
+   439,  443,  447,  451,  456,  460,  464,  469,  473,  477,  482,  486,  491,  495,  499,  504,
+   508,  513,  517,  522,  527,  531,  536,  540,  545,  550,  554,  559,  563,  568,  573,  577,
+   582,  587,  592,  596,  601,  606,  611,  615,  620,  625,  630,  635,  640,  644,  649,  654,
+   659,  664,  669,  674,  678,  683,  688,  693,  698,  703,  708,  713,  718,  723,  728,  732,
+   737,  742,  747,  752,  757,  762,  767,  772,  777,  782,  787,  792,  797,  802,  806,  811,
+   816,  821,  826,  831,  836,  841,  846,  851,  855,  860,  865,  870,  875,  880,  884,  889,
+   894,  899,  904,  908,  913,  918,  923,  927,  932,  937,  941,  946,  951,  955,  960,  965,
+   969,  974,  978,  983,  988,  992,  997, 1001, 1005, 1010, 1014, 1019, 1023, 1027, 1032, 1036,
+  1040, 1045, 1049, 1053, 1057, 1061, 1066, 1070, 1074, 1078, 1082, 1086, 1090, 1094, 1098, 1102,
+  1106, 1109, 1113, 1117, 1121, 1125, 1128, 1132, 1136, 1139, 1143, 1146, 1150, 1153, 1157, 1160,
+  1164, 1167, 1170, 1174, 1177, 1180, 1183, 1186, 1190, 1193, 1196, 1199, 1202, 1205, 1207, 1210,
+  1213, 1216, 1219, 1221, 1224, 1227, 1229, 1232, 1234, 1237, 1239, 1241, 1244, 1246, 1248, 1251,
+  1253, 1255, 1257, 1259, 1261, 1263, 1265, 1267, 1269, 1270, 1272, 1274, 1275, 1277, 1279, 1280,
+  1282, 1283, 1284, 1286, 1287, 1288, 1290, 1291, 1292, 1293, 1294, 1295, 1296, 1297, 1297, 1298,
+  1299, 1300, 1300, 1301, 1302, 1302, 1303, 1303, 1303, 1304, 1304, 1304, 1304, 1304, 1305, 1305,
 };
 
 /* the register file's voice base */
@@ -61,6 +100,8 @@ static void voice_load_source(unsigned v) {
     machine.dsp.voice[v].loop = (uint16_t)(loop * 8u);
 }
 
+static int16_t voice_next_sample(unsigned v);
+
 /* start a voice: the BRR reader at its start block, the envelope at the
  * attack or the direct gain */
 static void voice_start(unsigned v) {
@@ -78,6 +119,11 @@ static void voice_start(unsigned v) {
         d->voice[v].adsr_state = 0; /* the gain's direct value */
         d->voice[v].env = (VREG(v, 7) & 0x80) ? 0 : (VREG(v, 7) & 0x7F) << 4;
     }
+    /* the first sample decodes at once and fills the gaussian's taps: the
+     * four-tap read has nothing behind it yet */
+    d->voice[v].out = voice_next_sample(v);
+    for (unsigned k = 0; k < 4; k++) d->voice[v].hist[k] = d->voice[v].out;
+    d->voice[v].buf_pos = 0;
     d->voice[v].rate_count = 0;
 }
 
@@ -180,7 +226,31 @@ static void voice_envelope(unsigned v) {
     }
 }
 
-/* one output sample: the KON/KOF latches, the voices, the mix, the ring */
+/* the voice's output through the gaussian's four taps (or the noise), the
+ * amplitude after the envelope, rounded even as the core does */
+static int32_t voice_amplitude(unsigned v) {
+    snes_dsp_t *d = &machine.dsp;
+    int output;
+    if (GREG(0x4E) & (1u << v)) { /* NON: the noise generator instead */
+        output = (int16_t)(d->noise_lfsr << 1);
+    } else {
+        const unsigned frac = d->voice[v].pos & 0xFFF;
+        const int16_t *fwd = gauss_table + 255 - ((frac >> 4) & 0xFF);
+        const int16_t *rev = gauss_table + ((frac >> 4) & 0xFF);
+        const unsigned o = d->voice[v].buf_pos; /* the oldest tap */
+        output = (fwd[0] * d->voice[v].hist[o & 3]) >> 11;
+        output += (fwd[256] * d->voice[v].hist[(o + 1) & 3]) >> 11;
+        output += (rev[256] * d->voice[v].hist[(o + 2) & 3]) >> 11;
+        output = (int16_t)output;
+        output += (rev[0] * d->voice[v].hist[(o + 3) & 3]) >> 11;
+        if (output > 32767) output = 32767;
+        if (output < -32768) output = -32768;
+        output &= ~1;
+    }
+    return ((int32_t)output * d->voice[v].env) >> 11 & ~1;
+}
+
+/* one output sample: the KON/KOF latches, the voices, the echo, the ring */
 void snes_dsp_sample(void) {
     snes_dsp_t *d = &machine.dsp;
     if (d->key_on) {
@@ -196,29 +266,81 @@ void snes_dsp_sample(void) {
             }
         d->key_off = 0;
     }
+    /* the noise generator's rate shares the envelope period table */
+    const unsigned nper = rate_period[GREG(0x6C) & 0x1F] ? rate_period[GREG(0x6C) & 0x1F] : 1;
+    if (++d->noise_count >= nper) {
+        d->noise_count = 0;
+        const unsigned bit = (d->noise_lfsr ^ (d->noise_lfsr >> 1)) & 1;
+        d->noise_lfsr = (uint16_t)((d->noise_lfsr >> 1) | bit << 14);
+    }
     int32_t mix_l = 0, mix_r = 0;
+    int32_t prev_amp = 0;
+    const uint8_t pmon = GREG(0x4D), eon = GREG(0x4F);
     for (unsigned v = 0; v < 8; v++) {
         voice_envelope(v);
-        const unsigned pitch = (VREG(v, 3) << 8 | VREG(v, 2)) & 0x3FFF;
-        if (!pitch || !d->voice[v].env) continue;
-        d->voice[v].pos += pitch;
-        while (d->voice[v].pos >= 0x1000) { /* the next BRR sample */
-            d->voice[v].pos -= 0x1000;
-            d->voice[v].out = voice_next_sample(v);
+        unsigned pitch = (VREG(v, 3) << 8 | VREG(v, 2)) & 0x3FFF;
+        if ((pmon & (1u << v)) && v) /* PMON: the previous voice bends it */
+            pitch = (unsigned)(pitch + ((prev_amp >> 5) * pitch) / 1024);
+        if (pitch && d->voice[v].env) {
+            d->voice[v].pos += pitch;
+            if (d->voice[v].pos > 0x7FFF) d->voice[v].pos = 0x7FFF;
+            while (d->voice[v].pos >= 0x1000) { /* the next BRR sample */
+                d->voice[v].pos -= 0x1000;
+                d->voice[v].out = voice_next_sample(v);
+                d->voice[v].hist[d->voice[v].buf_pos] = d->voice[v].out;
+                d->voice[v].buf_pos = (uint8_t)((d->voice[v].buf_pos + 1) & 3);
+            }
         }
-        const int32_t s = ((int32_t)d->voice[v].out * d->voice[v].env) >> 11;
+        const int32_t s = voice_amplitude(v);
+        prev_amp = s;
         const int8_t vl = (int8_t)VREG(v, 0), vr = (int8_t)VREG(v, 1);
-        mix_l += (s * vl) >> 7;
-        mix_r += (s * vr) >> 7;
+        const int32_t amp_l = (s * vl) >> 7, amp_r = (s * vr) >> 7;
+        mix_l = (int16_t)(mix_l + amp_l); /* the adds clamp through the cast */
+        mix_r = (int16_t)(mix_r + amp_r);
+        if (eon & (1u << v)) { /* the echo hears the EON voices */
+            d->echo_feed[0] = (int16_t)(d->echo_feed[0] + amp_l);
+            d->echo_feed[1] = (int16_t)(d->echo_feed[1] + amp_r);
+        }
     }
     const uint8_t flg = GREG(0x6C);
-    if (flg & 0x20) { /* the soft reset: the voices quiet until cleared */
+    if (flg & 0x80) { /* the soft reset: the voices quiet until cleared */
         mix_l = mix_r = 0;
         for (unsigned v = 0; v < 8; v++) d->voice[v].env = 0;
     }
-    if (flg & 0x10) { mix_l = mix_r = 0; } /* mute */
+    /* mute sits on bit 6; the voices run their envelopes under it */
+    /* the echo: the FIR over the delayed samples read out of the A-RAM,
+     * the feedback written back (the writes stop with FLG bit 5), the EVOL
+     * volumes mixing it into the output */
+    d->echo_hist_pos = (uint8_t)((d->echo_hist_pos + 1) & 7);
+    const unsigned edl = GREG(0x7D) & 0x0F;
+    if (!d->echo_offset) d->echo_length = edl << 11;
+    int32_t echo_in[2];
+    for (unsigned c = 0; c < 2; c++) {
+        const uint16_t at = (uint16_t)((GREG(0x6D) << 8) + d->echo_offset + c * 2);
+        const int s = (int16_t)(machine.smp.ram[at] | machine.smp.ram[(uint16_t)(at + 1)] << 8);
+        d->echo_hist[c][d->echo_hist_pos] = (int16_t)(s >> 1);
+        int acc = 0;
+        for (unsigned i = 0; i < 8; i++)
+            acc += (d->echo_hist[c][(d->echo_hist_pos + i + 1) & 7] *
+                    (int8_t)GREG(0x0F + i * 0x10)) >> 6;
+        echo_in[c] = (int16_t)acc & ~1;
+    }
+    d->echo_offset = (uint16_t)(d->echo_offset + 4);
+    if (d->echo_offset >= d->echo_length) d->echo_offset = 0;
+    for (unsigned c = 0; c < 2; c++) {
+        const int fb = (int16_t)(d->echo_feed[c] + ((echo_in[c] * (int8_t)GREG(0x0D)) >> 7)) & ~1;
+        if (!(flg & 0x20)) { /* ECEN: the buffer takes the feedback */
+            const uint16_t at = (uint16_t)((GREG(0x6D) << 8) + d->echo_offset - 4 + c * 2);
+            machine.smp.ram[at] = (uint8_t)fb;
+            machine.smp.ram[(uint16_t)(at + 1)] = (uint8_t)(fb >> 8);
+        }
+        d->echo_feed[c] = 0;
+    }
+    if (flg & 0x40) { mix_l = mix_r = 0; } /* mute */
     const int8_t ml = (int8_t)GREG(0x0C), mr = (int8_t)GREG(0x1C);
-    int32_t l = (mix_l * ml) >> 7, r = (mix_r * mr) >> 7;
+    const int8_t el = (int8_t)GREG(0x2C), er = (int8_t)GREG(0x3C);
+    int32_t l = (int16_t)((mix_l * ml) >> 7) + (((echo_in[0] * el) >> 7) & ~1);
+    int32_t r = (int16_t)((mix_r * mr) >> 7) + (((echo_in[1] * er) >> 7) & ~1);
     if (l > 32767) l = 32767;
     if (l < -32768) l = -32768;
     if (r > 32767) r = 32767;

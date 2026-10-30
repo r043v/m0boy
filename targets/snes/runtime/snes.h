@@ -89,9 +89,17 @@ typedef struct {
     uint8_t key_on, key_off, end_flags;
     int16_t ring[8192];
     uint16_t ring_r, ring_w;
+    uint16_t echo_offset, echo_length; /* the echo buffer's ring position */
+    uint8_t echo_hist_pos;             /* the FIR taps' history head */
+    int16_t echo_hist[2][8];           /* the delayed samples the FIR reads */
+    int16_t echo_feed[2];              /* the voices' echo input + feedback */
+    uint16_t noise_lfsr;               /* the 15-bit noise generator */
+    uint16_t noise_count;
     struct {
         int16_t prev1, prev2;  /* the BRR filter's history */
         int16_t out;           /* the voice's latest decoded sample */
+        int16_t hist[4];       /* the gaussian's four taps, oldest first */
+        uint8_t buf_pos;       /* the next tap slot to fill */
         uint16_t start, loop;  /* block addresses from the directory */
         uint16_t src;          /* the current block's byte address */
         uint16_t pos;          /* the fixed-point read position (1/4096 samples) */
