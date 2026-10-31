@@ -14,6 +14,9 @@
                                             (firmware built with -DMETA_DEBUG_RESET=1)
   meta-usb.py restart --elf E               buttons before each RAM enable write (game
                                             restart; firmware built with -DGBL_DEBUG_RESTART=1)
+  meta-usb.py monitor [--baud N] [--log F]  any serial console as a printf terminal: bytes that are
+                                            not a sam-ba answer (AKA's Serial.printf, any
+                                            firmware's text) shown as lines; reconnects
   meta-usb.py boot                          1200-baud touch: the console goes to sam-ba
   meta-usb.py flash FIRMWARE.bin            boot, then bossac at 0x4000, then reset
 
@@ -22,6 +25,11 @@ same protocol as the bootloader's.  Profiling samples the PC SysTick interrupts
 every millisecond into a ring of 32 (meta_usb_prof); the host drains it
 every 20 ms (about 50 USB requests a second) and maps the PCs to the ELF's
 functions.
+
+Linux, macOS and Windows: ports come from pyserial's USB listing (no /dev path
+assumed), tools are looked up with their .exe suffix, PATH, then PlatformIO's
+packages.  `monitor` needs no ELF and no META: without --port it takes the META
+firmware's port, else the only USB serial port present (several: it lists them).
 """
 from __future__ import annotations
 
@@ -86,12 +94,19 @@ class Console:
         self.s.flush()
 
 
+EXE = ".exe" if os.name == "nt" else ""
+
+
+def pio_dir() -> str:
+    return os.environ.get("PLATFORMIO_CORE_DIR") or os.path.join(os.path.expanduser("~"), ".platformio")
+
+
 def toolchain(tool: str) -> str:
     name = "arm-none-eabi-" + tool
     found = shutil.which(name)
     if found:
         return found
-    for path in glob.glob(os.path.expanduser("~/.platformio/packages/toolchain-gccarmnoneeabi*/bin/" + name)):
+    for path in glob.glob(os.path.join(pio_dir(), "packages", "toolchain-gccarmnoneeabi*", "bin", name + EXE)):
         return path
     sys.exit(name + " not found (PATH or PlatformIO's toolchain)")
 
@@ -438,6 +453,78 @@ def cmd_restart(c: Console, elf: str) -> None:
                             for k in range(max(0, bank_pos - 16), bank_pos)))
 
 
+def monitor_port(port: str | None) -> str | None:
+    if port:
+        return port
+    found = find_port(APP_PID)
+    if found:
+        return found
+    usb = [p for p in serial.tools.list_ports.comports() if p.vid is not None]
+    if len(usb) == 1:
+        return usb[0].device
+    if usb:
+        sys.exit("several serial ports, pick one with --port:\n" +
+                 "\n".join("  %s  %04x:%04x  %s" % (p.device, p.vid, p.pid, p.description) for p in usb))
+    return None
+
+
+def printable(b: bytes) -> str:
+    return b.decode("utf-8", errors="backslashreplace").replace("\t", "    ")
+
+
+def cmd_monitor(port: str | None, baud: int, log: str | None, stamp: bool) -> None:
+    """Every received byte is text: split on newlines, partial lines flushed after
+    200 ms of silence, undecodable bytes shown as \\xNN.  Reconnects when the
+    console goes away (reset, flash, cable)."""
+    f = open(log, "a", buffering=1) if log else None
+
+    def emit(line: str) -> None:
+        line = line.rstrip("\r")
+        if stamp:
+            line = time.strftime("%H:%M:%S ") + line
+        print(line, flush=True)
+        if f:
+            f.write(line + "\n")
+
+    s, buf, last, announced = None, b"", time.time(), False
+    try:
+        while True:
+            try:
+                if s is None:
+                    dev = monitor_port(port)
+                    if not dev:
+                        if not announced:
+                            print("waiting for a serial port...", file=sys.stderr, flush=True)
+                            announced = True
+                        time.sleep(0.5)
+                        continue
+                    s = serial.Serial(dev, baud, timeout=0.05)
+                    announced = False
+                    print("# %s %d baud" % (dev, baud), file=sys.stderr, flush=True)
+                data = s.read(4096)
+            except (OSError, serial.SerialException):
+                if s is not None:
+                    print("# console lost", file=sys.stderr, flush=True)
+                    try:
+                        s.close()
+                    except Exception:
+                        pass
+                s, buf = None, b""
+                time.sleep(0.5)
+                continue
+            if data:
+                buf += data
+                last = time.time()
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    emit(printable(line))
+            elif buf and time.time() - last > 0.2:
+                emit(printable(buf))
+                buf = b""
+    except KeyboardInterrupt:
+        pass
+
+
 def cmd_boot(port: str | None) -> None:
     port = port or find_port(APP_PID)
     if not port:
@@ -457,7 +544,7 @@ def cmd_flash(port: str | None, firmware: str) -> None:
     if not boot:
         cmd_boot(port)
         boot = find_port(BOOT_PID, wait=10)
-    bossac = shutil.which("bossac") or os.path.expanduser("~/.platformio/packages/tool-bossac/bossac")
+    bossac = shutil.which("bossac") or os.path.join(pio_dir(), "packages", "tool-bossac", "bossac" + EXE)
     subprocess.run([bossac, "-p", boot, "-o", "0x4000", "-e", "-w", "-v", firmware, "-R"], check=True)
 
 
@@ -498,6 +585,10 @@ def main() -> int:
     g.add_argument("--elf", required=True)
     t = sub.add_parser("reset")
     t.add_argument("--elf", required=True)
+    mo = sub.add_parser("monitor")
+    mo.add_argument("--baud", type=int, default=115200)
+    mo.add_argument("--log", help="also append the lines to this file")
+    mo.add_argument("--time", action="store_true", help="prefix each line with the time")
     sub.add_parser("boot")
     f = sub.add_parser("flash")
     f.add_argument("firmware")
@@ -508,6 +599,9 @@ def main() -> int:
         return 0
     if a.cmd == "flash":
         cmd_flash(a.port, a.firmware)
+        return 0
+    if a.cmd == "monitor":
+        cmd_monitor(a.port, a.baud, a.log, a.time)
         return 0
     if a.cmd == "trace":
         cmd_trace(a.port, a.elf, a.out, a.seconds)
