@@ -1,6 +1,6 @@
 /* The S-DSP: eight BRR voices with the ADSR/GAIN envelopes, the pitch
  * counters and the volumes, rendering stereo into a ring the host drains
- * at 32000 Hz (one sample per 1024 SPC cycles, from snes_smp.c's clock).
+ * at 32000 Hz (one sample per 32 SPC cycles, from snes_smp.c's clock).
  * The register file is what the SPC700 sees at $F2/$F3.
  *
  * The echo (its A-RAM buffer, the FIR, the feedback, the EDL delay and
@@ -160,7 +160,7 @@ static int16_t voice_next_sample(unsigned v) {
             d->voice[v].rate_count = 0;
             return (int16_t)out;
         }
-        d->voice[v].src = (uint16_t)(d->voice[v].src + 9);
+        else d->voice[v].src = (uint16_t)(d->voice[v].src + 9);
         d->voice[v].hdr = machine.smp.ram[d->voice[v].src];
     }
     return (int16_t)out;

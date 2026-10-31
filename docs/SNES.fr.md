@@ -60,8 +60,8 @@ recompilateur.
   feedback, le EDL et les EVOL, les écritures coupées par ECEN), le bruit
   ($4E, le LFSR de $6C), la modulation de pitch (PMON) et l'interpolation
   gaussienne — les algorithmes du noyau bsnes ; l'échantillon stéréo sort
-  tous les 1024 cycles SPC (~1000 Hz), le WAV du harnais l'étiquette
-  32000 Hz : le rythme réel du ring n'est pas celui d'une SNS.
+  tous les 32 cycles SPC (1024000/32000), le rythme du ring est celui
+  d'une SNS et le WAV du harnais est à 32000 Hz.
   à la remise à zéro le S-SMP répond $AA/$BB sur les ports 0/1 ; $CC sur le
   port 0 avec le mot de destination dans $2142/3 ouvre un transfert (octet
   haut non nul = blocs, nul = saut) ; chaque octet porte son compteur sur
@@ -101,7 +101,10 @@ est celui du mode précis.
 
 Comme le HuC6280 de la PCE : une instance d'instruction est une adresse
 24 bits sous un contexte (K, DBR, page directe, drapeaux M/X/E), la marche
-statique part du vecteur de reset et suit ce qu'elle prouve, et le
+statique part du vecteur de reset et suit ce qu'elle prouve — chaque
+instruction porte le contexte *résultant* de ce qui la suit (un SEP, un
+XCE ou un TCD le change) et les régions n'enchaînent que l'instance qui
+porte ce contexte-là —, et le
 dispatcher n'entre dans une région que si le contexte de la machine
 correspond encore. Le mode précis vérifie le budget après chaque
 instruction et sort avant toute accès possible à l'I/O ; le mode rapide ne
@@ -148,26 +151,25 @@ construit doit imprimer le run_hash et les cycles de son `--interp` —
   titre, menu d'options puis partie jouable avec l'input scripté de
   `logs/dm_play.txt` (Start au titre, Start pour lancer). À 900 images le
   projet `--meta-precise` imprime
-  `run_hash=9daadc39 image_hash=f2a41fc5 audio_hash=e6f1d555`, identiques à
+  `run_hash=37b5db72 image_hash=f2a41fc5 audio_hash=873178f5`, identiques à
   son `--interp`, cycles compris. Le jeu sert son programme APU par le
   protocole IPL et se sert de l'unité de multiplication/division — les deux
   sont venues avec lui. Avec le profil du balayage (`tools/snes_sweep.py`,
-  300 images), le contrat tient aussi : `run_hash=9655a595` des deux chemins,
+  300 images), le contrat tient aussi : `run_hash=535acb2e` des deux chemins,
   5 399 instructions compilées (1 803 jouées).
 - **Bucket** (homebrew, 256 Kio LoROM) démarre : après 120 images l'écran
   montre son fond pointillé animé (l'empreinte d'image change d'une image à
   l'autre) et le seau — les sprites du bas — suit la croix ; sur le harnais,
-  le chemin natif imprime `run_hash=fcd7e14c image_hash=b295c090
-  audio_hash=10d3e0a5` à 120 images, identiques à son `--interp`. Bucket ne
+  le chemin natif imprime `run_hash=8fa1030b image_hash=b295c090
+  audio_hash=1e120d65` à 120 images, identiques à son `--interp`. Bucket ne
   boote pas le S-SMP (A-RAM vide, pas de poignée de main) : son silence est
   le silence du jeu, pas un manque du cœur. Ces observations restent une
   comparaison avec rien : aucun émulateur de référence n'a tourné ici.
 - Les cartouches de diagnostic locales (`output/snes/`, hors dépôt) : le
   projet `--meta-precise` imprime le run_hash de son `--interp` sur les
-  trois, cycles compris — CPUADC `run_hash=8c3b5971 image_hash=a713d1ab` (le
-  mode décimal, l'écart qui a révélé le BCD incomplet du code généré),
-  CPUMOV `run_hash=0bb94aeb image_hash=53b0775f`, CPUMSC
-  `run_hash=147af44c image_hash=78729dc5`, à 120 images.
+  trois, cycles compris — CPUADC `run_hash=6494f940 image_hash=a713d1ab`,
+  CPUMOV `run_hash=4bba5727 image_hash=53b0775f`, CPUMSC
+  `run_hash=4289fb73 image_hash=78729dc5`, à 120 images.
 
 ## La cible PC
 

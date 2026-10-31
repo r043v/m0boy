@@ -97,3 +97,37 @@ Règles de maison rappelées : ROMs et artefacts hors dépôt
 (`output/`, `roms/`, `logs/` ignorés), empreintes jamais citées au-delà
 de ce qui a tourné, commit auteur r043v + trailer
 `Co-Authored-By: GLM <noreply@z.ai>`.
+
+## Séance du 31 octobre — le pas 1 du plan, plus un écart trouvé sur le chemin
+
+1. **Horloge du DSP à 32000 Hz** : `snes_smp.c` rend un échantillon
+   stéréo tous les 32 cycles SPC (1024000/32000) au lieu de 1024 — le
+   ring tourne au rythme d'une SNS, le WAV du harnais est honnête. Les
+   timers 8/64 kHz ne glissent pas (leurs échelles sont indépendantes).
+   Sur le chemin, `apu_test` a révélé un vrai bug du décodeur BRR : au
+   bout d'un bloc bouclé (drapeau end+loop), la lecture repartait de
+   l'adresse de boucle **plus 9 octets** — la voix tournait sur les
+   données du bloc de boucle au lieu de son début. Resté invisible avec
+   ~17 échantillons par trame ; les données du test bouclent désormais
+   sur un bloc qui sonne pareil. Empreintes audio re-enregistrées
+   (les images inchangées) :
+   Dr. Mario 900 images avec `logs/dm_play.txt` :
+   `run_hash=37b5db72 image_hash=f2a41fc5 audio_hash=873178f5` ;
+   Bucket 120 images : `8fa1030b/b295c090/1e120d65` ;
+   CPUADC `6494f940/a713d1ab/f071ecf5`, CPUMOV
+   `4bba5727/53b0775f/d76df505`, CPUMSC `4289fb73/78729dc5/c2812a45` ;
+   balayage Dr. Mario 300 images `run_hash=535acb2e`.
+2. **Écart trouvé et fermé : la marche de contexte du recompilateur**.
+   Le balayage sur les cartouches locales montrait CPUADC et bucket en
+   désaccord natif/interp (un écart antérieur à la séance, les projets
+   des cartouches de diagnostic n'avaient pas été rejoués après les
+   chantiers 1-3). La cause : le groupement des régions enchaînait
+   l'instance suivante sous le contexte *d'entrée* de l'instruction
+   précédente — après un `SEP #$20`, la région enchaînait l'instance M
+   clair de l'instruction suivante quand la marche l'avait aussi
+   visitée (un `PLA` 16 bits après un SEP qui force 8 bits, ici).
+   Correction : chaque instance porte son contexte *résultant*
+   (`follow_ctx`) et les régions comme les `go()` du fin de région
+   n'enchaînent que lui. Les quatre cartouches locales et Dr. Mario
+   reviennent natif == interp, cycles compris (`logs/snes_sweep.txt`).
+   Prochaine séance : reprendre le plan au pas 2 (DSP-1, puis ExHiROM).

@@ -327,6 +327,8 @@ static void apu_test(void) {
     machine.smp.ram[0x400] = 0xc0; /* shift 12, filter 0 */
     for (unsigned i = 1; i < 9; i++) machine.smp.ram[0x400 + i] = 0x77;
     machine.smp.ram[0x409] = 0x03; /* the next block: end + loop */
+    for (unsigned i = 0x40a; i <= 0x411; i++)
+        machine.smp.ram[i] = 0x77; /* the loop block sounds the same */
     machine.dsp.regs[0x5d] = 0x03; /* DIR */
     machine.dsp.regs[0x02] = 0x00; machine.dsp.regs[0x03] = 0x10; /* pitch 1.0 */
     machine.dsp.regs[0x00] = machine.dsp.regs[0x01] = 0x7f;       /* volumes */

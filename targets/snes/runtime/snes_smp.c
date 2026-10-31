@@ -665,7 +665,7 @@ static void smp_tick64k(void) {
 
 /* advance by `cpu_cycles` of the 65816's clock: the SPC700 runs unless
  * SLEEP/STOP holds it, the timers tick either way, and the DSP renders
- * one stereo sample per 1024 SPC cycles */
+ * one stereo sample per 32 SPC cycles (1024000/32000) */
 void snes_apu_run(uint32_t cpu_cycles) {
     snes_smp_t *s = &machine.smp;
     s->acc += (uint64_t)cpu_cycles * 1024000ULL;
@@ -679,7 +679,7 @@ void snes_apu_run(uint32_t cpu_cycles) {
         s->tick8k = (uint8_t)(s->tick8k + chunk);
         while (s->tick8k >= 128) { s->tick8k -= 128; smp_tick8k(); }
         s->dsp_acc += chunk;
-        while (s->dsp_acc >= 1024) { s->dsp_acc -= 1024; snes_dsp_sample(); }
+        while (s->dsp_acc >= 32) { s->dsp_acc -= 32; snes_dsp_sample(); }
         if (s->halted) continue; /* SLEEP/STOP: time passes, nothing runs */
         int64_t left = (int64_t)chunk;
         while (left > 0)

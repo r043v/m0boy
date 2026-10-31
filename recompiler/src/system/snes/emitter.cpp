@@ -298,6 +298,8 @@ struct Ins {
     bool has_target = false;
     bool falls = true;
     bool breaks = false;   /* the walk could not prove what follows runs under */
+    uint64_t follow_ctx = 0; /* the context what follows runs under (the walk's
+        nctx, the instance's own on a break) */
     uint32_t hits = 0;
     bool dynamic = false;
     bool tracked_a = false; /* the walk knew A here: a TCD's page is provable */
@@ -587,12 +589,13 @@ void Emitter::select(const std::vector<CoverageEntry>& coverage, EmitStats& stat
         if (getenv("SNES_EMIT_DEBUG"))
             fprintf(stderr, "walk %06X ctx=%012llX op=%d brk=%d falls=%d -> next=%06X nctx=%012llX\n",
                     s.pc, (unsigned long long)s.ctx, (int)in.info.op, brk, in.falls, in.next, (unsigned long long)nctx);
+        uint64_t fctx = nctx;
+        /* a break hands the mapping question back to the dispatcher:
+         * what follows is visited under the context it was decoded
+         * with, and entered only where the machine still agrees */
+        if (brk) fctx = s.ctx;
+        in.follow_ctx = fctx;
         if (in.falls) {
-            uint64_t fctx = nctx;
-            /* a break hands the mapping question back to the dispatcher:
-             * what follows is visited under the context it was decoded
-             * with, and entered only where the machine still agrees */
-            if (brk) fctx = s.ctx;
             visit(in.next, fctx, brk ? false : na_known, nav, brk ? false : nc_known, ncv);
         }
         if (in.has_target) {
@@ -669,7 +672,7 @@ void Emitter::plan() {
                            [&] {
                                const Ins& back = ins_.at(regions_.back().back());
                                return back.falls && !back.breaks && back.next == key.pc &&
-                                      back.ctx == key.ctx;
+                                      back.follow_ctx == key.ctx;
                            }();
         if (!joins) {
             regions_.emplace_back();
@@ -703,10 +706,12 @@ void Emitter::plan() {
 /* where control goes to reach `to24` from the from-instance's context
  * (a long target changes K, so its own context) */
 std::string Emitter::go(const Ins& from, uint32_t to24) const {
-    uint64_t ctx = from.ctx;
+    /* the landing runs under the from-instance's resulting context (a SEP
+     * or XCE changes it): the walk's follow_ctx, not the instance's own */
+    uint64_t ctx = from.follow_ctx;
     const Ins* src = &from;
-    if ((to24 >> 16) != ctx_k(from.ctx)) {
-        ctx = ctx_with_k(from.ctx, to24 >> 16);
+    if ((to24 >> 16) != ctx_k(from.follow_ctx)) {
+        ctx = ctx_with_k(from.follow_ctx, to24 >> 16);
         src = nullptr; /* the K write is the caller's job */
     }
     auto p = ins_.find(Key{to24, ctx});
