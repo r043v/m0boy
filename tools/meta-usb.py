@@ -26,6 +26,12 @@ every millisecond into a ring of 32 (meta_usb_prof); the host drains it
 every 20 ms (about 50 USB requests a second) and maps the PCs to the ELF's
 functions.
 
+The link is a plain serial line: sam-ba is only the request/answer protocol the META
+firmware speaks on it (R, W, O, V), so `read`, `write`, `prof`... work on any
+firmware that answers it, through its USB CDC or a USB-TTL adapter on a UART
+(--port, --baud), with the ELF read by the target's own binutils (--prefix or
+M0_TOOL_PREFIX).  Firmwares that only print (AKA's Serial.printf) use `monitor`.
+
 Linux, macOS and Windows: ports come from pyserial's USB listing (no /dev path
 assumed), tools are looked up with their .exe suffix, PATH, then PlatformIO's
 packages.  `monitor` needs no ELF and no META: without --port it takes the META
@@ -51,6 +57,8 @@ except ImportError:
     sys.exit("pyserial is required (pip install pyserial)")
 
 VID, APP_PID, BOOT_PID = 0x2341, 0x804D, 0x004D
+BAUD = 115200          # --baud (a USB CDC ignores it; a real UART, e.g. a USB-TTL adapter, does not)
+PREFIX = "arm-none-eabi-"  # --prefix: binutils of the target (xtensa-esp32s3-elf-, riscv32-esp-elf-, ...)
 BUTTONS = {"down": 0x01, "left": 0x02, "right": 0x04, "up": 0x08, "a": 0x10, "b": 0x20, "menu": 0x40, "home": 0x80}
 
 
@@ -70,7 +78,7 @@ class Console:
         port = port or find_port(APP_PID)
         if not port:
             sys.exit("no META firmware with USB found (2341:804d)")
-        self.s = serial.Serial(port, 115200, timeout=1)
+        self.s = serial.Serial(port, BAUD, timeout=1)
         time.sleep(0.2)
         self.s.reset_input_buffer()
 
@@ -102,11 +110,11 @@ def pio_dir() -> str:
 
 
 def toolchain(tool: str) -> str:
-    name = "arm-none-eabi-" + tool
+    name = PREFIX + tool
     found = shutil.which(name)
     if found:
         return found
-    for path in glob.glob(os.path.join(pio_dir(), "packages", "toolchain-gccarmnoneeabi*", "bin", name + EXE)):
+    for path in glob.glob(os.path.join(pio_dir(), "packages", "toolchain-*", "bin", name + EXE)):
         return path
     sys.exit(name + " not found (PATH or PlatformIO's toolchain)")
 
@@ -549,8 +557,13 @@ def cmd_flash(port: str | None, firmware: str) -> None:
 
 
 def main() -> int:
+    global BAUD, PREFIX
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--port")
+    ap.add_argument("--port", help="any serial device (COM3, /dev/ttyUSB0, /dev/cu.usbmodem..); "
+                    "without it the META firmware's USB id is looked for")
+    ap.add_argument("--baud", type=int, default=BAUD, help="serial speed (a real UART needs it right)")
+    ap.add_argument("--prefix", default=os.environ.get("M0_TOOL_PREFIX", PREFIX),
+                    help="binutils prefix of the target's ELF, for nm/addr2line (default arm-none-eabi-)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("info")
     r = sub.add_parser("read")
@@ -586,13 +599,13 @@ def main() -> int:
     t = sub.add_parser("reset")
     t.add_argument("--elf", required=True)
     mo = sub.add_parser("monitor")
-    mo.add_argument("--baud", type=int, default=115200)
     mo.add_argument("--log", help="also append the lines to this file")
     mo.add_argument("--time", action="store_true", help="prefix each line with the time")
     sub.add_parser("boot")
     f = sub.add_parser("flash")
     f.add_argument("firmware")
     a = ap.parse_args()
+    BAUD, PREFIX = a.baud, a.prefix
 
     if a.cmd == "boot":
         cmd_boot(a.port)
@@ -601,7 +614,7 @@ def main() -> int:
         cmd_flash(a.port, a.firmware)
         return 0
     if a.cmd == "monitor":
-        cmd_monitor(a.port, a.baud, a.log, a.time)
+        cmd_monitor(a.port, BAUD, a.log, a.time)
         return 0
     if a.cmd == "trace":
         cmd_trace(a.port, a.elf, a.out, a.seconds)
