@@ -893,6 +893,24 @@ int main(void) {
 
     /* The menu's "Redemarrer" comes back here (from inside the emulation:
      * longjmp drops its C frames). */
+#if defined(GBL_TARGET_PC) && GBL_TARGET_PC
+    /* memscan --export-playable writes its snapshot as slot 0 of the .STA:
+     * M0_STATE=<slot> boots straight into it — the first safe point performs
+     * the load, execution then restarts from the state's gbr.pc.  After
+     * gbl_reset: the request survives it, the early event check does not. */
+    {
+        const char *env = getenv("M0_STATE");
+        if (env && m0_state_used()) {
+            unsigned s = (unsigned)atoi(env);
+            if (s < GBL_STATE_SLOTS_OR_1 && (m0_state_used() >> s & 1u)) {
+                state_slot = (uint8_t)s;
+                state_op = STATE_LOAD;
+                gbl_safe_request = 1;
+                gbr.next_evt = gbr.cyc; /* reach an instruction check now */
+            }
+        }
+    }
+#endif
     int resumed = setjmp(restart_point);
 #if GBL_CACHE_UNIFIED
     gbl_stream_invalidate(); /* the menu's blocks, when it left by longjmp */
