@@ -81,10 +81,19 @@ cartouche synthétique dont il vérifie hash et pixels.
   et de DMA restent sur 16 bits : au-delà de $7FFF, les lectures donnent
   zéro et les écritures sont ignorées ; une copie SATB en fin de VRAM
   s'arrête à la limite. Le fond lit le BAT et les deux mots de motif une
-  fois par tuile de huit pixels, y compris avec un décalage horizontal.
+  fois par tuile de huit pixels, y compris avec un décalage horizontal
+  (la première tuile partielle rejette ses `BXR & 7` pixels de gauche —
+  un décalage de nibbles dans le mauvais sens y affichait un pixel noir
+  et la tuile décalée d'autant, visible en scrollant).
 - **VCE** : la table de 512 couleurs (B bits 0-2, R 3-5, G 6-8) et sa
-  LUT RGB565 ; la couleur 0 de chaque palette montre l'entrée 0 (le fond),
-  comme le FixPCache de mednafen.
+  LUT RGB565. Un pixel de fond dont le nibble de couleur vaut 0 montre
+  l'entrée 0 (le fond) — la substitution se fait à la lecture du pixel
+  (`(couleur & 0xF) ? pixel : 0`, comme la VCE de mednafen), pas dans la
+  LUT : un jeu peut réécrire n'importe quelle entrée, l'entrée 0 comprise,
+  après avoir posé sa palette (l'ancien aliasing écrit par FixPCache
+  rendait fausses les entrées couleur 0 réécrites après coup — les zones
+  transparentes de la carte sortaient dans la couleur de la palette au
+  lieu du fond).
 - **Timer** : un tick tous les 1024 cycles CPU, IRQ TIQ calée jusqu'à
   l'acquittement ($1402 en lecture ou $1403 en écriture), le rechargement
   au tick suivant. Les ticks tombent aux frontières de ligne (le jitter
@@ -187,8 +196,10 @@ reçoit des boutons (fermeture propre à la sortie, sur Échap comme sur
   référence comme côté m0boy) lance une vraie partie où le vaisseau
   obéit au pad — vérifié au score et à la capture (LEFT tenu : le
   vaisseau se déplace, l'écran diverge de la partie sans entrée).
-- **Comparaison de référence** : le cœur mednafen (beetle-pce-libretro)
-  piloté par un mini frontend libretro (avec `retro_set_controller_port_device`
+- **Comparaison de référence** : le cœur mednafen (beetle-pce-libretro,
+  reconstruit de ses sources en octobre 2026) piloté par un mini frontend
+  libretro (`logs/pce_mednafen_ref.c` : un script d'entrées « trame
+  boutons », la dernière trame en PPM, `retro_set_controller_port_device`
   — sans lui le pad de la référence reste mort, et la démo auto-jouée
   masquait tout écart d'entrée). Le titre colle image pour image, RUN y
   démarre une vraie partie des deux côtés, et les deux parties réelles
@@ -199,6 +210,21 @@ reçoit des boutons (fermeture propre à la sortie, sur Échap comme sur
   ennemi. Restent des écarts fins non tranchés : un décalage de scroll
   de quelques pixels (sur le titre comme en niveau, la référence est
   légèrement en avance) et le rythme exact de ce décalage.
+- **Cartouche de bord** (`logs/pce_edge_cart.py`, octobre 2026) : BAT
+  64×64 de tuiles distinctes, BXR=5 et BYR=$0A (décalages non alignés),
+  un sprite par la SATB auto, VRAM remplie par paires $0002/$0003 avec
+  select=2. Sur la même trame, m0boy et mednafen sortent **image
+  identique** — c'est elle qui a tranché les deux bugs d'octobre (le
+  décalage de nibbles de la première tuile partielle, la transparence du
+  fond) et validé le pas de sprite (`RCRCount - 1`).  Attention en
+  écrivant une telle cartouche : le BAT est à l'adresse fixe $0000, le
+  port VRAM n'écrit que si select=2, et TII incrémente sa destination
+  (inutilisable vers un port) — TIN n'écrit que les octets bas.
+- **Ouvert** : à trame égale après le RUN du titre, la progression de la
+  partie chez mednafen va plus vite que la m0boy (la référence atteint
+  la rivière vers la trame 800, m0boy vers 1500) alors que le titre est
+  image pour image — probablement la prise en compte du RUN (fenêtre de
+  scrutation différente) à trancher avec une trace d'entrées.
 - **e2e synthétique** (`tests/test_pce_e2e.py`) : cartouche générée en
   Python (vecteurs, TAM, VDC, VCE), deux exécutions même hash, pixels du
   fond et du caractère vérifiés ; la même cartouche en projet précis

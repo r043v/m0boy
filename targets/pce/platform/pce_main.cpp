@@ -73,7 +73,10 @@ static void send_row(const uint16_t *src, unsigned r) {
     /* m0_nearest(x, 160, 320) is (x + 1) / 2; the panel doubles the row,
      * so both panel rows carry the same pixels */
     uint16_t *a = batch[l], *b = batch[l + 1];
-    for (unsigned x = 0; x < 320; x++) a[x] = b[x] = m0_panel(src[(x + 1) >> 1]);
+    for (unsigned x = 0; x < 320; x++) {
+        const unsigned i = (x + 1) >> 1; /* m0_nearest(x, 160, 320) */
+        a[x] = b[x] = m0_panel(src[i < 160 ? i : 159]);
+    }
     if ((r & 3u) == 3u) m0_lcd_wide_submit(batch, 8);
     rows.slot ^= 1; /* m0_rows_send's flip: the blend reads the previous line */
 }

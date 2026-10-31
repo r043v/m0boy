@@ -85,7 +85,7 @@ static void draw_bg(vdc_t *v) {
         const uint16_t w0 = vram_read(v, address);
         const uint16_t w1 = vram_read(v, address + 8);
         const uint16_t palette = (bat >> 8) & 0xF0;
-        uint32_t s = cell_nibbles(w0, w1) << (4 * skip);
+        uint32_t s = cell_nibbles(w0, w1) >> (4 * skip);
         unsigned count = 8 - skip;
         if (count > width - x) count = width - x;
         for (unsigned i = 0; i < count; i++, s >>= 4)

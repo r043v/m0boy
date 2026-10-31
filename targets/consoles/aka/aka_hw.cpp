@@ -172,7 +172,10 @@ extern "C" uint32_t m0_lcd_send_rows(const void *buf, uint8_t row0, uint8_t rows
     const uint16_t *p = (const uint16_t *)buf;
     for (unsigned y = 0; y < rows && row0 + y < M0_SCREEN_ROWS; y++, p += 160) {
         /* m0_nearest(x, 160, 320) is (x + 1) / 2 */
-        for (unsigned x = 0; x < 320; x++) line[x] = p[(x + 1) >> 1];
+        for (unsigned x = 0; x < 320; x++) {
+            const unsigned i = (x + 1) >> 1;
+            line[x] = p[i < 160 ? i : 159];
+        }
         unsigned py = (row0 + y) * 240 / M0_PANEL_SRC_ROWS;
         unsigned end = (row0 + y + 1) * 240 / M0_PANEL_SRC_ROWS;
         while (py < end) draw_line(py++);

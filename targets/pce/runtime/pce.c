@@ -14,16 +14,15 @@ static const struct { char tag[8]; uint32_t version; const volatile void *frame,
     pce_input_probe __attribute__((used, aligned(4))) = { "m0input", 1, &machine.frames, &machine.input, 0 };
 
 /* the VCE: the 512-color table (B on bits 0-2, R on 3-5, G on 6-8) and
- * its RGB565 image; the color 0 of every palette shows the table's entry
- * 0 (the backdrop), as the mednafen core's FixPCache aliases them */
+ * its RGB565 image.  A pixel whose color nibble is 0 shows the table's
+ * entry 0 (the backdrop) — the substitution happens when the pixel is
+ * looked up (the row callback), not here: a game may rewrite any entry,
+ * entry 0 included, after the palette is set up. */
 static void vce_fix_lut(unsigned entry) {
     const uint16_t c = machine.vce_colors[entry & 0x1FF];
     const unsigned b = c & 7, r = (c >> 3) & 7, g = (c >> 6) & 7;
     machine.vce_lut[entry & 0x1FF] =
         (uint16_t)((((r * 36) >> 3) << 11) | (((g * 36) >> 2) << 5) | ((b * 36) >> 3));
-    if ((entry & 0xFF) == 0) /* the backdrop: every palette's color 0 */
-        for (unsigned x = 0; x < 16; x++)
-            machine.vce_lut[(entry & 0x100) + (x << 4)] = machine.vce_lut[entry & 0x1FF];
 }
 
 static uint8_t vce_read(unsigned at) {
@@ -234,8 +233,12 @@ void pce_frame(void) {
         }
         if (p->row) {
             const unsigned width = p->vdc.row_width < 1024 ? p->vdc.row_width : 1024;
-            for (unsigned x = 0; x < width; x++)
-                p->rowbuf[x] = p->vce_lut[p->vdc.linebuf[x] & 0x1FF];
+            for (unsigned x = 0; x < width; x++) {
+                /* the bg's color 0 is transparent: the backdrop's entry, as
+                 * the mednafen core picks it ((color & 0xF) ? pixel : 0) */
+                const uint16_t px = p->vdc.linebuf[x];
+                p->rowbuf[x] = p->vce_lut[(px & 0xF) ? px & 0x1FF : 0];
+            }
             p->row(p->host, line, p->rowbuf, width);
         }
     }
