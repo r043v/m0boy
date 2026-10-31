@@ -68,6 +68,18 @@ static uint32_t cell_nibbles(uint16_t w0, uint16_t w1) {
     return s0 | s1 << 1 | s2 << 2 | s3 << 3;
 }
 
+/* the bg pattern-row cache: the same tile row renders on many lines and
+ * many cells of a line, so the nibbles are keyed by the pattern row's
+ * address (16 entries, direct mapped — mednafen keeps the same per-tile
+ * cache).  A VRAM write drops the matching entry; $FFFF is the free tag
+ * (a row's address tops at $FFF7). */
+static uint16_t cell_cache_addr[16];
+static uint32_t cell_cache_bits[16];
+
+static void cell_cache_drop(unsigned address) {
+    cell_cache_addr[(address >> 3) & 15] = 0xFFFFu;
+}
+
 static void draw_bg(vdc_t *v) {
     const unsigned bat_width = bat_width_tab[(v->mwr >> 4) & 3];
     const unsigned bat_width_mask = bat_width - 1;
@@ -82,10 +94,19 @@ static void draw_bg(vdc_t *v) {
     for (unsigned x = 0; x < width;) {
         const uint16_t bat = v->vram[((bx >> 3) & bat_width_mask) | bat_y];
         const unsigned address = (bat & 0x0FFF) * 16 + line_sub;
-        const uint16_t w0 = vram_read(v, address);
-        const uint16_t w1 = vram_read(v, address + 8);
+        const unsigned slot = (address >> 3) & 15;
+        uint32_t s;
+        if (cell_cache_addr[slot] == address) {
+            s = cell_cache_bits[slot];
+        } else {
+            const uint16_t w0 = vram_read(v, address);
+            const uint16_t w1 = vram_read(v, address + 8);
+            s = cell_nibbles(w0, w1);
+            cell_cache_addr[slot] = (uint16_t)address;
+            cell_cache_bits[slot] = s;
+        }
         const uint16_t palette = (bat >> 8) & 0xF0;
-        uint32_t s = cell_nibbles(w0, w1) >> (4 * skip);
+        s >>= 4 * skip;
         unsigned count = 8 - skip;
         if (count > width - x) count = width - x;
         for (unsigned i = 0; i < count; i++, s >>= 4)
@@ -210,7 +231,10 @@ static void run_vram_dma(vdc_t *v) {
     const int ddir = (v->dcr & 0x08) ? -1 : 1;
     uint16_t len = v->lenr;
     do {
-        if (dst < VDC_VRAM_WORDS) v->vram[dst] = vram_read(v, src);
+        if (dst < VDC_VRAM_WORDS) {
+            v->vram[dst] = vram_read(v, src);
+            cell_cache_drop(dst);
+        }
         src = (uint16_t)(src + sdir);
         dst = (uint16_t)(dst + ddir);
         len--;
@@ -296,8 +320,10 @@ void vdc_write(vdc_t *v, unsigned at, uint8_t value) {
     case 0x02: /* the VRAM port */
         if (!msb) v->write_latch = value;
         else {
-            if (v->mawr < VDC_VRAM_WORDS)
+            if (v->mawr < VDC_VRAM_WORDS) {
                 v->vram[v->mawr] = (uint16_t)(v->write_latch | value << 8);
+                cell_cache_drop(v->mawr);
+            }
             v->mawr = (uint16_t)(v->mawr + vram_inc_tab[(v->cr >> 11) & 3]);
         }
         break;

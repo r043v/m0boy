@@ -131,7 +131,9 @@ static void row(void *, unsigned line, const uint16_t *pixels, unsigned width) {
 
 /* core 0: draw the pushed lines in order — the VCE's lookup, the 256->160
  * box filter, the blend of the pair's second line, the panel's doubling —
- * straight into the DMA ring */
+ * straight into the DMA ring (-O2: the project builds -Os, this loop is
+ * the render core's whole budget) */
+__attribute__((optimize("-O2")))
 static void render_task(void *) {
     static uint16_t prev_row[160];
     unsigned consumed = 0;
@@ -159,16 +161,16 @@ static void render_task(void *) {
             if (w == 256) {
                 for (unsigned x = 0; x < 256; x += 8) {
                     uint32_t s[8];
-                    for (unsigned j = 0; j < 8; j++) {
-                        const uint16_t px = c->raw[x + j];
-                        s[j] = m0_spread565(p->vce_lut[(px & 0xF) ? px & 0x1FF : 0]);
-                    }
+                for (unsigned j = 0; j < 8; j++) {
+                    const uint16_t px = c->raw[x + j];
+                    s[j] = m0_spread565(p->vce_final[px & 0x1FF]);
+                }
                     m0_box58_fast(s, tmp + x / 8 * 5);
                 }
             } else {
                 for (unsigned x = 0; x < 160; x++) {
                     const uint16_t px = c->raw[(unsigned)((uint32_t)x * w / 160)];
-                    tmp[x] = p->vce_lut[(px & 0xF) ? px & 0x1FF : 0];
+                    tmp[x] = p->vce_final[px & 0x1FF];
                 }
             }
             if (c->blend) {

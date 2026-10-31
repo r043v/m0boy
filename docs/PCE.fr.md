@@ -395,6 +395,53 @@ C = options, joystick complet.
 
 ## Chantiers suivants
 
+### La chaîne pixels et les limites du SIMD S3 (30 octobre 2026)
+
+Quatre changements à **sortie identique** (les hashes e2e et les PPM ne
+bougent pas, `pce_end_to_end` le vérifie) :
+
+- **LUT VCE finale** (`vce_final`, `pce.c`) : la transparence (indice de
+  couleur 0 → entrée 0) est posée à l'écriture de la palette — l'entrée e
+  garde sa couleur, les 32 entrées de couleur 0 portent celle de
+  l'entrée 0, reconstruites quand l'entrée 0 est réécrite, comme le
+  FixPCache de mednafen. Le chemin par pixel n'a plus de test, ni dans le
+  `rowbuf` du harnais ni dans la tâche de rendu du cœur 0.
+- **Cache de lignes de motif** (`vdc.c`) : la même rangée de tuile se
+  rend sur beaucoup de lignes ; les 8 nibbles d'une rangée de motif sont
+  gardés dans un cache direct de 16 entrées indexé par l'adresse (le même
+  choix que le `bg_tile_cache` de mednafen). Une écriture VRAM (port ou
+  DMA) retire l'entrée correspondante.
+- **PSG** : un canal à volume 0 sort de la somme après son avance de
+  phase (le produit par zéro tombait de toute façon).
+- La tâche de rendu du cœur 0 passe en `-O2` (le projet construit `-Os`
+  partout ailleurs).
+
+**Pourquoi pas d'assembleur SIMD** : l'extension vectorielle S3 de cette
+toolchain (binutils 2.35, esp-2021r2 — répertoire relevé par sonde de
+l'assembleur et croisé avec esp-nn/esp-dsp) n'a **ni décalage par lane
+16 bits, ni multiplication haute, ni compactage de lanes** — seulement
+des add/sub saturants, `vmul.s16` (moitié basse), `vzip/vunzip`, `src.q`,
+les logiques et des décalages 32 bits. Le filtre 5-in-8 a besoin du
+`>>3` par canal et l'expansion 4bpp d'un renversement de bits par
+nibble : les deux tombent. La route « canaux séparés en lanes 32 bits »
+aboutit à ~60 opérations vectorielles par 8 pixels contre ~60 scalaires
+au code C actuel — aucun gain. Les tables (VCE, `spread4`, BAT) sont des
+gathers, absents de l'ISA. Le goulot mesuré (phase A) est de toute façon
+l'exécution guest du cœur 1, pas la chaîne pixels du cœur 0 : les
+leviers restent la partition ROM + `-O2` (phase D) et des régions plus
+longues (E2).
+
+**Le triage fidélité/vitesse, façon émulateurs classiques** : le port a
+déjà les coupes standard — chronométrage mémoire par instruction (pas
+par accès), PSG 11025 Hz mono, 16 sprites par ligne, rendu VDC borné à
+la fenêtre active, palette reconstruite à l'écriture. Ce qui reste
+coûteux est visible s'il est coupé : le pas de ligne (les raster IRQ de
+Raiden), le budget par bloc (frontière de tranche), l'entrée/sortie de
+région (5 registres + les fenêtres, par bloc — la région générée type
+fait 1 à 5 instructions). Le mode « rapide mais moins fidèle » n'a donc
+pas de prise ici sans casser le pas de ligne ; la marge se gagne en
+qualité de code (D, E2), pas en fidélité.
+
 ### Passe VDP du 27 octobre 2026
 
 Le VDC conserve les indices de palette sur 9 bits et la VRAM de 64 Kio.
@@ -425,10 +472,11 @@ conversions de 256 indices VCE, 6 ms pour un million de copies de ces
 lignes et 20 ms pour 100 000 DMA de 256 mots (ports compris). Ces boucles
 isolées indiquent le coût relatif des postes sur ce CPU, pas celui d'une
 trame Raiden ni d'un ESP32-S3.
-Le projet Raiden précis pour AKA construit avec PlatformIO : 139 976 octets
-de RAM utilisés sur 327 680 (le ring DMA de quatre lots et les deux
-contextes de lignes du cœur 0 ajoutent ~37 Kio) et 3 022 141 octets de
-flash sur 3 072 000 (rapport de compilation, aucune mesure sur console).
+Le projet Raiden précis pour AKA construit avec PlatformIO : 141 096
+octets de RAM utilisés sur 327 680 (le ring DMA de quatre lots, les deux
+contextes de lignes du cœur 0, la LUT VCE finale et le cache de motifs
+ajoutent ~38 Kio) et 3 022 429 octets de flash sur 3 072 000 (rapport de
+compilation, aucune mesure sur console).
 Dans gm0 AKA (`4b4e145`), ce firmware Raiden s'arrête dès l'initialisation
 sur `AKA memset 00000000 + 1070170304 pc=400011e8` ; le compteur
 `--frames 24` et son débit affiché ne mesurent donc aucun rendu VDP.

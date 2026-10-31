@@ -97,9 +97,11 @@ static void render_pair(psg_t *p, uint8_t *left, uint8_t *right,
                         unsigned rate) {
     int l = 0, r = 0;
     for (unsigned c = 0; c < 6; c++) {
-        const int s = channel_sample(p, c, rate) * (p->ch[c].control & 0x1F);
-        l += s * (p->ch[c].balance >> 4);
-        r += s * (p->ch[c].balance & 0x0F);
+        const int s = channel_sample(p, c, rate); /* the phase advances even at volume 0 */
+        const unsigned vol = p->ch[c].control & 0x1F;
+        if (!vol) continue; /* s * 0 drops out of the mix exactly */
+        l += s * (int)vol * (p->ch[c].balance >> 4);
+        r += s * (int)vol * (p->ch[c].balance & 0x0F);
     }
     /* Full balance on both registers retains the former /24 mix level. */
     l = l * (p->balance >> 4) / (24 * 15 * 15);

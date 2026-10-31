@@ -36,6 +36,9 @@ typedef struct {
     uint8_t wram[8192];
     uint16_t vce_colors[512]; /* the 9-bit words */
     uint16_t vce_lut[512];    /* RGB565 */
+    uint16_t vce_final[512];  /* what a pixel reads: the color-0 entries
+                               * already aliased to entry 0, so the pixel
+                               * path takes the table without a test */
     uint8_t vce_cr;
     unsigned vce_address;
     /* the timer: 1024 CPU cycles a tick, the IRQ latched to the ack */

@@ -15,14 +15,24 @@ static const struct { char tag[8]; uint32_t version; const volatile void *frame,
 
 /* the VCE: the 512-color table (B on bits 0-2, R on 3-5, G on 6-8) and
  * its RGB565 image.  A pixel whose color nibble is 0 shows the table's
- * entry 0 (the backdrop) — the substitution happens when the pixel is
- * looked up (the row callback), not here: a game may rewrite any entry,
- * entry 0 included, after the palette is set up. */
+ * entry 0 (the backdrop); instead of a test per pixel, the write rebuilds
+ * vce_final, the table the pixels actually read — entry e keeps its own
+ * color, the 32 color-0 entries carry entry 0's, like the mednafen core's
+ * FixPCache (rebuilt at every palette write, so a game may rewrite any
+ * entry, entry 0 included, after the palette is set up). */
 static void vce_fix_lut(unsigned entry) {
-    const uint16_t c = machine.vce_colors[entry & 0x1FF];
+    const unsigned e = entry & 0x1FF;
+    const uint16_t c = machine.vce_colors[e];
     const unsigned b = c & 7, r = (c >> 3) & 7, g = (c >> 6) & 7;
-    machine.vce_lut[entry & 0x1FF] =
+    machine.vce_lut[e] =
         (uint16_t)((((r * 36) >> 3) << 11) | (((g * 36) >> 2) << 5) | ((b * 36) >> 3));
+    if (e == 0) {
+        for (unsigned n = 0; n < 512; n += 16) machine.vce_final[n] = machine.vce_lut[0];
+    } else if ((e & 0xF) == 0) {
+        machine.vce_final[e] = machine.vce_lut[0];
+    } else {
+        machine.vce_final[e] = machine.vce_lut[e];
+    }
 }
 
 static uint8_t vce_read(unsigned at) {
@@ -238,10 +248,8 @@ void pce_frame(void) {
                 p->row(p->host, line, p->vdc.linebuf, width);
             } else {
                 for (unsigned x = 0; x < width; x++) {
-                    /* the bg's color 0 is transparent: the backdrop's entry, as
-                     * the mednafen core picks it ((color & 0xF) ? pixel : 0) */
                     const uint16_t px = p->vdc.linebuf[x];
-                    p->rowbuf[x] = p->vce_lut[(px & 0xF) ? px & 0x1FF : 0];
+                    p->rowbuf[x] = p->vce_final[px & 0x1FF];
                 }
                 p->row(p->host, line, p->rowbuf, width);
             }
