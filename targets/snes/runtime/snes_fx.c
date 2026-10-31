@@ -673,6 +673,7 @@ uint8_t snes_fx_reg_read(uint16_t off) {
             v = (uint8_t)(fx->sfr >> 8);
             fx->sfr &= (uint16_t)~FX_IRQ;
             machine.fx_irq = 0;
+            machine.cpu.irq_line = machine.timeup || machine.sa1_cpu_irq; /* the line drops at once */
             break;
         }
         case 0x3034: v = fx->pbr; break;

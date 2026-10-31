@@ -780,19 +780,20 @@ static void fx_test(void) {
     memcpy(rom, prog, sizeof prog);
     memset(rom + sizeof prog, 0xea, 64); /* the rest: JMP (self-ish filler) */
     snes_init(rom, sizeof rom, 0, 0, 0, 0, 1);
-    snes_bus_write(0x603a, 0x18);      /* scmr: ron, ran, mode 0 (2bpp) */
-    snes_bus_write(0x6034, 0x00);      /* pbr = 0, the cache flushed */
-    snes_bus_write(0x601e, 0x00);      /* r15 low */
-    snes_bus_write(0x601f, 0x00);      /* r15 high: the go flag */
+    memset(machine.fx_ram, 0, sizeof machine.fx_ram); /* it powers up as 0xff */
+    snes_bus_write(0x303a, 0x18);      /* scmr: ron, ran, mode 0 (2bpp) */
+    snes_bus_write(0x3034, 0x00);      /* pbr = 0, the cache flushed */
+    snes_bus_write(0x301e, 0x00);      /* r15 low */
+    snes_bus_write(0x301f, 0x00);      /* r15 high: the go flag */
     for (unsigned i = 0; i < 4; i++) snes_frame();
     CHECK(!(machine.fx.sfr & 0x20));   /* the program stopped itself */
     CHECK(machine.fx_irq);             /* and raised the CPU's IRQ line */
-    CHECK(snes_bus_read(0x6000) == 0x48 && snes_bus_read(0x6001) == 0);
+    CHECK(snes_bus_read(0x3000) == 0x48 && snes_bus_read(0x3001) == 0);
     /* the plot at (3,2), 2bpp, screen base 0: bytes 4 and 5 of the GSU RAM,
      * bit 4 set in both planes */
     CHECK(machine.fx_ram[4] == 0x10 && machine.fx_ram[5] == 0x10);
     /* the $3031 read clears the request */
-    CHECK(snes_bus_read(0x6031) & 0x80);
+    CHECK(snes_bus_read(0x3031) & 0x80);
     CHECK(!machine.fx_irq && !machine.cpu.irq_line);
     
     rom[0] = 0x42;                     /* restore the bus test's byte */
