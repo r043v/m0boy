@@ -1,8 +1,9 @@
 # m0boy
 
-**Des jeux Game Boy, SG-1000, Game Gear, Master System et PICO-8 compilés en
-firmwares natifs pour trois petites consoles : la Gamebuino META, la Pokitto
-et l'ESPboy.**
+**Des jeux Game Boy, SG-1000, Game Gear, Master System, MSX, NES, PICO-8,
+Vectrex, PC Engine, Mega Drive et SNES compilés en firmwares natifs pour de
+petites consoles (Gamebuino META, Pokitto, ESPboy, et plus récemment Gamebuino
+AKA et ODROID-GO) et en programmes SDL2 pour le PC.**
 
 *English version: [README.md](README.md).*
 
@@ -21,7 +22,25 @@ l'ESPboy, une image à flasher).
 | Mémoire | 32 Kio de RAM, 240 Kio de flash pour le jeu | 36 Kio de RAM, 228 Kio de flash | 80 Kio de RAM, 4 Mio de flash |
 | Écran | 160×128 | 220×176 | 128×128 |
 | Stockage | carte SD | carte SD | flash seulement |
-| Version du runtime | 0.10.51 | 0.10.40 | 0.3.11 |
+| Version du runtime | 0.10.56 | 0.10.40 | 0.3.11 |
+
+Cibles plus récentes, bâties sur le cœur ESP32 commun
+`targets/common/consoles/esp32/` (PlatformIO), et la fenêtre PC :
+
+| | Gamebuino AKA | ODROID-GO | PC |
+|---|---|---|---|
+| Puce | ESP32-S3, PSRAM octale, LCD i80, SDMMC | ESP32-WROVER | fenêtre SDL2 |
+| Mémoire | 8 Mio de PSRAM, slot de jeu de 3000 Kio | 320 Kio de RAM, 4 Mio de PSRAM | celle de l'hôte |
+| Écran | 320×240 | 320×240 | la résolution native de la source |
+| Stockage | carte SD | carte SD | la carte en fichier `sd.img` |
+| Version du runtime | 0.3.8 | 0.1.0 | 0.2.4 |
+
+Le câblage de l'AKA suit la Gamebuino_AKA_lib officielle (`docs/AKA.fr.md`) ;
+on peut l'essayer sans matériel dans `tools/AKA_Emulator` (un vrai émulateur
+d'ESP32-S3) et dans gm0 (machine d'application expérimentale). L'ODROID-GO
+n'est pas émulé : ses vérifications sur l'appareil restent manuelles. Quel
+système peut générer pour quelle console vient de la matrice de capacités
+(`gbrecomp --list-systems`, `--list-targets`).
 
 ## Ce qui tourne où
 
@@ -36,10 +55,27 @@ l'ESPboy, une image à flasher).
 | NES (NROM : PRG 16/32 Kio, CHR ROM 8 Kio ; expérimental) | oui | oui | — |
 | PC Engine (HuCards, interpréteur ; expérimental, PC seulement) | — | — | — |
 | Vectrex (cartouches jusqu'à 32 Kio, ROM système intégrée ; expérimental) | oui | — | — |
-| Mega Drive (profil M68k borné ; expérimental, PC seulement) | oui | — | — |
+| Mega Drive (profil M68k borné ; expérimental) | oui | — | — |
+
+Matrice de capacités des cibles récentes (d'après `gbrecomp --list-systems` ;
+expérimental là où les lignes ci-dessus le disent) :
+
+| Source | PC | ODROID-GO | AKA |
+|---|---|---|---|
+| Game Boy, SG-1000, Game Gear, Master System | oui | oui | oui |
+| MSX1, NES | oui | — | — |
+| PICO-8, Vectrex, Mega Drive, PC Engine | oui | — | oui (ODROID : non) |
+| SNES (expérimental, harnais et fenêtre PC seulement) | oui | — | — |
+| Source M0+ (un firmware META ou Pokitto, `--system meta`) | oui | — | oui (META seulement) |
+
+SNES (`--system snes`) : le 65816 est recompilé en C avec une marche de
+contextes, un PPU/HDMA/IRQ par ligne, un interpréteur SPC700 et un DSP BRR ;
+DSP-1, SuperFX et SA-1 en cours. L'état, les preuves et ce qui reste, avec
+leurs étiquettes, sont dans `docs/SNES_STATUS_2026-10-31.md` et
+`docs/SNES.fr.md`.
 
 La cible PC (`--target pc`) ajoute une fenêtre SDL2 pour Game Boy, SG-1000,
-Game Gear, Master System, MSX, NES, PICO-8, PC Engine, Vectrex et Mega Drive.
+Game Gear, Master System, MSX, NES, PICO-8, PC Engine, Vectrex, Mega Drive et SNES (expérimental).
 Les projets partagent les manettes, filtres d'image (F8), échelle (F10) et
 plein écran (F11). Le NES PC affiche l'image 160×128 du panneau META ; les
 autres cœurs gardent leur géométrie propre.
@@ -98,6 +134,19 @@ ci-dessous et dans les notes liées : **vérifié** veut dire comparaison ou tes
 automatique, **gm0** mesuré dans l'émulateur [gm0](https://github.com/r043v/gm0),
 **console** mesuré sur une console, **estimé** le modèle de cycles du
 Cortex-M0+ (`targets/meta/tools/m0bench`).
+
+## Outils
+
+- `tools/meta-usb.py` : flasher un firmware en USB et lire la ligne série de
+  la console (sous-commande `monitor` : un terminal printf pour toute console
+  série, avec reconnexion ; `--baud`, `--prefix` des binutils de la cible ;
+  Windows, Linux et macOS). SAM-BA n'est qu'un protocole sur une liaison
+  USB-série ordinaire.
+- `M0_AKA_PERF` (désactivé par défaut, sans effet sur le firmware) : le cœur
+  M0+ natif de l'AKA écrit des temps `[perf]` (émulation / son / écran) sur la
+  ligne série. C'est une chaîne de debug, pas un profileur.
+- `tools/profile/` (profils par jeu, recherche de parties `m0search.py`),
+  `tools/snes_sweep.py`, `tools/AKA_Emulator`, `tools/megadrive/`.
 
 ## Démarrer
 
@@ -329,6 +378,9 @@ comme carte SD ; `EMU_INPUT` scripte les boutons (`image:touches:durée,...`).
 | `targets/meta/host/`, `targets/meta/tools/` | harnais, estimateur de cycles |
 | `compile.sh`, `tools/meta-compiler/` | conversion par lots (shell, Node) |
 | `tests/`, `targets/meta/tests/` | tests |
+| `targets/common/consoles/esp32/`, `targets/consoles/{aka,odroid,pc}/` | cœur ESP32 commun et pilotes AKA, ODROID-GO et PC |
+| `targets/{nes,pce,vectrex,megadrive,snes,msx,m0plus}/` | runtimes et harnais des autres cœurs |
+| `tools/` | `meta-usb.py`, profils et recherche de parties, émulateur AKA, balayages |
 | `docs/` | guide, notes de développement |
 
 ## Écrit par des agents IA
@@ -349,6 +401,20 @@ recompilateur Game Boy pour ordinateurs, dont il garde l'historique (104
 commits). Le runtime de bureau, les portages et les dossiers de test qui
 contenaient des ROM commerciales converties ont été retirés ; l'émulateur
 écrit en même temps que m0boy est devenu [gm0](https://github.com/r043v/gm0).
+
+## Contributeurs
+
+- **r043v** : auteur et mainteneur ; teste sur les consoles et fait les choix.
+- **arcanite24** : [gb-recompiled](https://github.com/arcanite24/gb-recompiled),
+  le point de départ.
+- **Jean-Charles LEBEAU (Jicehel)** : le travail sur la Gamebuino AKA. Son
+  [fork](https://github.com/Jicehel-Aka/m0boy) et sa pull request n° 2 ont
+  apporté les temps `[perf]` du cœur M0+ de l'AKA (maintenant derrière
+  `M0_AKA_PERF`), les correctifs Mega Drive (version lue dans l'en-tête, SP/PC
+  sur 24 bits) et l'idée d'une console série AKA, d'où le `monitor`
+  multiplateforme de `tools/meta-usb.py`.
+- Autres auteurs de l'historique : Brandon G. Neri, HDR, Majora,
+  RedReaper1515, squach90.
 
 ## ROM et droits
 
