@@ -117,7 +117,7 @@ static int header_sa1(const uint8_t *rom, uint32_t bytes, int map) {
 int main(int argc, char **argv) {
     const char *rom_path = 0, *input_path = 0, *coverage = 0, *capture = 0, *wav_path = 0;
     unsigned frames = 60;
-    int interp = 0;
+    int interp = 0, dump_ppu = 0; unsigned wram_dump = 0xFFFFFFFFu;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--frames") && i + 1 < argc) frames = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--input") && i + 1 < argc) input_path = argv[++i];
@@ -125,6 +125,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--capture") && i + 1 < argc) capture = argv[++i];
         else if (!strcmp(argv[i], "--wav") && i + 1 < argc) wav_path = argv[++i];
         else if (!strcmp(argv[i], "--interp")) interp = 1;
+        else if (!strcmp(argv[i], "--ppu")) dump_ppu = 1;
+        else if (!strcmp(argv[i], "--wram") && i + 1 < argc) wram_dump = (unsigned)strtoul(argv[++i], 0, 16);
         else rom_path = argv[i];
     }
 #ifdef SNES_NATIVE
@@ -192,6 +194,16 @@ int main(int argc, char **argv) {
         }
     }
     pc_input_free(&script);
+    if (dump_ppu) { /* the PPU's registers $2100-$213F as the game left them */
+        for (unsigned r = 0; r < 0x40; r++)
+            fprintf(stderr, "%s%02x", (r & 15) ? " " : "\n21%02x:", machine.ppu_regs[r]);
+        fprintf(stderr, "\n");
+    }
+    if (wram_dump < 0x20000u) {
+        for (unsigned a = wram_dump; a < wram_dump + 64 && a < 0x20000u; a++)
+            fprintf(stderr, "%s%02x", (a & 15) ? " " : "\nwram ", machine.wram[a]);
+        fprintf(stderr, "\n");
+    }
     uint8_t *image = malloc(256u * 224u * 3u);
     if (!image) { fprintf(stderr, "cannot allocate image\n"); return 2; }
     memcpy(image, machine.screen, 256u * 224u * 3u); /* the frame as displayed */
