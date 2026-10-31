@@ -371,18 +371,27 @@ diverge, comparés entre `--interp` et le natif.
 ## La cible AKA (ESP32-S3)
 
 `--target aka` ajoute la Gamebuino AKA : le frontend console
-(`targets/pce/platform/pce_main.cpp`) reçoit chaque ligne rendue, planne
-la fenêtre active du VDC sur 120 rangées (le panneau les zoome ×2,
-`M0_PANEL_SRC_ROWS`), échantillonne la largeur 256 -> 160 au filtre 5-in-8
-(`m0_box58_fast` ; une autre largeur : pixel le plus proche) et mélange
-les deux lignes sources d'une même rangée (`m0_avg2_panel`) ; le menu
-d'options, le repli au launcher (redémarrage) et la vitesse du pad suivent
-le contrat commun (`sg_menu.h`, `sg_frontend.h`, `esp32_hw`).  La HuCard
-voyage entière dans la partition application (0x370000, rejet au-delà de
-2,5 Mio — la fenêtrage en flash des plus grandes suit) ; `pio run`
-construit le firmware (Raiden : 2 245 instructions compilées, succès de
-la chaîne ESP-IDF/Arduino, aucune exécution sur console physique).  Le
-pad : A/B = I/II, RUN ou D = Start, MENU ou C = options, joystick complet.
+(`targets/pce/platform/pce_main.cpp`) planne la fenêtre active du VDC sur
+120 rangées (le panneau les zoome ×2, `M0_PANEL_SRC_ROWS`), échantillonne
+la largeur 256 -> 160 au filtre 5-in-8 (`m0_box58_fast` ; une autre
+largeur : pixel le plus proche) et mélange les deux lignes sources d'une
+même rangée (`m0_avg2_panel`) ; le menu d'options, le repli au launcher
+(redémarrage) et la vitesse du pad suivent le contrat commun (`sg_menu.h`,
+`sg_frontend.h`, `esp32_hw`).  Avec `PCE_RENDER_THREAD` (posé par le
+générateur dans `pce_config.h`, motif du `MD_RENDER_THREAD` du Mega Drive),
+l'émulation ne fait plus la chaîne pixels : son rappel de ligne pousse les
+lignes brutes du VDC (indices de palette 9 bits, deux contextes de huit
+lignes sous sémaphores) et la tâche `pce_rend` du cœur 0 applique la VCE,
+le filtre 5-in-8, le mélange des paires et les soumissions LCD du chemin
+wide asynchrone (quatre lots de huit rangées en vol).  Le harnais et la
+fenêtre PC restent sur le `rowbuf` RGB565 (`machine.row_raw` à 0) ; le
+chemin mono-cœur synchrone se reconstruit avec `-DAKA_EMU_SYNC=1` pour
+aka_headless, qui ne termine jamais les DMA.  La HuCard voyage entière
+dans la partition application (0x370000, rejet au-delà de 2,5 Mio — la
+fenêtrage en flash des plus grandes suit) ; `pio run` construit le
+firmware (Raiden : succès de la chaîne ESP-IDF/Arduino, aucune exécution
+sur console physique).  Le pad : A/B = I/II, RUN ou D = Start, MENU ou
+C = options, joystick complet.
 
 ## Chantiers suivants
 
@@ -416,9 +425,10 @@ conversions de 256 indices VCE, 6 ms pour un million de copies de ces
 lignes et 20 ms pour 100 000 DMA de 256 mots (ports compris). Ces boucles
 isolées indiquent le coût relatif des postes sur ce CPU, pas celui d'une
 trame Raiden ni d'un ESP32-S3.
-Le projet Raiden précis pour AKA construit avec PlatformIO : 102 656 octets
-de RAM utilisés sur 327 680 et 1 377 389 octets de flash sur 3 604 480
-(rapport de compilation, aucune mesure sur console).
+Le projet Raiden précis pour AKA construit avec PlatformIO : 139 976 octets
+de RAM utilisés sur 327 680 (le ring DMA de quatre lots et les deux
+contextes de lignes du cœur 0 ajoutent ~37 Kio) et 3 022 141 octets de
+flash sur 3 072 000 (rapport de compilation, aucune mesure sur console).
 Dans gm0 AKA (`4b4e145`), ce firmware Raiden s'arrête dès l'initialisation
 sur `AKA memset 00000000 + 1070170304 pc=400011e8` ; le compteur
 `--frames 24` et son débit affiché ne mesurent donc aucun rendu VDP.

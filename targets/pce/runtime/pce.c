@@ -174,6 +174,7 @@ void pce_init(const uint8_t *rom, uint32_t rom_bytes) {
     p->vce_cr = 0;
     p->vce_address = 0;
     p->row = 0;
+    p->row_raw = 0;
     p->host = 0;
     p->input = 0;
     p->pad_sel = 0;
@@ -233,13 +234,17 @@ void pce_frame(void) {
         }
         if (p->row) {
             const unsigned width = p->vdc.row_width < 1024 ? p->vdc.row_width : 1024;
-            for (unsigned x = 0; x < width; x++) {
-                /* the bg's color 0 is transparent: the backdrop's entry, as
-                 * the mednafen core picks it ((color & 0xF) ? pixel : 0) */
-                const uint16_t px = p->vdc.linebuf[x];
-                p->rowbuf[x] = p->vce_lut[(px & 0xF) ? px & 0x1FF : 0];
+            if (p->row_raw) {
+                p->row(p->host, line, p->vdc.linebuf, width);
+            } else {
+                for (unsigned x = 0; x < width; x++) {
+                    /* the bg's color 0 is transparent: the backdrop's entry, as
+                     * the mednafen core picks it ((color & 0xF) ? pixel : 0) */
+                    const uint16_t px = p->vdc.linebuf[x];
+                    p->rowbuf[x] = p->vce_lut[(px & 0xF) ? px & 0x1FF : 0];
+                }
+                p->row(p->host, line, p->rowbuf, width);
             }
-            p->row(p->host, line, p->rowbuf, width);
         }
     }
 }

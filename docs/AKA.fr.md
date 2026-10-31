@@ -44,7 +44,9 @@ zoome ×2 depuis la rangée 0 (`M0_PANEL_SRC_ROWS`) ; avant, le plan META de
 128 rangées s'étalait en pas de 1,875, d'où un mauvais cadrage et des sauts
 de ligne. Le frontend Mega Drive retient une trame sur quatre quand le cœur
 rame, pour que l'image ne disparaisse pas, et construit en -O2 (la RAM n'est
-pas serrée).
+pas serrée). Le PC Engine suit le même motif deux cœurs (`PCE_RENDER_THREAD` :
+l'émulation pousse les lignes brutes du VDC, le cœur 0 applique la VCE, le
+filtre 5-in-8 et les soumissions LCD — docs/PCE.fr.md).
 
 Le TAS2505 utilise la séquence de registres de référence. Le runtime produit
 11025 échantillons/s ; chaque échantillon est répété quatre fois pour le

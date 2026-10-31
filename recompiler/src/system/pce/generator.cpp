@@ -170,6 +170,9 @@ bool generate(const fs::path& cartridge, const GenerateOptions& o, GenerateStats
                                          std::to_string(rom_bytes) + " bytes; the streaming plan follows)");
             /* the panel doubles the 120 planned rows (aka_hw.cpp's zoom) */
             config += "#define M0_SCREEN_ROWS 120\n";
+            /* the second core takes the VCE + box filter + LCD submits
+             * (pce_main.cpp's render task, the Mega Drive's MD_RENDER_THREAD) */
+            config += "#ifndef PCE_RENDER_THREAD\n#define PCE_RENDER_THREAD 1\n#endif\n";
         }
         write(src / "pce_config.h", config);
 

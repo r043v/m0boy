@@ -53,6 +53,10 @@ typedef struct {
     unsigned active_width, active_height, first_active_line;
     uint8_t have_frame;
     uint16_t rowbuf[1024];
+    /* row_raw: the row callback takes the VDC's linebuf (9-bit palette
+     * indices) instead of the rowbuf's RGB565 — the two-core frontends
+     * apply the VCE on the render core */
+    unsigned row_raw;
     void (*row)(void *host, unsigned line, const uint16_t *pixels, unsigned width);
     void *host;
 } pce_t;
