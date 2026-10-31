@@ -671,9 +671,9 @@ SNES_INTERP_FN(snes_cpu_t *cpu, uint32_t until) {
         case 0x20: { const unsigned lo_ = OP8(1); PUSH16(pc_ + 2);
             pc_ = (uint16_t)(lo_ | OP8(2) << 8); left = 6; pc_set = 1; break; }
         case 0xFC: { const uint16_t ptr_ = (uint16_t)(OP16(1) + (XF ? (x_ & 0xFF) : x_));
-            const unsigned lo_ = rd((uint32_t)dbr_ << 16 | ptr_);
-            PUSH16(pc_ + 3);
-            pc_ = (uint16_t)(lo_ | rd((uint32_t)dbr_ << 16 | (uint16_t)(ptr_ + 1)) << 8);
+            const unsigned lo_ = rd((uint32_t)k_ << 16 | ptr_);
+            PUSH16(pc_ + 2);
+            pc_ = (uint16_t)(lo_ | rd((uint32_t)k_ << 16 | (uint16_t)(ptr_ + 1)) << 8);
             left = 8; pc_set = 1; SNES_DYN_HOOK((uint32_t)k_ << 16 | pc_); break; }
         case 0x22: { const uint32_t dest_ = OP24(1); PUSH(k_); PUSH16(pc_ + 3); /* JSL */
             k_ = (uint8_t)(dest_ >> 16); pc_ = (uint16_t)dest_; left = 8; pc_set = 1; break; }

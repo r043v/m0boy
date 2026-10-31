@@ -149,7 +149,7 @@ static void object_limits_test(void) {
     CHECK(image[pixel] == 0 && image[pixel + 1] == 0 && image[pixel + 2] == 0);
     pixel = 31 * 3; /* the 32nd is in */
     CHECK(image[pixel] == 255 && image[pixel + 1] == 0 && image[pixel + 2] == 0);
-    CHECK((snes_bus_read(0x213f) & 0x60) == 0x20); /* range over */
+    CHECK((snes_bus_read(0x213e) & 0xc0) == 0x40); /* range over */
 
     /* 16-pixel objects spend two tile slots: 17 fit the 34, the 18th
      * hits the time over */
@@ -165,7 +165,7 @@ static void object_limits_test(void) {
     CHECK(image[pixel] == 0 && image[pixel + 1] == 0 && image[pixel + 2] == 0);
     pixel = 8 * 16 * 3; /* the 17th is in */
     CHECK(image[pixel] == 255 && image[pixel + 1] == 0 && image[pixel + 2] == 0);
-    CHECK((snes_bus_read(0x213f) & 0x60) == 0x40); /* time over */
+    CHECK((snes_bus_read(0x213e) & 0xc0) == 0x80); /* time over */
 }
 
 /* The windows ($2123-$212F) mask the layers, the color math ($2130-$2132)
@@ -387,9 +387,9 @@ static void apu_test(void) {
     machine.dsp.regs[0x4e] = 0;
     machine.dsp.regs[0x6c] = 0;
 
-    /* the timers: T0 at 8000/(7+1) = 1000 Hz, T2 at 64000/(7+1) */
+    /* the timers: the period is the target (0 = 256): T0 at 8000/8 = 1000 Hz, T2 at 64000/8 */
     machine.smp.control = 0x07;
-    machine.smp.ram[0xfa] = 7; machine.smp.ram[0xfc] = 7;
+    machine.smp.ram[0xfa] = 8; machine.smp.ram[0xfc] = 8;
     const uint8_t t0 = machine.smp.timer_out[0], t2 = machine.smp.timer_out[2];
     snes_frame();
     const uint8_t d0 = (uint8_t)(machine.smp.timer_out[0] - t0);

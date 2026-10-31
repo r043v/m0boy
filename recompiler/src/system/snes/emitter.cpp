@@ -1289,7 +1289,7 @@ void Emitter::emit_ins(std::ostream& o, const Ins& in) {
             o << "    { const uint16_t ptr_ = (uint16_t)(" << hex(in.o[0] | in.o[1] << 8) << "u + "
               << (xf ? "(x_ & 0xFF)" : "x_") << ");"
               << " const unsigned lo_ = SNES_RD((uint32_t)" << hex((uint32_t)ctx_k(in.ctx) << 16) << "u | ptr_);"
-              << " SNES_PUSH16(" << hex(unsigned(in.addr & 0xFFFF) + 3) << "u);"
+              << " SNES_PUSH16(" << hex(unsigned(in.addr & 0xFFFF) + 2) << "u);"
               << " pc_ = (uint16_t)(lo_ | SNES_RD((uint32_t)" << hex((uint32_t)ctx_k(in.ctx) << 16)
               << "u | (uint16_t)(ptr_ + 1u)) << 8); } budget -= 8;\n"
               << "    goto dyn;\n";

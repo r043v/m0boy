@@ -30,12 +30,12 @@ uint8_t snes_dsp_read(uint8_t at);
 void snes_dsp_write(uint8_t at, uint8_t v);
 void snes_dsp_sample(void);
 
-static void smp_push(uint8_t v) {
-    machine.smp.ram[0x100u | machine.smp.sp] = v;
-    machine.smp.sp--;
+static inline void smp_push_(uint8_t *sp, uint8_t v) {
+    machine.smp.ram[0x100u | *sp] = v;
+    (*sp)--;
 }
-static uint8_t smp_pop(void) {
-    return machine.smp.ram[0x100u | ++machine.smp.sp];
+static inline uint8_t smp_pop_(uint8_t *sp) {
+    return machine.smp.ram[0x100u | ++*sp];
 }
 
 static uint8_t smp_read(uint16_t at) {
@@ -46,7 +46,12 @@ static uint8_t smp_read(uint16_t at) {
         case 2: return machine.smp.dsp_addr;
         case 3: return snes_dsp_read(machine.smp.dsp_addr);
         case 4: case 5: case 6: case 7: return machine.smp.ports_in[at & 3];
-        case 0xD: case 0xE: case 0xF: return machine.smp.timer_out[(at & 0xF) - 0xD];
+        case 0xD: case 0xE: case 0xF: { /* 4-bit counter, cleared by the read */
+            uint8_t *o = &machine.smp.timer_out[(at & 0xF) - 0xD];
+            const uint8_t v = (uint8_t)(*o & 0xF);
+            *o = 0;
+            return v;
+        }
         case 0: return 0; /* TEST */
         default: break;   /* $F8-$FC: plain RAM */
         }
@@ -412,14 +417,14 @@ static unsigned smp_step(void) {
     case 0xC0: psw_ &= (uint8_t)~PSW_I; break; /* DI */
 
     /* ---- the stack ---- */
-    case 0x2D: smp_push(a_); cyc = 4; break;
-    case 0x4D: smp_push(x_); cyc = 4; break;
-    case 0x6D: smp_push(y_); cyc = 4; break;
-    case 0x0D: smp_push(psw_ | PSW_B); cyc = 4; break;
-    case 0xAE: a_ = smp_pop(); nz(a_, &psw_); cyc = 4; break;
-    case 0xCE: x_ = smp_pop(); nz(x_, &psw_); cyc = 4; break;
-    case 0xEE: y_ = smp_pop(); nz(y_, &psw_); cyc = 4; break;
-    case 0x8E: psw_ = smp_pop() | 0x30; cyc = 4; break;
+    case 0x2D: smp_push_(&sp_, a_); cyc = 4; break;
+    case 0x4D: smp_push_(&sp_, x_); cyc = 4; break;
+    case 0x6D: smp_push_(&sp_, y_); cyc = 4; break;
+    case 0x0D: smp_push_(&sp_, psw_ | PSW_B); cyc = 4; break;
+    case 0xAE: a_ = smp_pop_(&sp_); nz(a_, &psw_); cyc = 4; break;
+    case 0xCE: x_ = smp_pop_(&sp_); nz(x_, &psw_); cyc = 4; break;
+    case 0xEE: y_ = smp_pop_(&sp_); nz(y_, &psw_); cyc = 4; break;
+    case 0x8E: psw_ = smp_pop_(&sp_) | 0x30; cyc = 4; break;
 
     /* ---- the jumps and the calls ---- */
     case 0x5F: pc = P16(); cyc = 3; break;
@@ -427,28 +432,28 @@ static unsigned smp_step(void) {
                  pc = (uint16_t)(RD((uint16_t)(b + x_)) | RD((uint16_t)(b + x_ + 1)) << 8);
                  cyc = 6; break; }
     case 0x3F: { const uint16_t dd = P16();
-                 smp_push((uint8_t)(pc >> 8)); smp_push((uint8_t)pc);
+                 smp_push_(&sp_, (uint8_t)(pc >> 8)); smp_push_(&sp_, (uint8_t)pc);
                  pc = dd; cyc = 8; break; }                            /* CALL */
     case 0x4F: { const uint16_t dd = 0xFF00u | P8();
-                 smp_push((uint8_t)(pc >> 8)); smp_push((uint8_t)pc);
+                 smp_push_(&sp_, (uint8_t)(pc >> 8)); smp_push_(&sp_, (uint8_t)pc);
                  pc = dd; cyc = 6; break; }                            /* PCALL */
     case 0x11: case 0x31: case 0x51: case 0x71:
     case 0x91: case 0xB1: case 0xD1: case 0xF1: {
         const uint16_t v = (uint16_t)(0xFFDEu - 2u * ((op >> 4) - 1));
         const uint8_t vlo = RD(v);
-        smp_push((uint8_t)(pc >> 8)); smp_push((uint8_t)pc);
+        smp_push_(&sp_, (uint8_t)(pc >> 8)); smp_push_(&sp_, (uint8_t)pc);
         pc = (uint16_t)(vlo | RD((uint16_t)(v + 1)) << 8);
         cyc = 8;
         break;
     }                                                                    /* TCALL */
-    case 0x6F: { const uint8_t wlo = smp_pop();
-                 pc = (uint16_t)(wlo | smp_pop() << 8); cyc = 5; break; } /* RET */
-    case 0x7F: { psw_ = (uint8_t)((smp_pop() | 0x30) & ~PSW_B);
-                 const uint8_t wlo = smp_pop();
-                 pc = (uint16_t)(wlo | smp_pop() << 8); cyc = 6; break; } /* RETI */
+    case 0x6F: { const uint8_t wlo = smp_pop_(&sp_);
+                 pc = (uint16_t)(wlo | smp_pop_(&sp_) << 8); cyc = 5; break; } /* RET */
+    case 0x7F: { psw_ = (uint8_t)((smp_pop_(&sp_) | 0x30) & ~PSW_B);
+                 const uint8_t wlo = smp_pop_(&sp_);
+                 pc = (uint16_t)(wlo | smp_pop_(&sp_) << 8); cyc = 6; break; } /* RETI */
     case 0x0F: { /* BRK */
-        smp_push((uint8_t)(pc >> 8)); smp_push((uint8_t)pc);
-        smp_push(psw_ | PSW_B);
+        smp_push_(&sp_, (uint8_t)(pc >> 8)); smp_push_(&sp_, (uint8_t)pc);
+        smp_push_(&sp_, psw_ | PSW_B);
         psw_ |= PSW_I;
         pc = (uint16_t)(RD(0xFFFEu) | RD(0xFFFFu) << 8);
         cyc = 8;
@@ -650,7 +655,7 @@ void snes_smp_port_write(unsigned n, uint8_t v) {
 static void smp_tick8k(void) {
     for (unsigned t = 0; t < 2; t++) {
         if (!(machine.smp.control & (1u << t))) continue;
-        if (++machine.smp.timer_phase[t] > machine.smp.ram[0xFA + t]) {
+        if (++machine.smp.timer_phase[t] == (machine.smp.ram[0xFA + t] ? machine.smp.ram[0xFA + t] : 256u)) {
             machine.smp.timer_phase[t] = 0;
             machine.smp.timer_out[t]++;
         }
@@ -658,7 +663,7 @@ static void smp_tick8k(void) {
 }
 static void smp_tick64k(void) {
     if (!(machine.smp.control & 4)) return;
-    if (++machine.smp.timer_phase[2] > machine.smp.ram[0xFC]) {
+    if (++machine.smp.timer_phase[2] == (machine.smp.ram[0xFC] ? machine.smp.ram[0xFC] : 256u)) {
         machine.smp.timer_phase[2] = 0;
         machine.smp.timer_out[2]++;
     }

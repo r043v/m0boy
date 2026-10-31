@@ -113,9 +113,11 @@ uint8_t snes_ppu_read(uint16_t at) {
                                       (int32_t)(int8_t)machine.m7[3]) & 0xFFFFFFu;
         return (uint8_t)(p >> ((r - 0x34) * 8));
     }
-    if (r == 0x3f) /* STAT77: the last evaluated line's sprite flags */
-        return (uint8_t)((machine.obj_time_over ? 0x40 : 0) | (machine.obj_range_over ? 0x20 : 0)) |
-               (machine.cpu.mdr & 0x1f);
+    if (r == 0x3e) /* STAT77: the sprite flags, PPU1's version */
+        return (uint8_t)((machine.obj_time_over ? 0x80 : 0) | (machine.obj_range_over ? 0x40 : 0)) |
+               (machine.cpu.mdr & 0x10) | 1;
+    if (r == 0x3f) /* STAT78: the region, PPU2's version */
+        return (uint8_t)((machine.pal ? 0x10 : 0) | (machine.cpu.mdr & 0x60) | 3);
     return machine.cpu.mdr;
 }
 

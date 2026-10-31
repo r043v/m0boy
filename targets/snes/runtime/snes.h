@@ -78,7 +78,8 @@ typedef struct {
     uint8_t control;    /* $F1: the timer run bits */
     uint8_t dsp_addr;   /* $F2 */
     uint8_t halted;     /* SLEEP/STOP */
-    uint8_t timer_phase[3], timer_out[3];
+    uint16_t timer_phase[3];
+    uint8_t timer_out[3];
     uint8_t ipl_state;  /* 0: ready, 1: command wait, 2: uploading, 3: program runs */
     uint8_t ipl_y;      /* the block's byte counter, echoed on port 0 */
     uint8_t ipl_pending, ipl_fresh1; /* the byte-transfer handshaking */
@@ -222,6 +223,7 @@ typedef struct {
     uint8_t m7[12];      /* the mode 7 matrix A-D, then the center X and Y */
     uint8_t m7_lo, m7_phase; /* the write-twice latch of $211B-$2120 */
     uint16_t fixed_color; /* $2132's latched fixed color, BGR555 */
+    uint8_t pal; /* the header's destination code is a PAL region: $213F bit 4 (the timing stays 262 lines) */
     uint8_t obj_range_over, obj_time_over; /* the $213F flags of the last evaluated line */
     uint8_t timer_latch;
     uint8_t mpy_a, div_l, div_h; /* the multiply/divide unit's operands */
