@@ -3720,6 +3720,43 @@ static uint32_t periph_read(uint32_t a, uint32_t m) {
     return 0;
 }
 
+/* EMU_MMIO=<fichier> : profil des accès périphériques (adresse, sens,
+ * taille, nombre, premières valeurs écrites, PC appelants) — la surface
+ * matérielle qu'un runtime sans gm0 doit modéliser. */
+struct mmio_ent { uint32_t a, n, v[4], nv, pc[2]; uint8_t w, size; };
+static struct mmio_ent mmioTab[2048];
+static int mmioOn = -1;
+static uint32_t lastExecPc;
+static void mmio_note(uint32_t a, int w, int size, uint32_t v) {
+    uint32_t h = (a * 2654435761u ^ (uint32_t)w * 40503u ^ (uint32_t)size) & 2047u;
+    for (int i = 0; i < 2048; i++, h = (h + 1) & 2047u) {
+        struct mmio_ent *e = &mmioTab[h];
+        if (!e->n) { e->a = a; e->w = (uint8_t)w; e->size = (uint8_t)size; }
+        if (e->a != a || e->w != w || e->size != size) continue;
+        e->n++;
+        if (w) {
+            int k; for (k = 0; k < (int)e->nv; k++) if (e->v[k] == v) break;
+            if (k == (int)e->nv && e->nv < 4) e->v[e->nv++] = v;
+        }
+        if (e->pc[0] != lastExecPc && e->pc[1] != lastExecPc) { e->pc[e->pc[0] ? 1 : 0] = lastExecPc; }
+        return;
+    }
+}
+static void mmio_write(void) {
+    const char *path = getenv("EMU_MMIO");
+    if (!path || mmioOn != 1) return;
+    FILE *f = fopen(path, "w");
+    if (!f) return;
+    for (int i = 0; i < 2048; i++) {
+        const struct mmio_ent *e = &mmioTab[i];
+        if (!e->n) continue;
+        fprintf(f, "%08x %c%d n=%u", e->a, e->w ? 'w' : 'r', e->size, e->n);
+        for (uint32_t k = 0; k < e->nv; k++) fprintf(f, " v=%x", e->v[k]);
+        fprintf(f, " pc=%x,%x\n", e->pc[0], e->pc[1]);
+    }
+    fclose(f);
+}
+
 /* alias physique de la flash (0x00400000) : certaines libs y accèdent
  * directement pour leurs données (images embarquées streamees en DMA) */
 #define FLASH_PHYS_BASE 0x00400000u
@@ -3736,6 +3773,8 @@ static uint32_t bus_read(uint32_t a, int size) {
     }
     if (a < 0x40000000u) return 0;                          /* au-delà de la SRAM */
     uint32_t v = 0;
+    if (mmioOn < 0) { mmioOn = getenv("EMU_MMIO") ? 1 : 0; if (mmioOn) atexit(mmio_write); }
+    if (mmioOn == 1) mmio_note(a, 0, size, 0);
     if (IS_APB(a)) v = periph_read(a, LANES(size, a));
     else if (a - 0xe000e000u < 0x1000u) v = scs_read(a & ~3u);
     return (v >> (8 * (a & 3u))) & (size == 4 ? ~0u : (1u << (8 * size)) - 1u);
@@ -3743,7 +3782,6 @@ static uint32_t bus_read(uint32_t a, int size) {
 
 
 /* montre générique d'écriture (WATCH_ADDR), pour le débogage */
-static uint32_t lastExecPc;  /* PC de l'instruction en cours (du pas précédent, entre deux pas) */
 /* programmation flash (auto-patch des loaders) : le tampon de page et sa
  * commande WP sont confondus avec l'écriture, et le code fraîchement écrit
  * est exécuté aux pas suivants.  La cellule ne peut que passer de 1 à 0 :
@@ -4073,6 +4111,8 @@ static void bus_write(uint32_t a, uint32_t v, int size) {
     if (a < 0x20000000u) { flash_store(a, v, size); return; }
     if (a < 0x40000000u) return;                            /* au-delà de la SRAM */
     timers_sync();                                          /* état des timers/DMA modifiable */
+    if (mmioOn < 0) { mmioOn = getenv("EMU_MMIO") ? 1 : 0; if (mmioOn) atexit(mmio_write); }
+    if (mmioOn == 1) mmio_note(a, 1, size, v);
     uint32_t m = LANES(size, a), wv = v << (8 * (a & 3u));
     if (IS_APB(a)) periph_write(a, wv, m);
     else if (a - 0xe000e000u < 0x1000u) scs_write(a & ~3u, wv, m); /* SCS : NVIC, SysTick, SCB */
@@ -6920,7 +6960,7 @@ int main(int argc, char **argv) {
             fclose(f);
         } else perror(ramDumpPath);
     }
-    prof_write();
+    prof_write(); mmio_write();
     pk_debug_dump();
     pk_eeprom_save();
     if (emuTarget == TGT_ESPBOY) {
