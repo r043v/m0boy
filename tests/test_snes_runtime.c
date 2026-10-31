@@ -9,7 +9,7 @@ static uint8_t rom[0x10000];
 static uint8_t image[256 * 224 * 3];
 
 static void video_test(void) {
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     /* DMA mode 1 interleaves VMDATAL/VMDATAH and advances the word address. */
     machine.wram[0x100] = 0x80;
     machine.wram[0x101] = 0x00;
@@ -55,7 +55,7 @@ static void video_test(void) {
 }
 
 static void object_test(void) {
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     for (unsigned i = 0; i < 128; i++) machine.oam[i * 4 + 1] = 224;
 
     /* Low OAM commits only after both writes; the high table mirrors. */
@@ -134,7 +134,7 @@ static void object_test(void) {
 /* The per-line object limits: 32 sprites, 34 tile slots, and the $213F
  * flags of the last evaluated line. */
 static void object_limits_test(void) {
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     machine.vram[32] = 0x80;       /* the one-pixel 4bpp tile */
     machine.cgram[129 * 2] = 0x1f; /* red, palette 1 */
     snes_bus_write(0x2100, 15); snes_bus_write(0x2105, 1); snes_bus_write(0x212c, 0x10);
@@ -172,7 +172,7 @@ static void object_limits_test(void) {
  * adds or subtracts the subscreen or the fixed color, the mosaic
  * quantifies the BGs: mode 1's pixels against the model. */
 static void window_math_test(void) {
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     /* mode 1, BG1: map at $0400, entry 0 = tile 1 whose row 0 is eight
      * red pixels; entries 1-2 = an empty tile (the backdrop shows) */
     snes_bus_write(0x2105, 1);
@@ -249,7 +249,7 @@ static void window_math_test(void) {
 /* Modes 3 (direct color), 2 (offset-per-tile) and 7 (the identity
  * matrix fetches the map and tileset bytes). */
 static void modes_test(void) {
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     /* Mode 3, BG1 8bpp: direct color turns the $FF index into RRRGGGBB.
      * The tileset sits at NBA 1 so the map at 0 stays empty; every plane's
      * bit 7 set gives the index $FF. */
@@ -264,7 +264,7 @@ static void modes_test(void) {
 
     /* Mode 2: the offset-per-tile entry of tile (0,0) shifts the source
      * right by one tile, so tile 1's pixel moves from x=8 to x=0. */
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     machine.vram[32] = 0x80;      /* tile 1: one pixel at (0,0) */
     machine.vram[2] = 0x01; machine.vram[3] = 0x00; /* map word 1 = tile 1 */
     machine.cgram[2] = 0x1f;
@@ -277,7 +277,7 @@ static void modes_test(void) {
 
     /* Mode 7 with the identity matrix: the map's low byte at (0,0) picks
      * tile 1, whose (0,0) pixel sits in the high byte at $4081. */
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     machine.vram[0] = 1;                 /* map (0,0) = tile 1 */
     machine.vram[0x4081] = 5;            /* tile 1's (0,0) = index 5 */
     machine.cgram[10] = 0x00; machine.cgram[11] = 0x7c; /* blue */
@@ -293,7 +293,7 @@ static void modes_test(void) {
  * program keys a voice whose BRR block reaches the ring, the timers tick
  * at their documented rates. */
 static void apu_test(void) {
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     /* the boot: the IPL's ready signature, the $CC command with the
      * block's page, the bytes with their counter on port 0, the go */
     CHECK(machine.smp.ipl_state == 0 && machine.smp.ports_out[0] == 0xaa);
@@ -400,7 +400,7 @@ static void apu_test(void) {
 }
 
 static void interrupt_test(int emulation, int interpreter) {
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     machine.cpu.e = emulation;
     machine.cpu.k = 0x81;
     machine.cpu.pc = 0x9234;
@@ -424,13 +424,13 @@ static void cpu_flow_test(void) {
     /* Fetch all JML operands from the original bank before switching. */
     rom[0] = 0x5c; rom[1] = 0x34; rom[2] = 0x92; rom[3] = 0x81;
     rom[0x8001] = 0x78; rom[0x8002] = 0x56;
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     snes_run(&machine.cpu, 4);
     CHECK(machine.cpu.k == 0x81 && machine.cpu.pc == 0x9234);
     /* JSL from bank 00 into its 80 mirror, then RTL returns to bank 00. */
     rom[0] = 0x22; rom[1] = 0x10; rom[2] = 0x80; rom[3] = 0x80;
     rom[0x10] = 0x6b;
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     snes_run(&machine.cpu, 8);
     CHECK(machine.cpu.k == 0x80 && machine.cpu.pc == 0x8010);
     CHECK(machine.cpu.s == 0x1fc);
@@ -440,7 +440,7 @@ static void cpu_flow_test(void) {
 
     /* WAI remains asleep across slices and resumes after NMI at the next byte. */
     rom[0] = 0xcb; rom[1] = 0xea;
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     snes_run(&machine.cpu, 20);
     CHECK(machine.cpu.waiting && machine.cpu.pc == 0x8001);
     snes_run(&machine.cpu, 40);
@@ -452,7 +452,7 @@ static void cpu_flow_test(void) {
 }
 
 static void joypad_test(void) {
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     snes_set_joypad(0x8940); /* B, up, right and X */
     snes_bus_write(0x4016, 1);
     CHECK((snes_bus_read(0x4016) & 1) == 1);
@@ -479,7 +479,7 @@ static void joypad_test(void) {
 
 static void cpu_index_test(void) {
     rom[0] = 0x9b; rom[1] = 0xbb; /* TXY, TYX */
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     machine.cpu.e = 0; machine.cpu.p = 0;
     machine.cpu.x = 0x8001; machine.cpu.y = 0x1234;
     snes_run(&machine.cpu, 2);
@@ -489,18 +489,18 @@ static void cpu_index_test(void) {
     CHECK(machine.cpu.x == 0 && machine.cpu.y == 0 && (machine.cpu.p & SNES_P_Z));
 
     rom[0] = 0xb5; rom[1] = 0xf0; /* LDA $f0,X */
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     machine.cpu.e = 0; machine.cpu.p = SNES_P_M | SNES_P_X;
     machine.cpu.x = 0x30; machine.cpu.d = 0;
     machine.wram[0x20] = 0x11; machine.wram[0x120] = 0x22;
     snes_run(&machine.cpu, 4);
     CHECK((machine.cpu.a & 0xff) == 0x22); /* native crosses the page */
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     machine.cpu.x = 0x30;
     machine.wram[0x20] = 0x11; machine.wram[0x120] = 0x22;
     snes_run(&machine.cpu, 4);
     CHECK((machine.cpu.a & 0xff) == 0x11); /* emulation with aligned D wraps */
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     machine.cpu.x = 0x30; machine.cpu.d = 1;
     machine.wram[0x21] = 0x11; machine.wram[0x121] = 0x22;
     snes_run(&machine.cpu, 5);
@@ -508,7 +508,7 @@ static void cpu_index_test(void) {
 
     /* Wide read-modify-write must address the requested word. */
     rom[0] = 0x46; rom[1] = 0x18; rom[2] = 0x06; rom[3] = 0x1c;
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     machine.cpu.e = 0; machine.cpu.p = 0;
     machine.wram[0x18] = 4; machine.wram[0x19] = 1; /* $0104 */
     machine.wram[0x1c] = 0x80; machine.wram[0x1d] = 1; /* $0180 */
@@ -520,7 +520,7 @@ static void cpu_index_test(void) {
     rom[0] = 0x04; rom[1] = 0x10; /* TSB: Z from A & old memory */
     rom[2] = 0x14; rom[3] = 0x10; /* TRB: same test before clearing */
     rom[4] = 0x89; rom[5] = 0;    /* BIT immediate leaves N and V */
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     machine.cpu.a = 1; machine.cpu.p |= SNES_P_N | SNES_P_V;
     machine.wram[0x10] = 2;
     snes_run(&machine.cpu, 5);
@@ -532,7 +532,7 @@ static void cpu_index_test(void) {
 
     rom[0] = 0x54; rom[1] = 0x7e; rom[2] = 0; /* MVN destination, source */
     rom[0x10] = 0x61; rom[0x11] = 0x72;
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     machine.cpu.e = 0; machine.cpu.p = 0;
     machine.cpu.a = 1; machine.cpu.x = 0x8010; machine.cpu.y = 0x234;
     snes_run(&machine.cpu, 14);
@@ -550,7 +550,7 @@ static void hdma_test(void) {
         0x00,                                      /* end */
     };
     memcpy(rom + 0x100, table, sizeof table);
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     uint8_t *d = machine.dma[0];
     d[0] = 0x02;              /* mode 2: two bytes to one register, A to B */
     d[1] = 0x22;              /* CGDATA */
@@ -578,7 +578,7 @@ static void irq_test(void) {
     memcpy(rom + 0x100, handler, sizeof handler);
     rom[0x7fee] = rom[0x7ffe] = 0x00; /* IRQ and BRK vectors -> $008100 */
     rom[0x7fef] = rom[0x7fff] = 0x81;
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     machine.cpu.e = 0;
     machine.cpu.p &= (uint8_t)~SNES_P_I;
     snes_bus_write(0x4207, 100); /* HTIME = 100: the pair's latch composes */
@@ -608,7 +608,7 @@ static void irq_test(void) {
     /* without the $4211 read the level stays asserted: the handler loops
      * until the line's budget is spent */
     rom[0x100] = 0x40; /* the handler is just RTI */
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     machine.cpu.e = 0;
     machine.cpu.p &= (uint8_t)~SNES_P_I;
     snes_bus_write(0x4207, 100);
@@ -623,7 +623,7 @@ static void irq_test(void) {
  * frame of idle loops spends the frame's cycles less what the HDMA took. */
 static void timing_test(void) {
     rom[0] = 0x80; rom[1] = 0xfe;
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     /* one channel, 256 bytes, mode 0 to the WRAM port, A fixed on the
      * ROM's first byte ($00:0000 is the WRAM mirror, $00:8000 is ROM) */
     snes_bus_write(0x4300, 0x08);
@@ -676,11 +676,75 @@ static void muldiv_test(void) {
     CHECK(snes_bus_read(0x4216) == 0xFF); /* the /0 remainder */
 }
 
+/* the DSP-1: one command through the bus window (LoROM bank $30, the even
+ * byte DR, the odd one SR), then the answers read back low byte first.
+ * The math follows the published reverse-engineering; the checks here are
+ * the exact ones (multiply, triangle, radius) and two structural ones
+ * (the chip-detection command, the target of the screen centre). */
+static void dsp1_cmd(uint8_t command, const uint16_t *in, unsigned n, uint16_t *out, unsigned m) {
+    snes_bus_write(0x308000, command);
+    for (unsigned i = 0; i < n; i++) {
+        snes_bus_write(0x308000, (uint8_t)in[i]);
+        snes_bus_write(0x308000, (uint8_t)(in[i] >> 8));
+    }
+    for (unsigned i = 0; i < m; i++) {
+        out[i] = snes_bus_read(0x308000);
+        out[i] |= (uint16_t)snes_bus_read(0x308000) << 8;
+    }
+}
+
+static void dsp1_test(void) {
+    uint16_t out[4], in[7];
+    snes_init(rom, sizeof rom, 0, 0, 1);
+
+    in[0] = 0x1000; in[1] = 0x4000; /* 0.125 * 0.5 */
+    dsp1_cmd(0x00, in, 2, out, 1);
+    CHECK(out[0] == 0x0800);
+
+    in[0] = 0x4000; in[1] = 0x4000; /* 90 degrees, radius 0.5 */
+    dsp1_cmd(0x04, in, 2, out, 2);
+    CHECK(out[0] == 0x3fff && out[1] == 0);
+
+    in[0] = 3; in[1] = 4; in[2] = 0;
+    dsp1_cmd(0x08, in, 3, out, 2); /* 3² + 4², doubled */
+    CHECK(out[0] == 50 && out[1] == 0);
+
+    in[0] = 0x0100;
+    dsp1_cmd(0x0f, in, 1, out, 1); /* the chip-detection command */
+    CHECK(out[0] == 0);
+
+    /* the projection framework: the target of the screen's centre (H=0,
+     * V=0) is the (Cx, Cy) the parameter command answered */
+    in[0] = 0; in[1] = 0; in[2] = 0x2000; in[3] = 0x0800; in[4] = 0x1000;
+    in[5] = 0; in[6] = 0x2000; /* azimuth east, zenith 45 degrees */
+    dsp1_cmd(0x02, in, 7, out, 4);
+    const uint16_t cx = out[2], cy = out[3];
+    CHECK(cx != 0 || cy != 0); /* the centre slid off the base point */
+    in[0] = 0; in[1] = 0;
+    dsp1_cmd(0x0e, in, 2, out, 2);
+    CHECK(out[0] == cx && out[1] == cy);
+
+    /* the projection of the screen's centre point lands on (0,0) */
+    in[0] = 0; in[1] = 0; in[2] = 0x2000; in[3] = 0x0800; in[4] = 0x1000;
+    in[5] = 0; in[6] = 0x2000;
+    dsp1_cmd(0x02, in, 7, out, 4);
+    in[0] = (uint16_t)machine.dsp1.gx; in[1] = machine.dsp1.gy; in[2] = machine.dsp1.gz;
+    dsp1_cmd(0x06, in, 3, out, 3);
+    CHECK(out[0] == 0 && out[1] == 0 && out[2] != 0);
+
+    /* an odd byte in the window is the status register: its two bytes
+     * alternate, zero then the register (DRC | RQM, the command done and
+     * the chip asking), and a write there is ignored */
+    CHECK(snes_bus_read(0x308001) == 0);
+    CHECK(snes_bus_read(0x308001) == 0x84);
+    snes_bus_write(0x308001, 0xff);
+}
+
 int main(void) {
     rom[0] = 0x42;
     rom[0x7ffa] = rom[0x7fea] = rom[0x7ffc] = 0;
     rom[0x7ffb] = rom[0x7feb] = rom[0x7ffd] = 0x80;
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     CHECK(snes_bus_read(0x808000) == 0x42);
     hdma_test();
     muldiv_test();
@@ -692,7 +756,7 @@ int main(void) {
     apu_test();
     /* the SRAM window: mirrored through the $6000-$7FFF offsets of the
      * LoROM banks, open bus when nothing is declared */
-    snes_init(rom, sizeof rom, 0, 8192);
+    snes_init(rom, sizeof rom, 0, 8192, 0);
     CHECK(snes_bus_read(0x7f7000) == 0);
     snes_bus_write(0x006001, 0x5a);
     CHECK(machine.sram[1] == 0x5a && machine.sram_dirty);
@@ -700,11 +764,11 @@ int main(void) {
     machine.sram_dirty = 0;
     snes_bus_write(0x7e6001, 0x99); /* bank $7E is WRAM, never the SRAM */
     CHECK(!machine.sram_dirty && machine.wram[0x6001] == 0x99);
-    snes_init(rom, sizeof rom, 0, 2048);
+    snes_init(rom, sizeof rom, 0, 2048, 0);
     snes_bus_write(0x006801, 0x77);
     CHECK(machine.sram[1] == 0x77);
     CHECK(snes_bus_read(0x006001) == 0x77); /* the 2 KiB window mirrors */
-    snes_init(rom, sizeof rom, 0, 0);
+    snes_init(rom, sizeof rom, 0, 0, 0);
     snes_bus_write(0x006001, 0x44);
     CHECK(!machine.sram_dirty && machine.sram[1] == 0);
     snes_bus_write(0x800123, 0x56);
@@ -728,5 +792,6 @@ int main(void) {
     object_test();
     joypad_test();
     cpu_index_test();
+    dsp1_test();
     return 0;
 }

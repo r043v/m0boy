@@ -89,6 +89,15 @@ static uint32_t header_sram(const uint8_t *rom, uint32_t bytes, int hirom) {
     return rom[at] < 4 ? table[rom[at]] : 0;
 }
 
+/* the header's DSP-1 mark: the map byte's high nibble $3 (LoROM/HiROM +
+ * DSP-1) or a low nibble of 3 (LoROM + SRAM + DSP-1, $23) */
+static int header_dsp1(const uint8_t *rom, uint32_t bytes, int hirom) {
+    const size_t at = (size_t)(hirom ? 0xFFC0u : 0x7FC0u);
+    if (at + 0x16 > bytes) return 0;
+    const unsigned map = rom[at + 0x15];
+    return ((map & 0xF0) == 0x30 || (map & 0x0F) == 3) ? 1 : 0;
+}
+
 int main(int argc, char **argv) {
     const char *rom_path = 0, *input_path = 0, *coverage = 0, *capture = 0, *wav_path = 0;
     unsigned frames = 60;
@@ -139,7 +148,7 @@ int main(int argc, char **argv) {
         sram_bytes = header_sram(rom, rom_bytes, hirom);
     }
 
-    snes_init(rom, rom_bytes, hirom, sram_bytes);
+    snes_init(rom, rom_bytes, hirom, sram_bytes, header_dsp1(rom, rom_bytes, hirom));
     static const char *const names[12] = {
         "b", "y", "select", "start", "up", "down", "left", "right", "a", "x", "l", "r"
     };

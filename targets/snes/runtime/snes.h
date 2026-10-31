@@ -111,6 +111,27 @@ typedef struct {
     } voice[8];
 } snes_dsp_t;
 
+/* The DSP-1 coprocessor's protocol state (the FSM and the projection
+ * state the parameter command leaves behind; the core itself is
+ * snes_dsp1.c) */
+typedef struct {
+    uint8_t sr;          /* DRC / DRS / RQM */
+    uint8_t low_byte;    /* the status register alternates its bytes */
+    uint16_t dr;         /* the data register's internal half-word */
+    uint8_t major;       /* wait command / read data / write data */
+    uint8_t command;
+    uint16_t counter;
+    uint8_t freeze;      /* a 0x1a/0x2a/0x3a command froze the chip */
+    int16_t in_buf[7], out_buf[1024];
+    int16_t matrix[3][3][3]; /* the attitude matrices A, B, C */
+    int16_t centre_x, centre_y, centre_z, centre_z_c, centre_z_e, v_offset;
+    int16_t les, c_les, e_les;
+    int16_t sin_aas, cos_aas, sin_azs, cos_azs, sin_azsc, cos_azsc;
+    int16_t sec_azs_c1, sec_azs_e1, sec_azs_c2, sec_azs_e2;
+    int16_t nx, ny, nz, gx, gy, gz, hx, hy, vx, vy, vz;
+} snes_dsp1_t;
+
+
 /* One machine: CPU, WRAM, the cartridge's SRAM, PPU memories, the APU and
  * general DMA state. */
 typedef struct {
@@ -145,13 +166,21 @@ typedef struct {
     uint8_t joy_strobe, joy_count, joy_auto_enable, joy_busy;
     snes_smp_t smp;
     snes_dsp_t dsp;
+    snes_dsp1_t dsp1;
+    uint8_t dsp1_attached; /* the header declared a DSP-1 */
     uint32_t frames;
 } snes_t;
 
 /* rom must live as long as the machine; sram_bytes is the cartridge's
- * declared battery size (0: the SRAM window stays open bus) */
+ * declared battery size (0: the SRAM window stays open bus); dsp1 says
+ * the header declared a DSP-1 and its window answers the protocol */
 extern snes_t machine;
-void snes_init(const uint8_t *rom, uint32_t rom_bytes, int hirom, uint32_t sram_bytes);
+void snes_init(const uint8_t *rom, uint32_t rom_bytes, int hirom, uint32_t sram_bytes, int dsp1);
+/* the DSP-1's registers on the bus (snes_dsp1.c) */
+void snes_dsp1_reset(void);
+uint8_t snes_dsp1_dr_read(void);
+uint8_t snes_dsp1_sr_read(void);
+void snes_dsp1_dr_write(uint8_t v);
 void snes_reset(void);
 /* run until the cycle count reaches `until` (past the last instruction
  * that spends it, as the budget goes negative) */

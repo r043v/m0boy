@@ -152,6 +152,18 @@ static int sram_window(snes_cpu_t *c, uint32_t at) {
     return bank >= 0x80 && bank <= 0xBF && !c->hirom;
 }
 
+/* the DSP-1's register window: LoROM banks $30-$3F/$B0-$BF from $8000,
+ * HiROM banks $00-$0F/$80-$8F at $6000-$7FFF; even byte DR, odd byte SR */
+static int dsp1_window(snes_cpu_t *c, uint32_t at) {
+    if (!machine.dsp1_attached) return 0;
+    const unsigned bank = at >> 16, off = at & 0xFFFF;
+    if (c->hirom)
+        return off >= 0x6000 && off < 0x8000 &&
+               (bank <= 0x0F || (bank >= 0x80 && bank <= 0x8F));
+    return off >= 0x8000 &&
+           ((bank >= 0x30 && bank <= 0x3F) || (bank >= 0xB0 && bank <= 0xBF));
+}
+
 uint8_t snes_bus_read(uint32_t at) {
     snes_cpu_t *c = &machine.cpu;
     const unsigned bank = at >> 16, off = at & 0xFFFF;
@@ -163,6 +175,8 @@ uint8_t snes_bus_read(uint32_t at) {
     } else if (off >= 0x2000 && off < 0x6000 &&
                (bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF))) {
         v = io_read(off);
+    } else if (dsp1_window(c, at)) {
+        v = (off & 1) ? snes_dsp1_sr_read() : snes_dsp1_dr_read();
     } else if (machine.sram_bytes && sram_window(c, at)) {
         v = machine.sram[(off - 0x6000u) & (machine.sram_bytes - 1)];
     } else if ((bank >= 0x40 && bank <= 0x7D) || bank >= 0xC0) {
@@ -186,6 +200,8 @@ void snes_bus_write(uint32_t at, uint8_t v) {
     } else if (off >= 0x2000 && off < 0x6000 &&
                (bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF))) {
         io_write(off, v);
+    } else if (dsp1_window(c, at)) {
+        if (!(off & 1)) snes_dsp1_dr_write(v); /* the status register is read-only */
     } else if (machine.sram_bytes && sram_window(c, at)) {
         machine.sram[(off - 0x6000u) & (machine.sram_bytes - 1)] = v;
         machine.sram_dirty = 1;
@@ -193,7 +209,7 @@ void snes_bus_write(uint32_t at, uint8_t v) {
     /* cartridge writes: nothing (the games' registers live in the I/O page) */
 }
 
-void snes_init(const uint8_t *rom, uint32_t rom_bytes, int hirom, uint32_t sram_bytes) {
+void snes_init(const uint8_t *rom, uint32_t rom_bytes, int hirom, uint32_t sram_bytes, int dsp1) {
     snes_cpu_t *c = &machine.cpu;
     memset(&machine, 0, sizeof machine);
     c->wram = machine.wram;
@@ -201,6 +217,8 @@ void snes_init(const uint8_t *rom, uint32_t rom_bytes, int hirom, uint32_t sram_
     c->rom_bytes = rom_bytes;
     c->hirom = hirom;
     machine.sram_bytes = sram_bytes;
+    machine.dsp1_attached = (uint8_t)(dsp1 != 0);
+    snes_dsp1_reset();
     snes_reset();
 }
 

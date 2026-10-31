@@ -158,6 +158,10 @@ bool generate(const fs::path& cartridge, const GenerateOptions& o, GenerateStats
         const size_t head_at = hirom ? 0xFFC0 : 0x7FC0;
         const uint8_t ram_byte = head_at + 0x18 < image_bytes ? rom[head_at + 0x18] : 0;
         const uint32_t sram_bytes = ram_byte < 4 ? ram_table[ram_byte] : 0;
+        /* the header's DSP-1 mark: the map byte's high nibble $3 or a low
+         * nibble of 3 (LoROM + SRAM + DSP-1, $23) */
+        const unsigned map_byte = head_at + 0x16 <= image_bytes ? rom[head_at + 0x15] : 0;
+        const int dsp1 = ((map_byte & 0xF0) == 0x30 || (map_byte & 0x0F) == 3) ? 1 : 0;
 
         const auto marker = o.output / "snes-project.txt";
         if (fs::exists(o.output) && !fs::exists(marker) && !fs::is_empty(o.output)) {
@@ -181,13 +185,15 @@ bool generate(const fs::path& cartridge, const GenerateOptions& o, GenerateStats
         std::string config = "#pragma once\n"
               "#define SNES_ROM_SIZE " + std::to_string(image_bytes) + "u\n"
               "#define SNES_HIROM " + std::to_string(hirom ? 1 : 0) + "\n"
-              "#define SNES_SRAM_BYTES " + std::to_string(sram_bytes) + "u\n";
+              "#define SNES_SRAM_BYTES " + std::to_string(sram_bytes) + "u\n"
+              "#define SNES_DSP1 " + std::to_string(dsp1) + "\n";
         /* the recompiled code's dispatcher (snes_cpu.c) */
         if (!o.interpret) config += "#ifndef SNES_NATIVE\n#define SNES_NATIVE 1\n#endif\n";
         write(src / "snes_config.h", config);
 
         for (const char* name :
-             { "snes_cpu.c", "snes.c", "snes_ppu.c", "snes_smp.c", "snes_dsp.c", "snes.h", "snes_gen.h" })
+             { "snes_cpu.c", "snes.c", "snes_ppu.c", "snes_smp.c", "snes_dsp.c", "snes_dsp1.c",
+               "snes.h", "snes_gen.h" })
             copy_template(tpl / "runtime" / name, src / name);
         /* the idle loops' count (snes_gen.h, the dispatcher) */
         copy_template(o.meta_templates.parent_path() / "common" / "runtime" / "m0_idle.h", src / "m0_idle.h");
@@ -220,7 +226,7 @@ bool generate(const fs::path& cartridge, const GenerateOptions& o, GenerateStats
         copy_template(o.meta_templates.parent_path() / "consoles" / "pc" / "pc_input.h", o.output / "host" / "pc_input.h");
         const std::string sources =
             "${SRC}/snes.c ${SRC}/snes_cpu.c ${SRC}/snes_ppu.c ${SRC}/snes_smp.c ${SRC}/snes_dsp.c"
-            " ${SRC}/snes_cart.c" + std::string(native ? " ${SRC}/snes_gen.c" : "");
+            " ${SRC}/snes_dsp1.c ${SRC}/snes_cart.c" + std::string(native ? " ${SRC}/snes_gen.c" : "");
         write(o.output / "host" / "CMakeLists.txt",
               "cmake_minimum_required(VERSION 3.20)\nproject(" + o.name + "_snes_host C)\nset(CMAKE_C_STANDARD 11)\n"
               "if(NOT CMAKE_BUILD_TYPE)\n    set(CMAKE_BUILD_TYPE Release)\nendif()\n"
@@ -245,7 +251,8 @@ bool generate(const fs::path& cartridge, const GenerateOptions& o, GenerateStats
                   "add_executable(" + o.name + "_pc src/snes_pc.c src/pc_frontend.c "
                   "${CMAKE_CURRENT_SOURCE_DIR}/src/snes.c ${CMAKE_CURRENT_SOURCE_DIR}/src/snes_cpu.c "
                   "${CMAKE_CURRENT_SOURCE_DIR}/src/snes_ppu.c ${CMAKE_CURRENT_SOURCE_DIR}/src/snes_smp.c "
-                  "${CMAKE_CURRENT_SOURCE_DIR}/src/snes_dsp.c ${CMAKE_CURRENT_SOURCE_DIR}/src/snes_cart.c" +
+                  "${CMAKE_CURRENT_SOURCE_DIR}/src/snes_dsp.c ${CMAKE_CURRENT_SOURCE_DIR}/src/snes_dsp1.c "
+                  "${CMAKE_CURRENT_SOURCE_DIR}/src/snes_cart.c" +
                   std::string(native ? " ${CMAKE_CURRENT_SOURCE_DIR}/src/snes_gen.c" : "") + ")\n"
                   "target_include_directories(" + o.name + "_pc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)\n"
                   "target_compile_definitions(" + o.name + "_pc PRIVATE SNES_EMBEDDED)\n"
