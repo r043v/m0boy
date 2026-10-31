@@ -104,8 +104,10 @@ static void sprite_pack_row(const uint16_t w[4], uint32_t out[2]) {
     out[1] = hi;
 }
 
-/* the hflip: all 16 nibbles reversed */
+/* the hflip: all 16 nibbles reversed (32-bit halves first — skipping
+ * that step only mirrors each 8-nibble half in place) */
 static uint64_t sprite_nibrev(uint64_t x) {
+    x = (x & 0x00000000FFFFFFFFull) << 32 | (x & 0xFFFFFFFF00000000ull) >> 32;
     x = (x & 0x0000FFFF0000FFFFull) << 16 | (x & 0xFFFF0000FFFF0000ull) >> 16;
     x = (x & 0x00FF00FF00FF00FFull) << 8 | (x & 0xFF00FF00FF00FF00ull) >> 8;
     x = (x & 0x0F0F0F0F0F0F0F0Full) << 4 | (x & 0xF0F0F0F0F0F0F0F0ull) >> 4;
@@ -153,9 +155,9 @@ static void draw_bg(vdc_t *v) {
  * two halves */
 static void fetch_sprites(vdc_t *v) {
     active_sprites = 0;
-    /* RCRCount has already advanced for this line. Sprite CG selection
-     * belongs to the preceding count, as in the VDC's line fetch phase. */
-    const int sprite_line = v->rcr_count - 1;
+    /* RCRCount has already advanced for this line, as in the mednafen
+     * core's line fetch phase */
+    const int sprite_line = v->rcr_count;
     const uint16_t *sp = v->sat;
     for (unsigned i = 0; i < 64; i++, sp += 4) {
         const int y = (int)(sp[0] & 0x3FF) - 0x40;

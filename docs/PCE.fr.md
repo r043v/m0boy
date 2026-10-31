@@ -366,12 +366,24 @@ contrôlait pas le budget (une instruction de trop au bord de la
 tranche).  Avec un profil de sessions aléatoires et d'un idle long
 (`m0search.py run --no-explore`, 12 s), le projet `--meta-precise` de
 Raiden imprime le `run_hash` de `--interp` à 60, 300, 1 500 et
-3 000 images (`9288e16e`, `66b29e2e`, `6ae87821`, `23a4547f`).  Le mode
+3 000 images (`db956697`, `ad5b4696`, `c7ca2e14`, `2bd4e5b9` ; les
+valeurs antérieures au correctif des sprites du VDC ci-dessous étaient
+`9288e16e`, `66b29e2e`, `6ae87821`, `23a4547f`).  Le mode
 rapide ne vérifie le budget qu'aux étiquettes : son hash diffère de
 l'interpréteur par construction, l'image reste celle du jeu.
 L'outil de la chasse : un journal par tranche (registres et hash de la
 WRAM) puis par instruction sur la fenêtre de la première tranche qui
 diverge, comparés entre `--interp` et le natif.
+
+Deux bugs de sprites du VDC, trouvés sur le logo du titre de Raiden et
+corrigés contre la source du cœur mednafen (`FetchSpriteData`/
+`DrawSprites`) : le miroir horizontal inversait les nibbles du rang de
+motif sans échanger les moitiés 32 bits (`sprite_nibrev` composait
+`i → i^7` au lieu de `i → 15-i` — chaque moitié de 8 pixels se
+mirait sur elle-même, d'où les damiers du kanji de l'attract et les
+pixels rouges du logo) ; la ligne du fetch valait `rcr_count - 1` là où
+le cœur mednafen utilise `RCRCount` après incrément (tous les sprites
+décalés d'une ligne).
 
 ## La cible AKA (ESP32-S3)
 
