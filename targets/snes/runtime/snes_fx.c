@@ -59,25 +59,21 @@ static void fx_tick(uint32_t clocks) {
 
 static uint8_t fx_read(uint32_t addr) {
     if ((addr & 0xc00000) == 0x000000u) { /* banks $00-$3F */
-        while (!(fx->scmr & 0x10)) fx_tick(6); /* RON: the bus is the GSU's */
         const uint32_t fo = ((addr & 0x3f0000u) >> 1) | (addr & 0x7fffu);
         return machine.cpu.rom[fo % machine.cpu.rom_bytes];
     }
     if ((addr & 0xe00000) == 0x400000u) { /* banks $40-$5F: the ROM, linear */
-        while (!(fx->scmr & 0x10)) fx_tick(6);
         return machine.cpu.rom[addr % machine.cpu.rom_bytes];
     }
     if ((addr & 0xe00000) == 0x600000u) { /* banks $60-$7F: the GSU's RAM */
-        while (!(fx->scmr & 0x08)) fx_tick(6); /* RAN */
-        return machine.fx_ram[addr & 0xFFFFu];
+        return machine.fx_ram[addr & 0x7FFFu]; /* the GSU's RAM is 32 KiB */
     }
     return 0x00; /* open bus */
 }
 
 static void fx_write(uint32_t addr, uint8_t v) {
     if ((addr & 0xe00000) == 0x600000u) {
-        while (!(fx->scmr & 0x08)) fx_tick(6);
-        machine.fx_ram[addr & 0xFFFFu] = v;
+        machine.fx_ram[addr & 0x7FFFu] = v;
     }
 }
 
@@ -139,14 +135,14 @@ static uint8_t fx_opcode(uint16_t addr) {
 static uint8_t fx_peekpipe(void) {
     const uint8_t result = fx->pipeline;
     fx->pipeline = fx_opcode(fx->r[15]);
-    fx->r_mod &= (uint8_t)~FX_MOD(15);
+    fx->r_mod &= (uint16_t)~FX_MOD(15);
     return result;
 }
 
 static uint8_t fx_pipe(void) {
     const uint8_t result = fx->pipeline;
     fx->pipeline = fx_opcode(++fx->r[15]);
-    fx->r_mod &= (uint8_t)~FX_MOD(15);
+    fx->r_mod &= (uint16_t)~FX_MOD(15);
     return result;
 }
 
@@ -259,7 +255,7 @@ static void fx_reset_mods(void) {
 
 static void fx_set(unsigned n, unsigned v) {
     fx->r[n] = (uint16_t)v;
-    fx->r_mod |= (uint8_t)FX_MOD(n);
+    fx->r_mod |= FX_MOD(n);
 }
 
 static uint16_t fx_sr(void) { return fx->r[fx->sreg]; }
@@ -275,7 +271,7 @@ static void fx_flags_ld(uint16_t v) { /* S and Z of the 16-bit result */
 static void fx_ins_stop(void) {
     if (!(fx->cfgr & 0x80)) {
         fx->sfr |= FX_IRQ;
-        fx->irq = 1; /* the CPU's IRQ line rises */
+        machine.fx_irq = 1; /* the CPU's IRQ line rises */
     }
     fx->sfr &= (uint16_t)~FX_G;
     fx->pipeline = 0x01; /* nop */
@@ -664,27 +660,31 @@ static void fx_instruction(uint8_t op) {
 
 uint8_t snes_fx_reg_read(uint16_t off) {
     const uint32_t addr = 0x3000u | (off & 0x3ffu);
+    uint8_t v;
     if (addr >= 0x3100 && addr <= 0x32ff) {
         const uint16_t a = (uint16_t)((addr - 0x3100 + fx->cbr) & 511);
-        return fx->cache[a];
+        v = fx->cache[a];
+    } else if (addr <= 0x301f) {
+        v = (uint8_t)(fx->r[(addr >> 1) & 15] >> ((addr & 1) << 3));
+    } else {
+        switch (addr) {
+        case 0x3030: v = (uint8_t)fx->sfr; break;
+        case 0x3031: {
+            v = (uint8_t)(fx->sfr >> 8);
+            fx->sfr &= (uint16_t)~FX_IRQ;
+            machine.fx_irq = 0;
+            break;
+        }
+        case 0x3034: v = fx->pbr; break;
+        case 0x3036: v = fx->rombr; break;
+        case 0x303b: v = 0x04; break; /* the GSU-1's version code */
+        case 0x303c: v = fx->rambr; break;
+        case 0x303e: v = (uint8_t)fx->cbr; break;
+        case 0x303f: v = (uint8_t)(fx->cbr >> 8); break;
+        default: v = 0x00; break;
+        }
     }
-    if (addr <= 0x301f) return (uint8_t)(fx->r[(addr >> 1) & 15] >> ((addr & 1) << 3));
-    switch (addr) {
-    case 0x3030: return (uint8_t)fx->sfr;
-    case 0x3031: {
-        const uint8_t r = (uint8_t)(fx->sfr >> 8);
-        fx->sfr &= (uint16_t)~FX_IRQ;
-        fx->irq = 0;
-        return r;
-    }
-    case 0x3034: return fx->pbr;
-    case 0x3036: return fx->rombr;
-    case 0x303b: return 0x04; /* the GSU-1's version code */
-    case 0x303c: return fx->rambr;
-    case 0x303e: return (uint8_t)fx->cbr;
-    case 0x303f: return (uint8_t)(fx->cbr >> 8);
-    default: return 0x00;
-    }
+    return v;
 }
 
 void snes_fx_reg_write(uint16_t off, uint8_t v) {

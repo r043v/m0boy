@@ -181,7 +181,7 @@ typedef struct {
  * cycle at the line slices and on each register access. */
 typedef struct {
     uint16_t r[16];
-    uint8_t r_mod;       /* the instruction wrote r[n] (bit 15 = R15) */
+    uint16_t r_mod;      /* the instruction wrote r[n] (bit 15 = R15, bit 14 reloads the ROM buffer) */
     uint16_t sfr;
     uint8_t pbr, rombr, rambr, scbr, cfgr, scmr;
     uint16_t cbr;

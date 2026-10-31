@@ -106,6 +106,13 @@ uint8_t snes_ppu_read(uint16_t at) {
         machine.cgaddr = (machine.cgaddr + 1) & 511;
         return v;
     }
+    if (r == 0x34 || r == 0x35 || r == 0x36) {
+        /* MPYL/M/H: the signed product of the mode 7's A ($211B) and the
+         * sign-extended high byte of its B ($211C's second write) */
+        const unsigned p = (unsigned)((int32_t)(int16_t)(machine.m7[0] | machine.m7[1] << 8) *
+                                      (int32_t)(int8_t)machine.m7[3]) & 0xFFFFFFu;
+        return (uint8_t)(p >> ((r - 0x34) * 8));
+    }
     if (r == 0x3f) /* STAT77: the last evaluated line's sprite flags */
         return (uint8_t)((machine.obj_time_over ? 0x40 : 0) | (machine.obj_range_over ? 0x20 : 0)) |
                (machine.cpu.mdr & 0x1f);

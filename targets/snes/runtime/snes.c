@@ -168,21 +168,25 @@ static int dsp1_window(snes_cpu_t *c, uint32_t at) {
            ((bank >= 0x30 && bank <= 0x3F) || (bank >= 0xB0 && bank <= 0xBF));
 }
 
-/* the SuperFX's register window: banks $00-$3F/$80-$BF at $6000-$7FFF */
+/* the SuperFX's register window: banks $00-$3F/$80-$BF at $3000-$34FF
+ * (the registers and the cache, mirrored on the low 10 bits) */
 static int fx_window(snes_cpu_t *c, uint32_t at) {
     if (!machine.fx_attached) return 0;
     const unsigned bank = at >> 16, off = at & 0xFFFF;
     if (!(bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF))) return 0;
-    /* the registers answer at $6000-$7FFF and their mirror $3000-$32FF
-     * (the window the games poll to wait the GSU out) */
-    return (off >= 0x6000 && off < 0x8000) || (off >= 0x3000 && off < 0x3300);
+    return off >= 0x3000 && off < 0x3500;
 }
 
-/* the GSU's RAM, the CPU's window at banks $70-$7F ($7E/$7F stay WRAM) */
+/* the GSU's RAM: the CPU's windows are banks $00-$3F/$80-$BF at $6000-$7FFF
+ * and banks $70-$7F over the full offset (mirrored 32 KiB); writes always
+ * land; when the GSU holds the RAM bus — running, RAN set — the reads see
+ * open bus */
 static int fx_ram_window(snes_cpu_t *c, uint32_t at) {
     if (!machine.fx_attached) return 0;
-    const unsigned bank = at >> 16;
-    return bank >= 0x70 && bank <= 0x7F;
+    const unsigned bank = at >> 16, off = at & 0xFFFF;
+    if (bank >= 0x70 && bank <= 0x7F) return 1;
+    if (!(bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF))) return 0;
+    return off >= 0x6000 && off < 0x8000;
 }
 
 /* while the GSU owns the bus (running, RON set), the CPU's ROM reads see
@@ -212,7 +216,7 @@ uint8_t snes_bus_read(uint32_t at) {
         v = snes_fx_reg_read(off);
     } else if (fx_ram_window(c, at)) {
         if ((machine.fx.sfr & 0x20) && (machine.fx.scmr & 0x08)) v = c->mdr; /* the GSU owns the RAM */
-        else v = machine.fx_ram[at & 0xFFFF];
+        else v = machine.fx_ram[at & 0x7FFF];
     } else if (dsp1_window(c, at)) {
         v = (off & 1) ? snes_dsp1_sr_read() : snes_dsp1_dr_read();
     } else if (machine.sram_bytes && sram_window(c, at)) {
@@ -262,7 +266,7 @@ void snes_bus_write(uint32_t at, uint8_t v) {
         snes_fx_run(c->cycles); /* the register access syncs the GSU */
         snes_fx_reg_write(off, v);
     } else if (fx_ram_window(c, at)) {
-        machine.fx_ram[at & 0xFFFF] = v;
+        machine.fx_ram[at & 0x7FFF] = v; /* writes land even while the GSU runs */
     } else if (dsp1_window(c, at)) {
         if (!(off & 1)) snes_dsp1_dr_write(v); /* the status register is read-only */
     } else if (machine.sram_bytes && sram_window(c, at)) {
@@ -285,6 +289,7 @@ void snes_init(const uint8_t *rom, uint32_t rom_bytes, int map, uint32_t sram_by
     machine.dsp1_attached = (uint8_t)(dsp1 != 0);
     machine.fx_attached = (uint8_t)(fx_attached != 0);
     machine.sa1_attached = (uint8_t)(sa1_attached != 0);
+    if (machine.fx_attached) memset(machine.fx_ram, 0xff, sizeof machine.fx_ram); /* powered on */
     snes_dsp1_reset();
     snes_fx_reset();
     snes_sa1_reset();

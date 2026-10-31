@@ -786,14 +786,14 @@ static void fx_test(void) {
     snes_bus_write(0x601f, 0x00);      /* r15 high: the go flag */
     for (unsigned i = 0; i < 4; i++) snes_frame();
     CHECK(!(machine.fx.sfr & 0x20));   /* the program stopped itself */
-    CHECK(machine.fx.irq);             /* and raised the CPU's IRQ line */
+    CHECK(machine.fx_irq);             /* and raised the CPU's IRQ line */
     CHECK(snes_bus_read(0x6000) == 0x48 && snes_bus_read(0x6001) == 0);
     /* the plot at (3,2), 2bpp, screen base 0: bytes 4 and 5 of the GSU RAM,
      * bit 4 set in both planes */
     CHECK(machine.fx_ram[4] == 0x10 && machine.fx_ram[5] == 0x10);
     /* the $3031 read clears the request */
     CHECK(snes_bus_read(0x6031) & 0x80);
-    CHECK(!machine.fx.irq && !machine.cpu.irq_line);
+    CHECK(!machine.fx_irq && !machine.cpu.irq_line);
     
     rom[0] = 0x42;                     /* restore the bus test's byte */
 }
