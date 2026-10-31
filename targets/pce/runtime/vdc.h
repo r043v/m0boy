@@ -47,7 +47,7 @@ typedef struct {
     int vb_test, sat_test;
     uint8_t sat_pending;
     /* the row being composed */
-    uint16_t linebuf[1024];
+    uint16_t linebuf[1024] __attribute__((aligned(8)));
     unsigned row_width;   /* (HDW+1)*8 */
     /* what the display shows this frame */
     unsigned active_width, active_height;

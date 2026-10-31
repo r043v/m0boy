@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+typedef uint32_t __attribute__((may_alias)) u32a_;
+
 pce_t machine; /* the CPU's bus lands here (one machine per firmware, as
                 * the other runtimes' own machine) */
 
@@ -247,9 +249,14 @@ void pce_frame(void) {
             if (p->row_raw) {
                 p->row(p->host, line, p->vdc.linebuf, width);
             } else {
-                for (unsigned x = 0; x < width; x++) {
-                    const uint16_t px = p->vdc.linebuf[x];
-                    p->rowbuf[x] = p->vce_final[px & 0x1FF];
+                /* two pixels a step (the width is a multiple of 8, the
+                 * line buffer 8-aligned) through the final VCE table */
+                const uint16_t *lut = p->vce_final;
+                uint16_t *dst = p->rowbuf;
+                for (unsigned x = 0; x < width; x += 2) {
+                    const uint32_t two = *(const u32a_ *)(p->vdc.linebuf + x);
+                    dst[x] = lut[two & 0x1FF];
+                    dst[x + 1] = lut[(two >> 16) & 0x1FF];
                 }
                 p->row(p->host, line, p->rowbuf, width);
             }

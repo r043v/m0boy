@@ -70,85 +70,116 @@ static uint32_t cell_nibbles(uint16_t w0, uint16_t w1) {
 
 /* the bg pattern-row cache: the same tile row renders on many lines and
  * many cells of a line, so the nibbles are keyed by the pattern row's
- * address (16 entries, direct mapped — mednafen keeps the same per-tile
- * cache).  A VRAM write drops the matching entry; $FFFF is the free tag
- * (a row's address tops at $FFF7). */
-static uint16_t cell_cache_addr[16];
-static uint32_t cell_cache_bits[16];
+ * address.  256 entries, direct mapped on (line in the tile, tile low five
+ * bits): the 32 tiles of a scan line land on 32 distinct slots.  A pattern
+ * row is two words (planes 0-1 at the row's address, planes 2-3 eight words
+ * on), so a VRAM write names exactly one row, `address & ~8`, and drops
+ * it; $FFFF is the free tag (a row's address tops at $FFF7). */
+#define CELL_CACHE 256
+#define CELL_SLOT(row) (((row) & 7u) | (((row) >> 1) & 0xF8u))
+static uint16_t cell_cache_addr[CELL_CACHE];
+static uint32_t cell_cache_bits[CELL_CACHE];
 
 /* the sprite pattern-row cache, the same idea for the 4-plane rows the
  * fetch reads (16 pixels, 64 bits of packed nibbles): the same row comes
- * back every frame while a sprite holds still, and the per-pixel spread
- * expansion ran 256 times a line.  512 entries, direct mapped on
- * (address >> 2); a row's address tops at $FFCF. */
-#define SPRITE_CACHE 512
+ * back every frame while a sprite holds still.  Direct mapped on (row in
+ * the pattern, pattern low bits), so the 16 rows of one pattern take 16
+ * distinct slots.  A row's words sit 16 apart (planes 0-3), so a VRAM
+ * write names the row `address & ~0x30`.  A row's address tops at $FFCF.
+ * The size is the target's RAM to spend. */
+#ifndef PCE_SPRITE_CACHE
+#ifdef PCE_RENDER_THREAD
+#define PCE_SPRITE_CACHE 512
+#else
+#define PCE_SPRITE_CACHE 2048
+#endif
+#endif
+#define SPRITE_CACHE PCE_SPRITE_CACHE
+#define SPRITE_SLOT(row) (((row) & 15u) | (((row) >> 2) & (unsigned)(SPRITE_CACHE - 16)))
 static uint16_t sprite_cache_addr[SPRITE_CACHE];
 static uint32_t sprite_cache_bits[SPRITE_CACHE][2];
 
 static void vram_cache_drop(unsigned address) {
-    cell_cache_addr[(address >> 3) & 15] = 0xFFFFu;
-    sprite_cache_addr[(address >> 2) & (SPRITE_CACHE - 1)] = 0xFFFFu;
+    cell_cache_addr[CELL_SLOT(address & ~8u)] = 0xFFFFu;
+    sprite_cache_addr[SPRITE_SLOT(address & ~0x30u)] = 0xFFFFu;
 }
 
 /* one sprite row's 16 nibbles, leftmost pixel first (the draw's own
  * non-flipped order: pixel px is word bit 15-px of the four planes) */
 static void sprite_pack_row(const uint16_t w[4], uint32_t out[2]) {
+    /* each plane spreads to nibble lanes by the same table the bg uses */
     uint32_t lo = 0, hi = 0;
-    for (unsigned px = 0; px < 16; px++) {
-        const unsigned sh = 15 - px;
-        const unsigned n = ((w[0] >> sh) & 1) | (((w[1] >> sh) & 1) << 1) |
-            (((w[2] >> sh) & 1) << 2) | (((w[3] >> sh) & 1) << 3);
-        if (px < 8) lo |= n << (4 * px); else hi |= n << (4 * (px - 8));
+    for (unsigned plane = 0; plane < 4; plane++) {
+        const uint32_t x = w[plane];
+        /* pixel px (0 = leftmost) is bit 15-px: the high byte holds
+         * pixels 0-7, spread4 turns four bits into four nibbles with the
+         * first bit in the lowest nibble */
+        const uint32_t h = (uint32_t)spread4[(x >> 12) & 0xF] | (uint32_t)spread4[(x >> 8) & 0xF] << 16;
+        const uint32_t l = (uint32_t)spread4[(x >> 4) & 0xF] | (uint32_t)spread4[x & 0xF] << 16;
+        lo |= h << plane;
+        hi |= l << plane;
     }
     out[0] = lo;
     out[1] = hi;
 }
 
-/* the hflip: all 16 nibbles reversed (32-bit halves first — skipping
- * that step only mirrors each 8-nibble half in place) */
-static uint64_t sprite_nibrev(uint64_t x) {
-    x = (x & 0x00000000FFFFFFFFull) << 32 | (x & 0xFFFFFFFF00000000ull) >> 32;
-    x = (x & 0x0000FFFF0000FFFFull) << 16 | (x & 0xFFFF0000FFFF0000ull) >> 16;
-    x = (x & 0x00FF00FF00FF00FFull) << 8 | (x & 0xFF00FF00FF00FF00ull) >> 8;
-    x = (x & 0x0F0F0F0F0F0F0F0Full) << 4 | (x & 0xF0F0F0F0F0F0F0F0ull) >> 4;
+/* the hflip: the 8 nibbles of a half reversed */
+static uint32_t nibrev32(uint32_t x) {
+    x = x << 16 | x >> 16;
+    x = (x & 0x00FF00FFu) << 8 | (x & 0xFF00FF00u) >> 8;
+    x = (x & 0x0F0F0F0Fu) << 4 | (x & 0xF0F0F0F0u) >> 4;
     return x;
 }
 
+/* a byte of nibbles as two 16-bit pixels (the low nibble first), so the
+ * background writes a cell as four 32-bit stores */
+static uint32_t nib2[256];
+static int nib2_ready;
+static void nib2_init(void) {
+    for (unsigned b = 0; b < 256; b++) nib2[b] = (b & 0xFu) | (uint32_t)(b >> 4) << 16;
+    nib2_ready = 1;
+}
+
+typedef uint32_t __attribute__((may_alias)) u32a;
+
 static void draw_bg(vdc_t *v) {
+    if (!nib2_ready) nib2_init();
     const unsigned bat_width = bat_width_tab[(v->mwr >> 4) & 3];
     const unsigned bat_width_mask = bat_width - 1;
     const unsigned bat_width_shift = bat_width_shift_tab[(v->mwr >> 4) & 3];
     const unsigned bat_height_mask = bat_height_tab[(v->mwr >> 6) & 1] - 1;
     const unsigned width = v->row_width;
-    unsigned bx = v->bxr;
+    const unsigned bx = v->bxr;
     const unsigned bat_y = ((v->bg_y >> 3) & bat_height_mask) << bat_width_shift;
     const unsigned line_sub = v->bg_y & 7;
-    unsigned skip = bx & 7; /* the scroll offset inside the line's first cell */
+    const unsigned skip = bx & 7; /* the scroll offset inside the line's first cell */
+    /* whole cells land on 8-pixel boundaries (4-byte aligned): a scrolled
+     * line draws its cells in a scratch row and copies the window out */
+    uint16_t scratch[1032] __attribute__((aligned(4)));
+    uint16_t *const out = skip ? scratch : v->linebuf;
+    const unsigned cells = (width + skip + 7) >> 3;
+    unsigned cx = bx >> 3;
 
-    for (unsigned x = 0; x < width;) {
-        const uint16_t bat = v->vram[((bx >> 3) & bat_width_mask) | bat_y];
+    for (unsigned c = 0; c < cells; c++, cx++) {
+        const uint16_t bat = v->vram[(cx & bat_width_mask) | bat_y];
         const unsigned address = (bat & 0x0FFF) * 16 + line_sub;
-        const unsigned slot = (address >> 3) & 15;
+        const unsigned slot = CELL_SLOT(address);
         uint32_t s;
         if (cell_cache_addr[slot] == address) {
             s = cell_cache_bits[slot];
         } else {
-            const uint16_t w0 = vram_read(v, address);
-            const uint16_t w1 = vram_read(v, address + 8);
-            s = cell_nibbles(w0, w1);
+            s = cell_nibbles(vram_read(v, address), vram_read(v, address + 8));
             cell_cache_addr[slot] = (uint16_t)address;
             cell_cache_bits[slot] = s;
         }
-        const uint16_t palette = (bat >> 8) & 0xF0;
-        s >>= 4 * skip;
-        unsigned count = 8 - skip;
-        if (count > width - x) count = width - x;
-        for (unsigned i = 0; i < count; i++, s >>= 4)
-            v->linebuf[x + i] = (uint16_t)(palette | (s & 0xF));
-        x += count;
-        bx += count;
-        skip = 0;
+        const uint32_t pal2 = (uint32_t)((bat >> 8) & 0xF0) * 0x00010001u;
+        u32a *d = (u32a *)(out + c * 8);
+        d[0] = nib2[s & 255] | pal2;
+        d[1] = nib2[(s >> 8) & 255] | pal2;
+        d[2] = nib2[(s >> 16) & 255] | pal2;
+        d[3] = nib2[s >> 24] | pal2;
     }
+    if (skip) memcpy(v->linebuf, scratch + skip, width * sizeof v->linebuf[0]);
 }
 
 /* the SAT walk: the sprites of this line, 16 at most, a 32-wide one as
@@ -161,6 +192,8 @@ static void fetch_sprites(vdc_t *v) {
     const uint16_t *sp = v->sat;
     for (unsigned i = 0; i < 64; i++, sp += 4) {
         const int y = (int)(sp[0] & 0x3FF) - 0x40;
+        /* most of the 64 miss this line: 64 rows is the tallest sprite */
+        if ((unsigned)(sprite_line - y) >= 64u) continue;
         uint16_t x = sp[1] & 0x3FF;
         uint16_t no = (sp[2] >> 1) & 0x3FF;
         const uint16_t flags = sp[3];
@@ -189,7 +222,7 @@ static void fetch_sprites(vdc_t *v) {
             sprite_list[active_sprites].palette = palette;
             sprite_list[active_sprites].flags = flags | (i ? 0 : SPRF_SPRITE0);
             const unsigned pattern = no_half * 64 + (y_offset & 15);
-            const unsigned slot = (pattern >> 2) & (SPRITE_CACHE - 1);
+            const unsigned slot = SPRITE_SLOT(pattern);
             uint32_t pk[2];
             if (sprite_cache_addr[slot] == pattern) {
                 pk[0] = sprite_cache_bits[slot][0];
@@ -213,51 +246,61 @@ static void fetch_sprites(vdc_t *v) {
 
 static void draw_sprites(vdc_t *v) {
     if (!active_sprites) return;
-    uint16_t sprite_line[1024];
+    /* the sprites compose into a scratch row first (the first of the list
+     * wins), 16-pixel blocks at a time: only the blocks a sprite touches
+     * are cleared, painted and merged into the background */
+    static uint16_t sprite_line[1056] __attribute__((aligned(4)));
     const unsigned width = v->row_width;
-    unsigned first = width, end = 0;
+    uint64_t touched = 0;
 
-    for (int i = 0; i < active_sprites; i++) {
-        const int pos = (int)sprite_list[i].x - 0x20;
-        if (pos >= (int)width || pos <= -16) continue;
-        const unsigned left = pos > 0 ? (unsigned)pos : 0;
-        const unsigned right = pos + 16 < (int)width ? (unsigned)(pos + 16) : width;
-        if (left < first) first = left;
-        if (right > end) end = right;
-    }
-    if (first >= end) return;
-
-    memset(sprite_line + first, 0, (end - first) * sizeof sprite_line[0]);
     /* backwards: the first sprite of the list paints last and wins */
     for (int i = active_sprites - 1; i >= 0; i--) {
+        uint32_t lo = sprite_list[i].packed[0], hi = sprite_list[i].packed[1];
+        if (!(lo | hi)) continue; /* paints nothing */
         const unsigned flags = sprite_list[i].flags;
         const int pos = (int)sprite_list[i].x - 0x20;
+        const int left = pos > 0 ? pos : 0;
+        const int right = pos + 16 < (int)width ? pos + 16 : (int)width;
+        if (left >= right) continue;
+        for (unsigned blk = (unsigned)left >> 4; blk <= (unsigned)(right - 1) >> 4; blk++) {
+            if (touched >> blk & 1) continue;
+            touched |= 1ull << blk;
+            memset(sprite_line + blk * 16, 0, 16 * sizeof sprite_line[0]);
+        }
+        if (flags & SPRF_HFLIP) { const uint32_t t = nibrev32(hi); hi = nibrev32(lo); lo = t; }
         const unsigned prio_or = (flags & SPRF_PRIORITY) ? 0x200 : 0;
         const unsigned raw_or = sprite_list[i].palette | 0x100 | prio_or;
         const int collide = (flags & SPRF_SPRITE0) && (v->cr & 0x01);
-        /* the pixels land in growing tx: skip the left clip, stop at the
-         * right one (the per-pixel bounds of the reference stay true) */
-        const int left = pos > 0 ? pos : 0;
-        const int right = pos + 16 < (int)width ? pos + 16 : (int)width;
-        const unsigned hflip = flags & SPRF_HFLIP;
-        const uint64_t row = (uint64_t)sprite_list[i].packed[0] |
-            (uint64_t)sprite_list[i].packed[1] << 32;
-        const uint64_t nibbles = hflip ? sprite_nibrev(row) : row;
-        for (unsigned px = 0; px < 16; px++) {
-            const int tx = pos + (int)px;
-            if (tx >= right) break; /* the pixels only grow */
-            const unsigned raw = (unsigned)(nibbles >> (4 * px)) & 15;
-            if (!raw) continue;
-            if (tx < left) continue;
-            if (collide && (sprite_line[tx] & 0xF)) v->status |= VDCS_CR;
-            sprite_line[tx] = (uint16_t)(raw | raw_or);
+        /* the pixels land in growing tx: only the clipped span draws (the
+         * per-pixel bounds of the reference stay true) */
+        const unsigned p0 = (unsigned)(left - pos), p1 = (unsigned)(right - pos);
+        uint16_t *dst = sprite_line + pos;
+        for (unsigned px = p0; px < p1; px++) {
+            const unsigned raw = ((px < 8 ? lo >> (4 * px) : hi >> (4 * (px - 8)))) & 15;
+            const uint16_t cur = dst[px];
+            if (collide && raw && (cur & 0xF)) v->status |= VDCS_CR;
+            dst[px] = raw ? (uint16_t)(raw | raw_or) : cur;
         }
     }
     /* a sprite pixel wins over a transparent BG pixel, or with the
-     * priority flag over any BG pixel */
-    for (unsigned x = first; x < end; x++)
-        if ((sprite_line[x] & 0xF) && (!(v->linebuf[x] & 0xF) || (sprite_line[x] & 0x200)))
-            v->linebuf[x] = sprite_line[x] & 0x1FF;
+     * priority flag over any BG pixel — two pixels a step */
+    while (touched) {
+        const unsigned blk = (unsigned)__builtin_ctzll(touched);
+        touched &= touched - 1;
+        unsigned x = blk * 16, end = x + 16;
+        if (end > width) end = width;
+        for (; x < end; x += 2) {
+            const uint32_t sp = *(const u32a *)(sprite_line + x);
+            u32a *bgp = (u32a *)(v->linebuf + x);
+            const uint32_t bg = *bgp;
+            const uint32_t st = sp & 0x000F000Fu, bt = bg & 0x000F000Fu;
+            const uint32_t snz = (st | st >> 1 | st >> 2 | st >> 3) & 0x00010001u;
+            const uint32_t bz = ~(bt | bt >> 1 | bt >> 2 | bt >> 3) & 0x00010001u;
+            const uint32_t take = snz & (bz | ((sp >> 9) & 0x00010001u));
+            const uint32_t m = take * 0xFFFFu;
+            *bgp = (bg & ~m) | (sp & 0x01FF01FFu & m);
+        }
+    }
 }
 
 static void run_vram_dma(vdc_t *v) {
@@ -290,6 +333,7 @@ static void run_sat_dma(vdc_t *v) {
 }
 
 void vdc_reset(vdc_t *v) {
+    if (!nib2_ready) nib2_init();
     memset(v->vram, 0, sizeof v->vram);
     memset(v->sat, 0, sizeof v->sat);
     memset(cell_cache_addr, 0xFF, sizeof cell_cache_addr);

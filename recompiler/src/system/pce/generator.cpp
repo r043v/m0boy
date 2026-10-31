@@ -65,9 +65,12 @@ bool is_ctx(const std::string& t) {
  * contexts are the MPR bytes the address ran under.  Same-address lines
  * merge (hits summed, contexts kept, dynamic kept). */
 std::vector<CoverageEntry> read_coverage(const std::vector<fs::path>& files) {
-    std::map<uint64_t, CoverageEntry> sum; /* key: pc in the high bits, then the context */
+    /* key: the address, then the context (the 64-bit MPR word needs its own
+     * field: folding the address into it made distinct pairs collide and
+     * dropped covered instances) */
+    std::map<std::pair<uint16_t, std::pair<bool, uint64_t>>, CoverageEntry> sum;
     auto key_of = [&](uint16_t pc, bool ctxed, uint64_t ctx) {
-        return ctxed ? (uint64_t(pc) << 24) ^ ctx : (uint64_t(pc) << 24) ^ (1ULL << 63);
+        return std::make_pair(pc, std::make_pair(!ctxed, ctxed ? ctx : uint64_t(0)));
     };
     for (const auto& path : files) {
         std::ifstream in(path);

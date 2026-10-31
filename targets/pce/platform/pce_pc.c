@@ -113,14 +113,24 @@ int main(int argc, char **argv) {
         }
         if (machine.have_frame) {
             const unsigned w = machine.vdc.active_width, h = machine.vdc.active_height;
-            for (unsigned y = 0; y < h; y++)
-                for (unsigned x = 0; x < w; x++) {
-                    const uint16_t c = rows[machine.first_active_line + y][x];
-                    pixels[y * 512 + x] = 0xff000000u |
-                        ((((c >> 11) & 31u) * 255u / 31u) << 16) |
-                        ((((c >> 5) & 63u) * 255u / 63u) << 8) |
-                        ((c & 31u) * 255u / 31u);
+            /* the same 8-bit expansion as c * 255 / 31 and c * 255 / 63,
+             * read from tables instead of divided per pixel */
+            static uint32_t lut_r[32], lut_g[64], lut_b[32];
+            if (!lut_b[31]) {
+                for (unsigned i = 0; i < 32; i++) {
+                    lut_r[i] = 0xff000000u | (i * 255u / 31u) << 16;
+                    lut_b[i] = i * 255u / 31u;
                 }
+                for (unsigned i = 0; i < 64; i++) lut_g[i] = (i * 255u / 63u) << 8;
+            }
+            for (unsigned y = 0; y < h; y++) {
+                const uint16_t *src = rows[machine.first_active_line + y];
+                uint32_t *dst = pixels + y * 512;
+                for (unsigned x = 0; x < w; x++) {
+                    const uint16_t c = src[x];
+                    dst[x] = lut_r[c >> 11] | lut_g[(c >> 5) & 63u] | lut_b[c & 31u];
+                }
+            }
             if (!pc_frontend_present(&pc, pixels, w, h, 512)) { running = 0; break; }
         }
         deadline += 16u;

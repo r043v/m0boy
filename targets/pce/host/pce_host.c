@@ -55,7 +55,7 @@ static uint32_t fnv(const void *data, size_t n, uint32_t h) {
 static uint32_t pc_hits[65536];
 static uint8_t pc_dyn[65536];
 static uint32_t pc_locations; /* distinct addresses played: the explorer's novelty */
-#define PCE_CTX_MAX 4
+#define PCE_CTX_MAX 16
 static uint64_t pc_ctx[65536][PCE_CTX_MAX];
 static uint8_t pc_ctx_n[65536];
 
