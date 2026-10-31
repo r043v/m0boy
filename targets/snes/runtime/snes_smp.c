@@ -594,7 +594,7 @@ void snes_smp_port_write(unsigned n, uint8_t v) {
             if (v == s->ipl_y) {
                 if (s->ipl_fresh1) { /* the byte arrived first: commit it */
                     s->ipl_fresh1 = 0;
-                    s->ram[(s->ipl_addr & 0xFF00u) | s->ipl_y] = s->ports_in[1];
+                    s->ram[(uint16_t)(s->ipl_addr + s->ipl_y)] = s->ports_in[1];
                     s->ports_out[0] = s->ipl_y;
                     if (++s->ipl_y == 0) /* the counter wrapped: next page */
                         s->ipl_addr = (uint16_t)(s->ipl_addr + 0x100u);
@@ -620,7 +620,8 @@ void snes_smp_port_write(unsigned n, uint8_t v) {
             s->ports_out[0] = 0xCC;
             s->ports_out[1] = 0xBB;
             s->ipl_pending = 0;
-            if ((s->ipl_addr >> 8) != 0) { /* block upload into that page */
+            s->ipl_fresh1 = 0; /* the command's own port-1 byte is not data */
+            if (s->ports_in[1] != 0) { /* port 1 nonzero: block upload at $2142/3 */
                 s->ipl_state = 2;
                 s->ipl_y = 0;
             } else { /* entry point: the uploaded program takes over */
@@ -635,7 +636,7 @@ void snes_smp_port_write(unsigned n, uint8_t v) {
         /* the byte arrives with its counter already on port 0 */
         s->ipl_pending = 0;
         s->ipl_fresh1 = 0;
-        s->ram[(s->ipl_addr & 0xFF00u) | s->ipl_y] = v;
+        s->ram[(uint16_t)(s->ipl_addr + s->ipl_y)] = v;
         s->ports_out[0] = s->ipl_y;
         if (++s->ipl_y == 0)
             s->ipl_addr = (uint16_t)(s->ipl_addr + 0x100u);

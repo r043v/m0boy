@@ -298,7 +298,7 @@ static void apu_test(void) {
      * block's page, the bytes with their counter on port 0, the go */
     CHECK(machine.smp.ipl_state == 0 && machine.smp.ports_out[0] == 0xaa);
     CHECK(machine.smp.ports_out[1] == 0xbb);
-    snes_bus_write(0x2142, 0x00); snes_bus_write(0x2143, 0x02);
+    snes_bus_write(0x2141, 0x01); snes_bus_write(0x2142, 0x00); snes_bus_write(0x2143, 0x02);
     snes_bus_write(0x2140, 0xcc); /* the upload command, the block at $0200 */
     CHECK(machine.smp.ipl_state == 2 && machine.smp.ports_out[0] == 0xcc);
     static const uint8_t prog[] = {

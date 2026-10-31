@@ -228,7 +228,10 @@ uint8_t snes_bus_read(uint32_t at) {
         if (c->hirom || c->exhirom)
             v = c->rom[rom_offset(c, at) % (c->rom_bytes ? c->rom_bytes : 1)];
         else {
-            const uint32_t fo = rom_offset(c, at);
+            /* SuperFX: $40-$5F are the ROM in whole 64 KiB banks */
+            const uint32_t fo = (machine.fx_attached && bank <= 0x5F)
+                                    ? (uint32_t)(bank - 0x40) * 0x10000u + off
+                                    : rom_offset(c, at);
             v = fo < c->rom_bytes ? c->rom[fo] : c->mdr;
         }
     } else { /* banks $00-$3F and $80-$BF from $8000: the cartridge */

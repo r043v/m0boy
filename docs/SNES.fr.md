@@ -237,8 +237,8 @@ construit doit imprimer le run_hash et les cycles de son `--interp` —
 - **Bucket** (homebrew, 256 Kio LoROM) démarre : après 120 images l'écran
   montre son fond pointillé animé (l'empreinte d'image change d'une image à
   l'autre) et le seau — les sprites du bas — suit la croix ; sur le harnais,
-  le chemin natif imprime `run_hash=8fa1030b image_hash=b295c090
-  audio_hash=1e120d65` à 120 images, identiques à son `--interp`. Bucket ne
+  le chemin natif imprime `run_hash=6be13877 image_hash=410285dd
+  audio_hash=59427325` à 120 images, identiques à son `--interp`. Bucket ne
   boote pas le S-SMP (A-RAM vide, pas de poignée de main) : son silence est
   le silence du jeu, pas un manque du cœur. Ces observations restent une
   comparaison avec rien : aucun émulateur de référence n'a tourné ici.
@@ -246,7 +246,16 @@ construit doit imprimer le run_hash et les cycles de son `--interp` —
   projet `--meta-precise` imprime le run_hash de son `--interp` sur les
   trois, cycles compris — CPUADC `run_hash=6494f940 image_hash=a713d1ab`,
   CPUMOV `run_hash=4bba5727 image_hash=53b0775f`, CPUMSC
-  `run_hash=4289fb73 image_hash=78729dc5`, à 120 images.
+  `run_hash=0e00ccfe image_hash=4eaf47f3`, à 120 images.
+  Bucket et CPUMSC ont changé d'empreinte (CPUADC et CPUMOV non) le jour où
+  les vecteurs NMI/IRQ/BRK/COP ont été corrigés : les ternaires natif /
+  émulation étaient inversés, et ces deux ROMs ont des vecteurs différents
+  dans les deux modes (Bucket : NMI natif `$8091`, émulation `$8000` ;
+  CPUMSC : natif `$85FD`, émulation `$0000`). Les anciennes empreintes
+  venaient du mauvais vecteur ; natif = interp reste vérifié.
+  Yoshi : la SuperFX mappe `$40-$5F` en banques linéaires de 64 Kio, et la
+  poignée de main IPL décide « bloc ou saut » sur le port 1 (comme le vrai
+  IPL) ; le jeu avance au-delà de l'attente NMI. Pas encore d'écran titre.
 
 ## La cible PC
 

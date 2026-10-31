@@ -269,13 +269,13 @@ SNES_INTERP_FN(snes_cpu_t *cpu, uint32_t until) {
         const uint16_t pc0 = pc_;
         if (cpu->nmi_pending) {
             cpu->nmi_pending = 0;
-            INTERRUPT(cpu->vec_custom ? cpu->vec_nmi : (e_ ? 0xFFEA : 0xFFFA));
+            INTERRUPT(cpu->vec_custom ? cpu->vec_nmi : (e_ ? 0xFFFA : 0xFFEA));
             budget -= e_ ? 7 : 8;
             SNES_DYN_HOOK((uint32_t)k_ << 16 | pc_);
             continue;
         }
         if (cpu->irq_line && !(p_ & SNES_P_I)) {
-            INTERRUPT(cpu->vec_custom ? cpu->vec_irq : (e_ ? 0xFFEE : 0xFFFE));
+            INTERRUPT(cpu->vec_custom ? cpu->vec_irq : (e_ ? 0xFFFE : 0xFFEE));
             budget -= e_ ? 7 : 8;
             SNES_DYN_HOOK((uint32_t)k_ << 16 | pc_);
             continue;
@@ -686,9 +686,9 @@ SNES_INTERP_FN(snes_cpu_t *cpu, uint32_t until) {
             const unsigned w_ = POP16(); pc_ = (uint16_t)w_;
             if (!e_) k_ = POP();
             pc_set = 1; SNES_DYN_HOOK((uint32_t)k_ << 16 | pc_); break; }
-        case 0x00: { pc_ += 2; left = e_ ? 7 : 8; SOFTWARE(e_ ? 0xFFE6 : 0xFFF6); /* BRK */
+        case 0x00: { pc_ += 2; left = e_ ? 7 : 8; SOFTWARE(e_ ? 0xFFFE : 0xFFE6); /* BRK */
             pc_set = 1; SNES_DYN_HOOK((uint32_t)k_ << 16 | pc_); break; }
-        case 0x02: { pc_ += 2; left = e_ ? 7 : 8; SOFTWARE(e_ ? 0xFFE4 : 0xFFF4); /* COP */
+        case 0x02: { pc_ += 2; left = e_ ? 7 : 8; SOFTWARE(e_ ? 0xFFF4 : 0xFFE4); /* COP */
             pc_set = 1; SNES_DYN_HOOK((uint32_t)k_ << 16 | pc_); break; }
         case 0x80: { const int8_t off_ = (int8_t)OP8(1); /* BRA */
             if (e_) { const uint16_t t_ = (uint16_t)(pc_ + 2 + off_);
@@ -811,12 +811,12 @@ void snes_run(snes_cpu_t *cpu, uint32_t until) {
         }
         if (machine.cpu.nmi_pending) {
             machine.cpu.nmi_pending = 0;
-            snes_take_interrupt(cpu, cpu->e ? 0xFFEA : 0xFFFA);
+            snes_take_interrupt(cpu, cpu->e ? 0xFFFA : 0xFFEA);
             budget -= cpu->e ? 7 : 8;
             continue;
         }
         if (machine.cpu.irq_line && !(cpu->p & SNES_P_I)) {
-            snes_take_interrupt(cpu, cpu->e ? 0xFFEE : 0xFFFE);
+            snes_take_interrupt(cpu, cpu->e ? 0xFFFE : 0xFFEE);
             budget -= cpu->e ? 7 : 8;
             continue;
         }
