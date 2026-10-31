@@ -58,6 +58,24 @@ static uint16_t vdp_status(const MdFull *m) {
                       (line >= 224 && m->irq_pending ? 0x0080u : 0u));
 }
 
+
+/* Registre de version ($A10001) : region lue dans l'en-tete de la cartouche ($1F0).
+ * bit 7 = export (hors Japon), bit 6 = PAL. Une cartouche europeenne (« E » seul)
+ * affiche sinon son ecran d'avertissement PAL/SECAM et s'arrete. Le timing reste NTSC. */
+static uint8_t md_version_reg(void) {
+    if (md_rom_size < 0x200) return 0x80;
+    int j = 0, u = 0, e = 0;
+    for (unsigned k = 0x1f0; k < 0x1f3; k++) {
+        uint8_t c = md_rom[k];
+        if (c == 'J') j = 1; else if (c == 'U') u = 1; else if (c == 'E') e = 1;
+        else if (c >= '0' && c <= '9') { unsigned v = c - '0'; j |= v & 1; u |= (v >> 2) & 1; e |= (v >> 3) & 1; }
+        else if (c >= 'A' && c <= 'F') { unsigned v = c - 'A' + 10; j |= v & 1; u |= (v >> 2) & 1; e |= (v >> 3) & 1; }
+    }
+    if (u) return 0x80;          /* USA : NTSC export */
+    if (e) return 0xc0;          /* Europe : PAL export */
+    if (j) return 0x00;          /* Japon : NTSC domestique */
+    return 0x80;
+}
 uint8_t md_full_read8(MdFull *m, uint32_t addr) {
     addr &= 0xffffffu;
     if (m->sram_enable && addr >= 0x200000u && addr < 0x210000u) return m->sram[addr & 0xffffu];
@@ -66,7 +84,7 @@ uint8_t md_full_read8(MdFull *m, uint32_t addr) {
     if (addr >= 0xa00000u && addr < 0xa10000u) return md_full_sound_read(m, addr & 0xffffu);
     if (addr >= 0xa10000u && addr <= 0xa1001fu) {
         switch (addr & 0x1eu) {
-        case 0: return 0x80;  /* NTSC/export version */
+        case 0: return md_version_reg();
         case 2: return pad_read(m);
         case 8: return m->pad_control;
         default: return 0;
