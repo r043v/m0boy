@@ -163,3 +163,29 @@ plus : non testé sur jeu réel.
 
 La version d'état est à jour ; le prochain pas du plan reste SuperFX
 (puis SA-1), derrière eux le comparatif de référence.
+
+## Séance du 30 octobre (suite) — le SuperFX
+
+Chantier 4.2 : le GSU interprété (`targets/snes/runtime/snes_fx.c`,
+sémantiques publiées, le cœur bsnes comme référence de lecture) — les
+seize registres, SFR, le pipeline, le cache d'instructions 512 octets,
+les tampons ROM/RAM latents, le tracé (COLOR/PLOT/RPIX, cache de pixels,
+dither, transparence) et la RAM 64 Kio du GSU avec sa fenêtre CPU
+$70-$7F. Détection par l'en-tête (type $15, map $13/$14) dans le harnais
+et le générateur (`SNES_FX`), fenêtre de registres $6000-$7FFF sur le
+bus, IRQ du STOP sur la ligne du CPU, collisions de bus quand le GSU
+tient le bus (le motif vecteur sur la ROM). Horloge déterministe : six
+coups GSU par cycle CPU, crédités aux tranches de ligne et aux accès de
+registre — le contrat native == interpréteur reste hashable. Le mode
+précis sort des régions sur $6000-$7FFF (et désormais sur la fenêtre
+DSP-1 $8000+ des banques $30-$3F, banque prise en compte). `fx_test`
+passe (IWT/FROM/MULT/COLOR/PLOT/STOP à travers la fenêtre), `ctest` vert,
+balayage 4/4, un projet généré Yoshi imprime les mêmes empreintes que le
+harnais du dépôt.
+
+**Ouvert** : Yoshi's Island n'amorce pas — le chargement du programme
+S-SMP boucle sur le premier bloc du protocole IPL (32 octets/trame, des
+$50 à l'infini, aucun terminate) ; la même boucle sans le GSU attaché,
+donc le modèle S-SMP/IPL est en cause, pas le GSU. À creuser avec le
+chantier 5 (le comparatif de référence tranchera ce que le vrai ROM IPL
+répond). Suite du plan : SA-1, puis le comparatif.

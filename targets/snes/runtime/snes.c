@@ -67,7 +67,7 @@ static uint8_t io_read(uint16_t at) {
     case 0x4211: { /* TIMEUP: the H/V timer's flag, cleared by the read */
         const uint8_t v = machine.timeup ? 0x80 : 0;
         machine.timeup = 0;
-        c->irq_line = 0;
+        c->irq_line = machine.fx_irq; /* the GSU's request stays */
         return v;
     }
     case 0x4212: return (machine.vblank ? 0x80 : 0) | (machine.hblank ? 0x40 : 0) | machine.joy_busy;
@@ -168,6 +168,28 @@ static int dsp1_window(snes_cpu_t *c, uint32_t at) {
            ((bank >= 0x30 && bank <= 0x3F) || (bank >= 0xB0 && bank <= 0xBF));
 }
 
+/* the SuperFX's register window: banks $00-$3F/$80-$BF at $6000-$7FFF */
+static int fx_window(snes_cpu_t *c, uint32_t at) {
+    if (!machine.fx_attached) return 0;
+    const unsigned bank = at >> 16, off = at & 0xFFFF;
+    return off >= 0x6000 && off < 0x8000 &&
+           (bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF));
+}
+
+/* the GSU's RAM, the CPU's window at banks $70-$7F ($7E/$7F stay WRAM) */
+static int fx_ram_window(snes_cpu_t *c, uint32_t at) {
+    if (!machine.fx_attached) return 0;
+    const unsigned bank = at >> 16;
+    return bank >= 0x70 && bank <= 0x7F;
+}
+
+/* while the GSU owns the bus (running, RON set), the CPU's ROM reads see
+ * its contention pattern instead of the cartridge */
+static const uint8_t fx_bus_vector[16] = {
+    0x00, 0x01, 0x00, 0x01, 0x04, 0x01, 0x00, 0x01,
+    0x00, 0x01, 0x08, 0x01, 0x00, 0x01, 0x0c, 0x01,
+};
+
 uint8_t snes_bus_read(uint32_t at) {
     snes_cpu_t *c = &machine.cpu;
     const unsigned bank = at >> 16, off = at & 0xFFFF;
@@ -179,6 +201,12 @@ uint8_t snes_bus_read(uint32_t at) {
     } else if (off >= 0x2000 && off < 0x6000 &&
                (bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF))) {
         v = io_read(off);
+    } else if (fx_window(c, at)) {
+        snes_fx_run(c->cycles); /* the register access syncs the GSU */
+        v = snes_fx_reg_read(off);
+    } else if (fx_ram_window(c, at)) {
+        if ((machine.fx.sfr & 0x20) && (machine.fx.scmr & 0x08)) v = c->mdr; /* the GSU owns the RAM */
+        else v = machine.fx_ram[at & 0xFFFF];
     } else if (dsp1_window(c, at)) {
         v = (off & 1) ? snes_dsp1_sr_read() : snes_dsp1_dr_read();
     } else if (machine.sram_bytes && sram_window(c, at)) {
@@ -186,8 +214,12 @@ uint8_t snes_bus_read(uint32_t at) {
     } else if ((bank >= 0x40 && bank <= 0x7D) || bank >= 0xC0) {
         v = c->hirom ? c->rom[rom_offset(c, at) % (c->rom_bytes ? c->rom_bytes : 1)] : c->mdr;
     } else { /* banks $00-$3F and $80-$BF from $8000: the cartridge */
-        const uint32_t fo = rom_offset(c, at);
-        v = fo < c->rom_bytes ? c->rom[fo] : c->mdr;
+        if (machine.fx_attached && (machine.fx.sfr & 0x20) && (machine.fx.scmr & 0x10))
+            v = fx_bus_vector[at & 15];
+        else {
+            const uint32_t fo = rom_offset(c, at);
+            v = fo < c->rom_bytes ? c->rom[fo] : c->mdr;
+        }
     }
     c->mdr = v;
     return v;
@@ -204,6 +236,11 @@ void snes_bus_write(uint32_t at, uint8_t v) {
     } else if (off >= 0x2000 && off < 0x6000 &&
                (bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF))) {
         io_write(off, v);
+    } else if (fx_window(c, at)) {
+        snes_fx_run(c->cycles); /* the register access syncs the GSU */
+        snes_fx_reg_write(off, v);
+    } else if (fx_ram_window(c, at)) {
+        machine.fx_ram[at & 0xFFFF] = v;
     } else if (dsp1_window(c, at)) {
         if (!(off & 1)) snes_dsp1_dr_write(v); /* the status register is read-only */
     } else if (machine.sram_bytes && sram_window(c, at)) {
@@ -213,7 +250,8 @@ void snes_bus_write(uint32_t at, uint8_t v) {
     /* cartridge writes: nothing (the games' registers live in the I/O page) */
 }
 
-void snes_init(const uint8_t *rom, uint32_t rom_bytes, int map, uint32_t sram_bytes, int dsp1) {
+void snes_init(const uint8_t *rom, uint32_t rom_bytes, int map, uint32_t sram_bytes, int dsp1,
+               int fx_attached) {
     snes_cpu_t *c = &machine.cpu;
     memset(&machine, 0, sizeof machine);
     c->wram = machine.wram;
@@ -223,7 +261,9 @@ void snes_init(const uint8_t *rom, uint32_t rom_bytes, int map, uint32_t sram_by
     c->exhirom = map == 2;
     machine.sram_bytes = sram_bytes;
     machine.dsp1_attached = (uint8_t)(dsp1 != 0);
+    machine.fx_attached = (uint8_t)(fx_attached != 0);
     snes_dsp1_reset();
+    snes_fx_reset();
     snes_reset();
 }
 
@@ -259,6 +299,7 @@ void snes_reset(void) {
     machine.smp.ports_out[0] = 0xAA;
     machine.smp.ports_out[1] = 0xBB;
     machine.dsp.noise_lfsr = 0x4000; /* the noise generator's seed */
+    snes_fx_reset();
     /* the reset vector, always of bank $00 in emulation mode */
     c->pc = (uint16_t)(snes_bus_read(0x00FFFC) | snes_bus_read(0x00FFFD) << 8);
 }
@@ -328,7 +369,7 @@ void snes_frame(void) {
         }
         if (line == 228) machine.joy_busy = 0;
         const int v_match = line == machine.vtime;
-        machine.cpu.irq_line = machine.timeup; /* the level persists */
+        machine.cpu.irq_line = machine.timeup || machine.fx_irq; /* the level persists */
         if (machine.v_irq_en && v_match && !machine.h_irq_en) irq_fire();
         if (line < 224) snes_render_line(line, machine.screen + line * 256u * 3u);
         const uint32_t line_start = start + (uint32_t)(((uint64_t)line * SNES_FRAME_CYCLES) / 262);
@@ -345,17 +386,20 @@ void snes_frame(void) {
                 machine.dma_stolen;
             snes_run(&machine.cpu, h_at);
             snes_apu_run(machine.cpu.cycles - at_slice);
+            snes_fx_run(machine.cpu.cycles);
             at_slice = machine.cpu.cycles;
             irq_fire();
         }
         snes_run(&machine.cpu, visible - machine.dma_stolen);
         snes_apu_run(machine.cpu.cycles - at_slice);
+        snes_fx_run(machine.cpu.cycles);
         at_slice = machine.cpu.cycles;
         machine.hblank = 1;
         snes_hdma_line();
         if (h_match && machine.htime >= 256) irq_fire();
         snes_run(&machine.cpu, line_start + line_cy - machine.dma_stolen);
         snes_apu_run(machine.cpu.cycles - at_slice);
+        snes_fx_run(machine.cpu.cycles);
         at_line = machine.cpu.cycles;
     }
     machine.hblank = 0;

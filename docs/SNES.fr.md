@@ -93,6 +93,34 @@ recompilateur.
   rayon, détection de puce $0F, l'invariant target(0,0) == (Cx,Cy), la
   projection du centre écran en (0,0)) ; **aucune ROM DSP-1 dans la
   collection locale : le protocole n'a pas tourné dans un jeu réel**.
+- **SuperFX (GSU)** : la cartouche qui déclare le coprocesseur (l'octet
+  de type $15, ou le map byte $13/$14) attache le cœur interprété de
+  `snes_fx.c` : les seize registres 16 bits (R15 compteur programme, R14
+  l'adresse du tampon ROM), les drapeaux SFR (go, alt1/alt2, le report de
+  l'IRQ), le pipeline de deux octets, le cache d'instructions de 512
+  octets indexé par CBR, les tampons ROM/RAM avec leurs latences, le
+  cache de pixels du tracé (COLOR, PLOT, RPIX, les modes de la trame de
+  SCBR/SCMR, le dithering et la transparence de POR) et la RAM du GSU
+  (64 Kio, la fenêtre du CPU aux banques $70-$7F). Les sémantiques
+  suivent celles publiées du GSU (le cœur bsnes comme référence de
+  lecture, implémentation C maison). Horloge : le CPU crédite six coups
+  d'horloge GSU par cycle aux mêmes tranches que l'APU et à chaque accès
+  de registre ; la fenêtre de registres ($6000-$7FFF, banques
+  $00-$3F/$80-$BF) répond comme la puce (R0-R15, SFR avec l'acquittement
+  de l'IRQ par $3031, PBR, ROMBR, CBR, SCBR/SCMR/CLSR, le registre de
+  version $04) et l'octet haut de R15 met le drapeau go. Pendant que le
+  GSU tient le bus (go et RON/RAN), les lectures ROM du CPU voient le
+  motif de collision de la puce et sa RAM reste muette. L'IRQ du STOP
+  monte sur la ligne du CPU jusqu'à la lecture de $3031. Le framebuffer
+  du GSU atteint la VRAM par le DMA du jeu (la fenêtre RAM $70-$7F),
+  sans chemin spécial dans la PPU. Testé par `fx_test` (IWT, FROM, MULT,
+  COLOR, PLOT à travers la fenêtre, le cache de pixels, STOP et son
+  IRQ). Le mode précis sort des régions sur toute accès $6000-$7FFF.
+  **La ROM SuperFX de la collection locale (Yoshi's Island) n'amorce pas
+  encore : le chargement du programme S-SMP boucle sur le premier bloc
+  du protocole IPL — c'est le modèle S-SMP/IPL qui est en cause, pas le
+  GSU (la même boucle sans le GSU attaché) ; à creuser avec le
+  comparatif de référence**.
 - **Timing du bus** : le DMA général et le HDMA volent leur temps de bus au
   CPU (modèle : 16 cycles de démarrage par canal, 8 par octet ; la tranche
   d'atterrissage d'un DMA lancé en plein milieu est approximative, le total
@@ -204,7 +232,8 @@ et la fenêtre tourne tête-bêche sur la CI (SDL2 requis).
 
 ## Chantiers suivants
 
-Les modes PPU 5/6 et l'EXBG du mode 7, SuperFX et SA-1 (de vrais cœurs
-interprétés — le DSP-1 est fait), une comparaison contre un émulateur de
-référence (le bilan mednafen de la PCE), et — si un jour les budgets de RAM
-le permettent — le streaming des ROMs pour les consoles.
+Les modes PPU 5/6 et l'EXBG du mode 7, SA-1 (le DSP-1 et le SuperFX sont
+faits), l'amorçage S-SMP des jeux qui ne passent pas le protocole IPL
+(Yoshi's Island), une comparaison contre un émulateur de référence (le
+bilan mednafen de la PCE), et — si un jour les budgets de RAM le
+permettent — le streaming des ROMs pour les consoles.

@@ -52,7 +52,7 @@ target_include_directories(gg_host PRIVATE targets/common/host) # m0_explore.h
 target_link_libraries(gg_host PRIVATE m0boy_gg_runtime)
 # SNES desktop reference harness (the PPU currently renders a subset).
 add_executable(snes_host targets/snes/host/snes_host.c targets/snes/runtime/snes.c
-    targets/snes/runtime/snes_cpu.c targets/snes/runtime/snes_ppu.c targets/snes/runtime/snes_smp.c targets/snes/runtime/snes_dsp.c targets/snes/runtime/snes_dsp1.c)
+    targets/snes/runtime/snes_cpu.c targets/snes/runtime/snes_ppu.c targets/snes/runtime/snes_smp.c targets/snes/runtime/snes_dsp.c targets/snes/runtime/snes_dsp1.c targets/snes/runtime/snes_fx.c)
 target_compile_definitions(snes_host PRIVATE SNES_TRACE=1)
 target_include_directories(snes_host PRIVATE targets/consoles/pc)
 # Card cache and flash residency simulated on host ROM traces (tools/profile).
@@ -73,7 +73,7 @@ option(BUILD_TESTS "Build the META and Pokitto target tests" OFF)
 if(BUILD_TESTS)
     enable_testing()
     add_executable(test_snes_runtime tests/test_snes_runtime.c
-        targets/snes/runtime/snes.c targets/snes/runtime/snes_cpu.c targets/snes/runtime/snes_ppu.c targets/snes/runtime/snes_smp.c targets/snes/runtime/snes_dsp.c targets/snes/runtime/snes_dsp1.c)
+        targets/snes/runtime/snes.c targets/snes/runtime/snes_cpu.c targets/snes/runtime/snes_ppu.c targets/snes/runtime/snes_smp.c targets/snes/runtime/snes_dsp.c targets/snes/runtime/snes_dsp1.c targets/snes/runtime/snes_fx.c)
     add_test(NAME snes_runtime_bus_interrupt COMMAND test_snes_runtime)
     add_executable(test_m0plus_cpu tests/test_m0plus_cpu.c)
     target_link_libraries(test_m0plus_cpu PRIVATE m0boy_m0plus_runtime)

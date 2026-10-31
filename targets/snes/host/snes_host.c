@@ -101,6 +101,13 @@ static int header_dsp1(const uint8_t *rom, uint32_t bytes, int map) {
     const unsigned map_byte = rom[at];
     return ((map_byte & 0xF0) == 0x30 || (map_byte & 0x0F) == 3) ? 1 : 0;
 }
+/* the header's SuperFX mark: type $15, or the map byte $13/$14 */
+static int header_fx(const uint8_t *rom, uint32_t bytes, int map) {
+    const size_t at = (size_t)(map == 0 ? 0x7FC0u : (map == 1 ? 0xFFC0u : 0x40FFC0u)) + 0x16;
+    if (at + 1 > bytes) return 0;
+    const unsigned map_byte = rom[at];
+    return map_byte == 0x15 || rom[at - 1] == 0x13 || rom[at - 1] == 0x14 ? 1 : 0;
+}
 
 int main(int argc, char **argv) {
     const char *rom_path = 0, *input_path = 0, *coverage = 0, *capture = 0, *wav_path = 0;
@@ -152,7 +159,8 @@ int main(int argc, char **argv) {
         sram_bytes = header_sram(rom, rom_bytes, hirom);
     }
 
-    snes_init(rom, rom_bytes, hirom, sram_bytes, header_dsp1(rom, rom_bytes, hirom));
+    snes_init(rom, rom_bytes, hirom, sram_bytes, header_dsp1(rom, rom_bytes, hirom),
+              header_fx(rom, rom_bytes, hirom));
     static const char *const names[12] = {
         "b", "y", "select", "start", "up", "down", "left", "right", "a", "x", "l", "r"
     };

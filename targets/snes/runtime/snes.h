@@ -133,6 +133,34 @@ typedef struct {
 } snes_dsp1_t;
 
 
+/* The SuperFX (GSU) coprocessor's state; the core is snes_fx.c.  The
+ * clock is a deterministic budget: the CPU credits six GSU ticks per
+ * cycle at the line slices and on each register access. */
+typedef struct {
+    uint16_t r[16];
+    uint8_t r_mod;       /* the instruction wrote r[n] (bit 15 = R15) */
+    uint16_t sfr;
+    uint8_t pbr, rombr, rambr, scbr, cfgr, scmr;
+    uint16_t cbr;
+    uint8_t colr, por, bramr, clsr;
+    uint8_t pipeline;
+    uint16_t ramaddr;
+    uint8_t sreg, dreg;
+    uint8_t cache[512];
+    uint8_t cache_valid[32];
+    uint8_t pix_data[2][8];
+    uint16_t pix_offset[2];
+    uint8_t pix_pend[2];
+    uint32_t romcl;
+    uint8_t romdr;
+    uint32_t ramcl;
+    uint16_t ramar;
+    uint8_t ramdr;
+    int32_t bank;        /* GSU ticks left of the credited budget */
+    uint32_t last_cpu;   /* the CPU time already credited */
+    uint8_t irq;         /* the GSU stopped itself: the CPU's IRQ line */
+} snes_fx_t;
+
 /* One machine: CPU, WRAM, the cartridge's SRAM, PPU memories, the APU and
  * general DMA state. */
 typedef struct {
@@ -169,20 +197,30 @@ typedef struct {
     snes_dsp_t dsp;
     snes_dsp1_t dsp1;
     uint8_t dsp1_attached; /* the header declared a DSP-1 */
+    snes_fx_t fx;
+    uint8_t fx_attached;   /* the header declared a SuperFX */
+    uint8_t fx_irq;        /* the GSU's request on the CPU's IRQ line */
+    uint8_t fx_ram[65536]; /* the GSU's RAM, the CPU's window at $70-$7F */
     uint32_t frames;
 } snes_t;
 
 /* rom must live as long as the machine; map is 0 LoROM, 1 HiROM,
  * 2 ExHiROM; sram_bytes is the cartridge's declared battery size (0: the
  * SRAM window stays open bus); dsp1 says the header declared a DSP-1 and
- * its window answers the protocol */
+ * its window answers the protocol; fx says it declared a SuperFX */
 extern snes_t machine;
-void snes_init(const uint8_t *rom, uint32_t rom_bytes, int map, uint32_t sram_bytes, int dsp1);
+void snes_init(const uint8_t *rom, uint32_t rom_bytes, int map, uint32_t sram_bytes, int dsp1,
+               int fx);
 /* the DSP-1's registers on the bus (snes_dsp1.c) */
 void snes_dsp1_reset(void);
 uint8_t snes_dsp1_dr_read(void);
 uint8_t snes_dsp1_sr_read(void);
 void snes_dsp1_dr_write(uint8_t v);
+/* the SuperFX (snes_fx.c) */
+void snes_fx_reset(void);
+void snes_fx_run(uint32_t target_cpu); /* credit the CPU time and drain it */
+uint8_t snes_fx_reg_read(uint16_t off);
+void snes_fx_reg_write(uint16_t off, uint8_t v);
 void snes_reset(void);
 /* run until the cycle count reaches `until` (past the last instruction
  * that spends it, as the budget goes negative) */

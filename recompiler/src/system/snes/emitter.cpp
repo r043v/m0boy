@@ -870,6 +870,18 @@ unsigned Emitter::cycles(const Ins& in) const {
  * window or an indirect address, so the region leaves and the dispatcher
  * samples the lines where the interpreter would */
 bool Emitter::may_io(const Ins& in) const {
+    /* the coprocessors' windows reach beyond the I/O page: the SuperFX's
+     * registers at $6000-$7FFF (bank $00 or $80+ for dp), the DSP-1's at
+     * $8000+ in the banks $30-$3F/$B0-$BF */
+    const unsigned dbr = ctx_dbr(in.ctx);
+    const bool fx_bank = dbr <= 0x3F || dbr >= 0x80;
+    const bool dsp_bank = (dbr >= 0x30 && dbr <= 0x3F) || (dbr >= 0xB0 && dbr <= 0xBF);
+    const auto copro = [&](unsigned off, bool indexed, unsigned hi_off) {
+        const unsigned hi = indexed ? hi_off : off;
+        if (opt_.superfx && fx_bank && off < 0x8000 && hi >= 0x6000) return true;
+        if (opt_.dsp1 && dsp_bank && off >= 0x8000) return true;
+        return false;
+    };
     switch (in.info.shape) {
     case Shape::stack: return true; /* the stack's window is S's, unknown here */
     case Shape::block: case Shape::wai: case Shape::stp: return true;
@@ -885,17 +897,17 @@ bool Emitter::may_io(const Ins& in) const {
         case Mode::imm: return false;
         case Mode::dp: {
             const unsigned at = (ctx_d(in.ctx) + in.o[0]) & 0xFFFF;
-            return at >= 0x2000 && at < 0x6000;
+            return (at >= 0x2000 && at < 0x6000) || copro(at, false, 0);
         }
         case Mode::dpx: case Mode::dpy: return true;
         case Mode::abs: {
             const unsigned off = in.o[0] | in.o[1] << 8;
-            return off >= 0x2000 && off < 0x6000;
+            return (off >= 0x2000 && off < 0x6000) || copro(off, false, 0);
         }
         case Mode::absx: case Mode::absy: {
             const unsigned off = in.o[0] | in.o[1] << 8;
             const unsigned lo = off, hi = std::min(off + 0xFFu, 0xFFFFu);
-            return lo <= 0x5FFFu && hi >= 0x2000u;
+            return (lo <= 0x5FFFu && hi >= 0x2000u) || copro(lo, true, hi);
         }
         default: return true; /* pointed and long forms reach anywhere */
         }
@@ -904,11 +916,11 @@ bool Emitter::may_io(const Ins& in) const {
         case Mode::imm: return false;
         case Mode::dp: {
             const unsigned at = (ctx_d(in.ctx) + in.o[0]) & 0xFFFF;
-            return at >= 0x2000 && at < 0x6000;
+            return (at >= 0x2000 && at < 0x6000) || copro(at, false, 0);
         }
         case Mode::abs: {
             const unsigned off = in.o[0] | in.o[1] << 8;
-            return off >= 0x2000 && off < 0x6000;
+            return (off >= 0x2000 && off < 0x6000) || copro(off, false, 0);
         }
         default: return true;
         }
@@ -916,11 +928,11 @@ bool Emitter::may_io(const Ins& in) const {
         switch (in.info.mode) {
         case Mode::dp: {
             const unsigned at = (ctx_d(in.ctx) + in.o[0]) & 0xFFFF;
-            return at >= 0x2000 && at < 0x6000;
+            return (at >= 0x2000 && at < 0x6000) || copro(at, false, 0);
         }
         case Mode::abs: {
             const unsigned off = in.o[0] | in.o[1] << 8;
-            return off >= 0x2000 && off < 0x6000;
+            return (off >= 0x2000 && off < 0x6000) || copro(off, false, 0);
         }
         default: return true;
         }
