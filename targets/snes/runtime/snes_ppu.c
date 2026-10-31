@@ -340,8 +340,11 @@ static void tile_pixel(const uint8_t *r, unsigned mode, unsigned bg, unsigned x,
     unsigned base = ((r[0x0b + bg / 2] >> ((bg & 1) * 4)) & 15) * 0x2000u;
     unsigned row = base + tile * (bpp * 8) + (py & 7) * 2;
     unsigned bit = 7 - (px & 7), index = 0;
-    for (unsigned p = 0; p < bpp; p++)
-        index |= ((machine.vram[(row + (p / 2) * 16 + (p & 1)) & 0xffff] >> bit) & 1) << p;
+    for (unsigned p = 0; p < bpp; p += 2) {
+        const unsigned a = (row + (p / 2) * 16) & 0xffff;
+        index |= ((machine.vram[a] >> bit) & 1) << p;
+        index |= ((machine.vram[(a + 1) & 0xffff] >> bit) & 1) << (p + 1);
+    }
     if (!index) return;
     *out_prio = bg_priority(mode, bg, (entry >> 13) & 1, r[5] & 8);
     if (bpp == 8) {
@@ -353,10 +356,8 @@ static void tile_pixel(const uint8_t *r, unsigned mode, unsigned bg, unsigned x,
         return;
     }
     const unsigned pal = mode == 0 ? bg * 32 : 0;
-    const unsigned shift = bpp == 2 ? 2 : 4;
     const unsigned c = pal + ((entry >> 10) & 7) * (1u << bpp) + index;
     *out_color = machine.cgram[(c * 2) & 511] | machine.cgram[(c * 2 + 1) & 511] << 8;
-    (void)shift;
 }
 
 /* Mode 7's BG1: the map's entries sit in the low bytes of the first 32 KiB,
@@ -490,7 +491,10 @@ void snes_render_line(unsigned y, uint8_t *row) {
     uint16_t main_c[256], sub_c[256];
     uint8_t main_l[256], sub_l[256];
     compose_row(r, mode, y, 0, win, obj_color, obj_prio, main_c, main_l);
-    compose_row(r, mode, y, 1, win, obj_color, obj_prio, sub_c, sub_l);
+    /* the sub screen only feeds the math's addend: skipped when no layer
+     * adds it (the fixed color or no math at all leaves it unread) */
+    if ((r[0x30] & 2) && (r[0x31] & 0x3f))
+        compose_row(r, mode, y, 1, win, obj_color, obj_prio, sub_c, sub_l);
     /* the color math ($2130 ccmm--sd): the main pixel clips to black in
      * the color window's region (the spotlight's trick), math is prevented
      * in another region, and the painted main pixel adds or subtracts the

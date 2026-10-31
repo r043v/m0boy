@@ -5,8 +5,9 @@ headless) ou `--target pc` (la fenêtre SDL2). Le cœur : le 65C816 interprété
 ou recompilé en C devant le bus LoROM/HiROM, le PPU rendu ligne par ligne,
 le S-SMP (SPC700) et le S-DSP interprétés. Ce n'est pas un firmware pour les
 consoles : la matrice de capacités tient le SNES hors du META et du Pokitto
-(le runtime demande ~436 Kio de RAM). Les fenêtres, la mosaïque, la math de
-couleur, l'écho du DSP et les modes 5/6 ne sont pas implémentés. Le timing
+(le runtime demande ~436 Kio de RAM). Les modes 5/6 et l'EXBG du mode 7 ne sont
+pas implémentés (fenêtres, mosaïque, math de couleur et écho du DSP le
+sont). Le timing
 CPU, DMA et vidéo est approximatif et n'a pas été comparé à une SNES ; les
 per-diagnostiques ci-dessous ne sont ni un émulateur de référence ni une
 preuve de compatibilité.
@@ -111,9 +112,9 @@ recompilateur.
   suivent celles publiées du GSU (le cœur bsnes comme référence de
   lecture, implémentation C maison). Horloge : le CPU crédite six coups
   d'horloge GSU par cycle aux mêmes tranches que l'APU et à chaque accès
-  de registre ; la fenêtre de registres ($6000-$7FFF et son miroir
-  $3000-$32FF — la fenêtre où les jeux sondent la puce pour attendre sa
-  fin, banques $00-$3F/$80-$BF) répond comme la puce (R0-R15, SFR avec l'acquittement
+  de registre ; la fenêtre de registres ($3000-$34FF, banques
+  $00-$3F/$80-$BF, comme bsnes ; $6000-$7FFF est la RAM du GSU, 32 Kio,
+  qui démarre à 0xff) répond comme la puce (R0-R15, SFR avec l'acquittement
   de l'IRQ par $3031, PBR, ROMBR, CBR, SCBR/SCMR/CLSR, le registre de
   version $04) et l'octet haut de R15 met le drapeau go. Pendant que le
   GSU tient le bus (go et RON/RAN), les lectures ROM du CPU voient le
@@ -122,14 +123,11 @@ recompilateur.
   du GSU atteint la VRAM par le DMA du jeu (la fenêtre RAM $70-$7F),
   sans chemin spécial dans la PPU. Testé par `fx_test` (IWT, FROM, MULT,
   COLOR, PLOT à travers la fenêtre, le cache de pixels, STOP et son
-  IRQ). Le mode précis sort des régions sur toute accès $6000-$7FFF.
-  **Yoshi's Island (la ROM SuperFX de la collection locale) boote
-  maintenant jusqu'au lancement du GSU : le programme S-SMP est servi et
-  tourne (l'empreinte audio évolue), puis le CPU attend la fin du GSU
-  (bit go sondé par le miroir $3000) pendant que le noyau GSU tourne en
-  rond dans son dispatch de commandes (r3 décompté depuis $FFFF) — la
-  commande n'arrive pas où le noyau la lit ; à trancher avec le
-  comparatif de référence**.
+  IRQ). Le mode précis sort des régions sur tout accès $3000-$34FF.
+  **Yoshi's Island (la ROM SuperFX de la collection locale) : écran
+  noir. Le CPU et le GSU suivent bsnes instruction par instruction ; la
+  divergence est au handshake APU ($2140-$2143) : la taille de bloc lue
+  est 0x7e74 au lieu de 0x45. À tracer côté S-SMP/IPL**.
 - **SA-1** : le type d'en-tête $33/$34 attache une seconde puce 65816 —
   le même interpréteur, seconde instance (pas de régions recompilées,
   trois coups d'horloge par cycle du S-CPU, ses propres vecteurs CRV/CNV/
