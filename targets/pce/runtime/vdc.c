@@ -183,6 +183,30 @@ static void draw_bg(vdc_t *v) {
     if (skip) memcpy(v->linebuf, scratch + skip, width * sizeof v->linebuf[0]);
 }
 
+/* which sprites touch each line: a bit per sprite, rebuilt only when the
+ * SAT differs from the copy the masks were made from (the DMA copies the
+ * same table most frames).  The walk then visits the few sprites of the
+ * line instead of testing all 64.  Lines past the table fall back to the
+ * full walk. */
+#define SAT_LINES 320
+static uint64_t sat_line_mask[SAT_LINES];
+static uint16_t sat_masked[256];
+static int sat_masked_ok;
+
+static void sat_masks_build(const uint16_t *sat) {
+    memset(sat_line_mask, 0, sizeof sat_line_mask);
+    for (unsigned i = 0; i < 64; i++) {
+        const uint16_t *sp = sat + i * 4;
+        const int y = (int)(sp[0] & 0x3FF) - 0x40;
+        const int h = (int)sprite_height_tab[(sp[3] >> 12) & 3];
+        int a = y < 0 ? 0 : y;
+        int b = y + h > SAT_LINES ? SAT_LINES : y + h;
+        for (int l = a; l < b; l++) sat_line_mask[l] |= (uint64_t)1 << i;
+    }
+    memcpy(sat_masked, sat, sizeof sat_masked);
+    sat_masked_ok = 1;
+}
+
 /* the SAT walk: the sprites of this line, 16 at most, a 32-wide one as
  * two halves */
 static void fetch_sprites(vdc_t *v) {
@@ -191,7 +215,15 @@ static void fetch_sprites(vdc_t *v) {
      * core's line fetch phase */
     const int sprite_line = v->rcr_count;
     const uint16_t *sp = v->sat;
-    for (unsigned i = 0; i < 64; i++, sp += 4) {
+    uint64_t todo = ~(uint64_t)0;
+    if (sprite_line >= 0 && sprite_line < SAT_LINES) {
+        if (!sat_masked_ok || memcmp(sat_masked, v->sat, sizeof sat_masked) != 0)
+            sat_masks_build(v->sat);
+        todo = sat_line_mask[sprite_line];
+    }
+    for (; todo; todo &= todo - 1) {
+        const unsigned i = (unsigned)__builtin_ctzll(todo);
+        sp = v->sat + i * 4;
         const int y = (int)(sp[0] & 0x3FF) - 0x40;
         /* most of the 64 miss this line: 64 rows is the tallest sprite */
         if ((unsigned)(sprite_line - y) >= 64u) continue;
