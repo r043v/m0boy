@@ -141,7 +141,13 @@ extern "C" void m0_lcd_init(void) {
     ESP_ERROR_CHECK(esp_lcd_new_i80_bus(&config, &bus));
     esp_lcd_panel_io_i80_config_t io = {};
     io.cs_gpio_num = -1; /* CS tied low on CORE v1.4 */
-    io.pclk_hz = 20000000;
+    /* the panel's write cycle allows more than the official library's
+     * 20 MHz; 40 MHz halves the bus time of a full 240-row frame
+     * (7.8 -> 3.9 ms).  Back to 20000000 if a board shows artifacts. */
+#ifndef AKA_LCD_PCLK
+#define AKA_LCD_PCLK 40000000
+#endif
+    io.pclk_hz = AKA_LCD_PCLK;
     io.trans_queue_depth = WIDE_QUEUE + 2;
     io.on_color_trans_done = color_sent;
     io.lcd_cmd_bits = io.lcd_param_bits = 8;
@@ -165,7 +171,8 @@ extern "C" void m0_lcd_init(void) {
 extern "C" uint32_t m0_lcd_send_rows(const void *buf, uint8_t row0, uint8_t rows) {
     const uint16_t *p = (const uint16_t *)buf;
     for (unsigned y = 0; y < rows && row0 + y < M0_SCREEN_ROWS; y++, p += 160) {
-        for (unsigned x = 0; x < 320; x++) line[x] = p[m0_nearest(x, 160, 320)];
+        /* m0_nearest(x, 160, 320) is (x + 1) / 2 */
+        for (unsigned x = 0; x < 320; x++) line[x] = p[(x + 1) >> 1];
         unsigned py = (row0 + y) * 240 / M0_PANEL_SRC_ROWS;
         unsigned end = (row0 + y + 1) * 240 / M0_PANEL_SRC_ROWS;
         while (py < end) draw_line(py++);
@@ -173,7 +180,7 @@ extern "C" uint32_t m0_lcd_send_rows(const void *buf, uint8_t row0, uint8_t rows
     return ++lcd_seq;
 }
 extern "C" uint32_t m0_lcd_done_seq(void) { return lcd_seq; }
-#if __has_include("md_config.h") || __has_include("vx_config.h")
+#if __has_include("md_config.h") || __has_include("vx_config.h") || __has_include("pce_config.h")
 /* The Mega Drive's and the Vectrex's 320-column rows go out 1:1 (no
  * 160-column rescale); the rows already sit in the panel's RGB565 wire
  * order.  The async path sets the address window once per frame, then

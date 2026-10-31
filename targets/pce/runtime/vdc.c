@@ -1,5 +1,9 @@
 #include "vdc.h"
 
+/* the row composer is the runtime's hottest loop on the ESP32 target;
+ * the pragma lifts it past the project-wide -Os */
+#pragma GCC optimize ("O2")
+
 #include <string.h>
 
 /* the vertical phases, in the mednafen core's order */
@@ -52,6 +56,18 @@ static uint16_t vram_read(const vdc_t *v, unsigned address) {
     return address < VDC_VRAM_WORDS ? v->vram[address] : 0;
 }
 
+/* one cell's eight pixels as eight nibbles, leftmost pixel in the lowest
+ * nibble: each plane byte spreads through spread4 (the low byte's nibbles
+ * land on pixels 0-3, the high byte's on 4-7 — the same table serves both
+ * halves), the four planes then stack into one nibble without carries */
+static uint32_t cell_nibbles(uint16_t w0, uint16_t w1) {
+    const uint32_t s0 = spread4[(w0 >> 4) & 0xF] | (uint32_t)spread4[w0 & 0xF] << 16;
+    const uint32_t s1 = spread4[(w0 >> 12) & 0xF] | (uint32_t)spread4[(w0 >> 8) & 0xF] << 16;
+    const uint32_t s2 = spread4[(w1 >> 4) & 0xF] | (uint32_t)spread4[w1 & 0xF] << 16;
+    const uint32_t s3 = spread4[(w1 >> 12) & 0xF] | (uint32_t)spread4[(w1 >> 8) & 0xF] << 16;
+    return s0 | s1 << 1 | s2 << 2 | s3 << 3;
+}
+
 static void draw_bg(vdc_t *v) {
     const unsigned bat_width = bat_width_tab[(v->mwr >> 4) & 3];
     const unsigned bat_width_mask = bat_width - 1;
@@ -61,23 +77,22 @@ static void draw_bg(vdc_t *v) {
     unsigned bx = v->bxr;
     const unsigned bat_y = ((v->bg_y >> 3) & bat_height_mask) << bat_width_shift;
     const unsigned line_sub = v->bg_y & 7;
+    unsigned skip = bx & 7; /* the scroll offset inside the line's first cell */
 
     for (unsigned x = 0; x < width;) {
         const uint16_t bat = v->vram[((bx >> 3) & bat_width_mask) | bat_y];
         const unsigned address = (bat & 0x0FFF) * 16 + line_sub;
         const uint16_t w0 = vram_read(v, address);
         const uint16_t w1 = vram_read(v, address + 8);
-        const unsigned palette = (bat >> 8) & 0xF0;
-        unsigned mask = 0x80u >> (bx & 7);
-        unsigned count = 8 - (bx & 7);
+        const uint16_t palette = (bat >> 8) & 0xF0;
+        uint32_t s = cell_nibbles(w0, w1) << (4 * skip);
+        unsigned count = 8 - skip;
         if (count > width - x) count = width - x;
-        for (unsigned i = 0; i < count; i++, mask >>= 1) {
-            const unsigned raw = !!(w0 & mask) | (!!(w0 & (mask << 8)) << 1) |
-                (!!(w1 & mask) << 2) | (!!(w1 & (mask << 8)) << 3);
-            v->linebuf[x + i] = (uint16_t)(palette | raw);
-        }
+        for (unsigned i = 0; i < count; i++, s >>= 4)
+            v->linebuf[x + i] = (uint16_t)(palette | (s & 0xF));
         x += count;
         bx += count;
+        skip = 0;
     }
 }
 
@@ -88,11 +103,12 @@ static void fetch_sprites(vdc_t *v) {
     /* RCRCount has already advanced for this line. Sprite CG selection
      * belongs to the preceding count, as in the VDC's line fetch phase. */
     const int sprite_line = v->rcr_count - 1;
-    for (unsigned i = 0; i < 64; i++) {
-        const int y = (int)(v->sat[i * 4 + 0] & 0x3FF) - 0x40;
-        uint16_t x = v->sat[i * 4 + 1] & 0x3FF;
-        uint16_t no = (v->sat[i * 4 + 2] >> 1) & 0x3FF;
-        const uint16_t flags = v->sat[i * 4 + 3];
+    const uint16_t *sp = v->sat;
+    for (unsigned i = 0; i < 64; i++, sp += 4) {
+        const int y = (int)(sp[0] & 0x3FF) - 0x40;
+        uint16_t x = sp[1] & 0x3FF;
+        uint16_t no = (sp[2] >> 1) & 0x3FF;
+        const uint16_t flags = sp[3];
         const unsigned palette = (flags & 0xF) << 4;
         const unsigned height = sprite_height_tab[(flags >> 12) & 3];
         const unsigned width = sprite_width_tab[(flags >> 8) & 1];
@@ -148,16 +164,24 @@ static void draw_sprites(vdc_t *v) {
     memset(sprite_line + first, 0, (end - first) * sizeof sprite_line[0]);
     /* backwards: the first sprite of the list paints last and wins */
     for (int i = active_sprites - 1; i >= 0; i--) {
+        const unsigned flags = sprite_list[i].flags;
         const int pos = (int)sprite_list[i].x - 0x20;
-        const unsigned prio_or = (sprite_list[i].flags & SPRF_PRIORITY) ? 0x200 : 0;
-        const int collide = (sprite_list[i].flags & SPRF_SPRITE0) && (v->cr & 0x01);
+        const unsigned prio_or = (flags & SPRF_PRIORITY) ? 0x200 : 0;
+        const unsigned raw_or = sprite_list[i].palette | 0x100 | prio_or;
+        const int collide = (flags & SPRF_SPRITE0) && (v->cr & 0x01);
+        /* the pixels land in growing tx: skip the left clip, stop at the
+         * right one (the per-pixel bounds of the reference stay true) */
+        const int left = pos > 0 ? pos : 0;
+        const int right = pos + 16 < (int)width ? pos + 16 : (int)width;
+        const unsigned hflip = flags & SPRF_HFLIP;
         for (unsigned px = 0; px < 16; px += 4) {
-            const unsigned shift = (sprite_list[i].flags & SPRF_HFLIP) ? px : 12 - px;
+            if (pos + (int)px >= right) break; /* the groups only grow */
+            const unsigned shift = hflip ? px : 12 - px;
             unsigned packed = spread4[(sprite_list[i].pattern[0] >> shift) & 15] |
                 (spread4[(sprite_list[i].pattern[1] >> shift) & 15] << 1) |
                 (spread4[(sprite_list[i].pattern[2] >> shift) & 15] << 2) |
                 (spread4[(sprite_list[i].pattern[3] >> shift) & 15] << 3);
-            if (sprite_list[i].flags & SPRF_HFLIP)
+            if (hflip)
                 packed = ((packed & 0x000F) << 12) | ((packed & 0x00F0) << 4) |
                     ((packed & 0x0F00) >> 4) | ((packed & 0xF000) >> 12);
             if (!packed) continue;
@@ -165,9 +189,10 @@ static void draw_sprites(vdc_t *v) {
                 const unsigned raw = packed & 15;
                 if (!raw) continue;
                 const int tx = pos + (int)px + (int)j;
-                if (tx < 0 || (unsigned)tx >= width) continue;
+                if (tx < left) continue;
+                if (tx >= right) break;
                 if (collide && (sprite_line[tx] & 0xF)) v->status |= VDCS_CR;
-                sprite_line[tx] = (uint16_t)(sprite_list[i].palette | 0x100 | raw | prio_or);
+                sprite_line[tx] = (uint16_t)(raw | raw_or);
             }
         }
     }

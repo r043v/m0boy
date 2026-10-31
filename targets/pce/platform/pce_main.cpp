@@ -7,6 +7,7 @@
  * with the 5-in-8 box filter (another active width: nearest pixel).  Two
  * source lines that land on one panel row are blended (m0_avg2_panel), so
  * no line is dropped. */
+#include <cstring>
 #include "pce_config.h"
 #include "pce.h"
 #include "m0_target.h"
@@ -39,6 +40,48 @@ static int skip_video;
 static unsigned skipped_run;
 static unsigned last_plan_row;
 static int have_last;
+
+/* The AKA's rows leave through the wide path's DMA queue (the Mega Drive
+ * frontend's path): batches of eight panel rows, one address window per
+ * frame, four transfers in flight — the emulation only stalls when every
+ * queued transfer still reads a batch, and the bus time overlaps the next
+ * frame's emulation.  aka_headless (tools/AKA_Emulator) never fires the
+ * transfers' done interrupt, so AKA_EMU_SYNC=1 keeps the synchronous
+ * per-row send of the other frontends for headless runs:
+ *   pio run -d <project> -DAKA_EMU_SYNC=1
+ * The wide path is the one the board gets. */
+#ifndef AKA_EMU_SYNC
+#define AKA_EMU_SYNC 0
+#endif
+#if !AKA_EMU_SYNC && __has_include("aka_hw.h")
+#define PCE_WIDE_ROWS 1
+extern "C" {
+void m0_lcd_wide_begin(uint8_t row0, uint8_t rows);
+void m0_lcd_wide_reserve(void);
+void m0_lcd_wide_submit(const void *batch, uint8_t rows);
+void m0_lcd_wide_flush(void);
+}
+/* one batch of eight panel rows (four source rows doubled) */
+static uint16_t batch[8][320] __attribute__((aligned(64)));
+static void send_row(const uint16_t *src, unsigned r) {
+    if (r == 0) {
+        m0_lcd_wide_flush();
+        m0_lcd_wide_begin(0, 240);
+    }
+    if ((r & 3u) == 0) m0_lcd_wide_reserve();
+    const unsigned l = (r & 3u) * 2u;
+    /* m0_nearest(x, 160, 320) is (x + 1) / 2; the panel doubles the row,
+     * so both panel rows carry the same pixels */
+    uint16_t *a = batch[l], *b = batch[l + 1];
+    for (unsigned x = 0; x < 320; x++) a[x] = b[x] = m0_panel(src[(x + 1) >> 1]);
+    if ((r & 3u) == 3u) m0_lcd_wide_submit(batch, 8);
+    rows.slot ^= 1; /* m0_rows_send's flip: the blend reads the previous line */
+}
+#else
+static void send_row(const uint16_t *src, unsigned r) {
+    m0_rows_send(&rows, src, r, 1);
+}
+#endif
 
 static void row(void *, unsigned line, const uint16_t *pixels, unsigned width);
 static void pce_start(void) {
@@ -77,12 +120,12 @@ static void row(void *, unsigned line, const uint16_t *pixels, unsigned width) {
         const uint16_t *prev = line_buffer[rows.slot ^ 1];
         for (unsigned x = 0; x < 160; x++) dst[x] = m0_avg2_panel(prev[x], dst[x]);
         last_plan_row = (unsigned)r;
-        m0_rows_send(&rows, dst, (unsigned)r, 1);
+        send_row(dst, (unsigned)r);
         return;
     }
     last_plan_row = (unsigned)r;
     have_last = 1;
-    m0_rows_send(&rows, dst, (unsigned)r, 1);
+    send_row(dst, (unsigned)r);
 }
 /* ---- option menu (sg_menu.h): HOME held half a second, MENU stays Pause -- */
 extern "C" uint16_t *m0_menu_scratch(unsigned *rows_out) {

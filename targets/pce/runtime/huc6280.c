@@ -649,6 +649,68 @@ void huc6280_run(huc6280_t *cpu, uint32_t until) {
             budget -= 8;
             continue;
         }
+        /* the idle poll loop: LDA zp/zp,X/abs followed by (B)EQ backwards
+         * to the LDA — the game waiting for its vblank flag, most of its
+         * time in a menu or an attract mode.  The lap runs here: one
+         * windowed read and the exact cycles the regions spend (the zp
+         * fetch is 4, the taken branch 4), IRQs sampled every lap.  The
+         * MPR windows are live (huc6280_map keeps them in step), so the
+         * poll reads whatever the handler left mapped; a handler that
+         * rewrites the loop's own bytes is the one case this misses (the
+         * JMP-self spin below shares the assumption). */
+        {
+            const uint8_t *b = cpu->rbase[cpu->pc >> 13];
+            if (b) {
+                const unsigned at = cpu->pc & 0x1FFFu;
+                const uint8_t op = b[at];
+                unsigned size = 0; /* instruction bytes up to the branch */
+                if (op == 0xA5u || op == 0xB5u) size = 2;       /* LDA zp / zp,X */
+                else if (op == 0xADu) size = 3;                 /* LDA abs */
+                if (size) {
+                    const uint8_t bop = b[(at + size) & 0x1FFFu];
+                    if (bop == 0xF0u || bop == 0xD0u) {         /* BEQ / BNE */
+                        const uint16_t br_at = (uint16_t)(cpu->pc + size);
+                        const uint16_t target = (uint16_t)(br_at + 2 + (int8_t)b[(at + size + 1) & 0x1FFFu]);
+                        if (target == cpu->pc) {
+                            const unsigned poll_bne = (bop == 0xD0u);
+                            uint16_t addr;         /* the byte's full bus address */
+                            const uint8_t *w;      /* its window, NULL = the bus */
+                            if (op == 0xADu) {
+                                addr = (uint16_t)(b[(at + 1) & 0x1FFFu] | b[(at + 2) & 0x1FFFu] << 8);
+                                w = cpu->rbase[addr >> 13];
+                            } else {
+                                addr = (uint16_t)(0x2000u | b[(at + 1) & 0x1FFFu]);
+                                w = cpu->rbase[1];
+                            }
+                            for (;;) {
+                                if (cpu->irq_low & cpu->irq_mask && !(cpu->p & PCE_P_I)) break;
+                                uint8_t a;
+                                if (op == 0xB5u) {
+                                    const uint16_t e = (uint16_t)(0x2000u | (uint8_t)(addr + cpu->x));
+                                    a = w ? w[e & 0x1FFFu] : pce_bus_read(e);
+                                } else {
+                                    a = w ? w[addr & 0x1FFFu] : pce_bus_read(addr);
+                                }
+                                cpu->cycles += 4;
+                                budget -= 4;
+                                cpu->p &= (uint8_t)~(PCE_P_T | PCE_P_Z | PCE_P_N);
+                                if (a & 0x80u) cpu->p |= PCE_P_N; else cpu->p |= PCE_P_Z;
+                                if (poll_bne ? a == 0 : a != 0) {
+                                    cpu->cycles += 2; /* the branch not taken */
+                                    budget -= 2;
+                                    cpu->pc = (uint16_t)(br_at + 2); /* and it falls through */
+                                    break;
+                                }
+                                cpu->cycles += 4; /* the branch taken back */
+                                budget -= 4;
+                                if (budget <= 0) break;
+                            }
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
         const int entry = pce_gen_lookup(cpu->pc, cpu->mpr_key);
         if (entry >= 0) {
             budget = pce_gen_enter(entry, budget);
