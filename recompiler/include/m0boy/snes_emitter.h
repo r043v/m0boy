@@ -24,6 +24,7 @@ struct CoverageEntry {
 struct EmitOptions {
     uint32_t rom_bytes = 0x8000;
     bool hirom = false;          /* the cartridge's map */
+    bool exhirom = false;        /* ExHiROM: banks $C0-$FF at the file's start */
     bool precise = false;        /* the slice ends after the same instruction as the interpreter's */
     size_t max_instructions = 0; /* 0: every reachable instruction */
     unsigned check_cycles = 48;  /* fast mode: the most cycles between two budget checks */

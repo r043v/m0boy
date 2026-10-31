@@ -51,6 +51,7 @@ typedef struct {
     const uint8_t *rom;
     uint32_t rom_bytes;
     int hirom;
+    int exhirom; /* the ExHiROM map: banks $C0-$FF at the file's start */
     /* the phase-1 I/O state */
     int nmi_enable;
     int vblank_flag;
@@ -171,11 +172,12 @@ typedef struct {
     uint32_t frames;
 } snes_t;
 
-/* rom must live as long as the machine; sram_bytes is the cartridge's
- * declared battery size (0: the SRAM window stays open bus); dsp1 says
- * the header declared a DSP-1 and its window answers the protocol */
+/* rom must live as long as the machine; map is 0 LoROM, 1 HiROM,
+ * 2 ExHiROM; sram_bytes is the cartridge's declared battery size (0: the
+ * SRAM window stays open bus); dsp1 says the header declared a DSP-1 and
+ * its window answers the protocol */
 extern snes_t machine;
-void snes_init(const uint8_t *rom, uint32_t rom_bytes, int hirom, uint32_t sram_bytes, int dsp1);
+void snes_init(const uint8_t *rom, uint32_t rom_bytes, int map, uint32_t sram_bytes, int dsp1);
 /* the DSP-1's registers on the bus (snes_dsp1.c) */
 void snes_dsp1_reset(void);
 uint8_t snes_dsp1_dr_read(void);

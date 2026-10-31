@@ -131,3 +131,35 @@ de ce qui a tourné, commit auteur r043v + trailer
    n'enchaînent que lui. Les quatre cartouches locales et Dr. Mario
    reviennent natif == interp, cycles compris (`logs/snes_sweep.txt`).
    Prochaine séance : reprendre le plan au pas 2 (DSP-1, puis ExHiROM).
+
+## Séance du 30 octobre (suite) — le DSP-1 et l'ExHiROM
+
+Chantier 4.1. Le DSP-1 (cart type $23/$30/$31 dans l'octet de map de
+l'en-tête) : sa fenêtre de registres répond au protocole DR/SR (LoROM
+banques $30-$3F/$B0-$BF dès $8000, HiROM banques $00-$0F/$80-$8F à
+$6000-$7FFF ; octet pair DR, octet impair SR) avec la machine d'états
+DRC/DRS/RQM, les commandes figées et le mode continu du raster ; les
+commandes mathématiques sont calculées directement sur la
+rétro-ingénierie publiée de la puce (Overload, The Dumper, Neviksti,
+Andreas Naive) — multiplication, triangle, rayon/distance/range,
+rotate/polar, les matrices d'attitude A/B/C et objective/subjective/
+scalar, gyrate, et la projection complète (parameter/raster/target/
+project) avec les tables de la ROM de données de la puce (constantes
+publiées, `targets/snes/runtime/snes_dsp1.c`). `dsp1_test` couvre la
+multiplication exacte, le triangle, le rayon, la commande de détection
+$0F et deux invariants structurels (target(0,0) == (Cx,Cy) ; la
+projection du point centre écran en (0,0)). Le balayage de la collection
+re-tourné : Dr. Mario toujours `535acb2e`, cycles identiques (le DSP-1
+n'y touche pas). **Aucune ROM DSP-1 dans la collection locale : le
+protocole n'a pas tourné dans un jeu réel — dit tel quel dans
+docs/SNES.fr.md.**
+
+L'ExHiROM en même pas : `detect_map` (générateur et harnais) reconnaît
+l'en-tête à $40FFC0 (checksum apparié, nibble de map 5), `snes_init`
+prend le map 0/1/2, les fenêtres ($C0-$FF au début du fichier,
+$00-$3F/$80-$BF à $400000) sont celles de la référence, la marche
+statique de l'émetteur les lit pareil. Pas de ROM ExHiROM locale non
+plus : non testé sur jeu réel.
+
+La version d'état est à jour ; le prochain pas du plan reste SuperFX
+(puis SA-1), derrière eux le comparatif de référence.

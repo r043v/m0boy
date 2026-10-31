@@ -28,9 +28,13 @@ uint64_t snes_ctx_key(const snes_cpu_t *cpu) {
 }
 
 /* the cartridge's windows: LoROM banks repeat every $400000, HiROM every
- * $400000 as well, the mirrors of $40-$7D and $C0-$FF only in HiROM */
+ * $400000 as well, the mirrors of $40-$7D and $C0-$FF only in HiROM;
+ * ExHiROM: banks $C0-$FF at the file's start, $00-$3F/$80-$BF at $400000 */
 static uint32_t rom_offset(const snes_cpu_t *c, uint32_t at) {
     const unsigned bank = at >> 16, off = at & 0xFFFF;
+    if (c->exhirom)
+        return bank >= 0xC0 ? (uint32_t)(bank - 0xC0) * 0x10000u + off
+                            : 0x400000u + (uint32_t)(bank & 0x3F) * 0x10000u + off;
     if (c->hirom) return (uint32_t)(bank & 0x3F) * 0x10000u + off;
     return (uint32_t)(bank & 0x3F) * 0x8000u + (off & 0x7FFFu);
 }
@@ -148,8 +152,8 @@ static void io_write(uint16_t at, uint8_t v) {
 static int sram_window(snes_cpu_t *c, uint32_t at) {
     const unsigned bank = at >> 16, off = at & 0xFFFF;
     if (off < 0x6000 || off >= 0x8000) return 0;
-    if (bank <= 0x3F) return !c->hirom || (bank & 0x3F) >= 0x20;
-    return bank >= 0x80 && bank <= 0xBF && !c->hirom;
+    if (bank <= 0x3F) return !(c->hirom || c->exhirom) || (bank & 0x3F) >= 0x20;
+    return bank >= 0x80 && bank <= 0xBF && !(c->hirom || c->exhirom);
 }
 
 /* the DSP-1's register window: LoROM banks $30-$3F/$B0-$BF from $8000,
@@ -209,13 +213,14 @@ void snes_bus_write(uint32_t at, uint8_t v) {
     /* cartridge writes: nothing (the games' registers live in the I/O page) */
 }
 
-void snes_init(const uint8_t *rom, uint32_t rom_bytes, int hirom, uint32_t sram_bytes, int dsp1) {
+void snes_init(const uint8_t *rom, uint32_t rom_bytes, int map, uint32_t sram_bytes, int dsp1) {
     snes_cpu_t *c = &machine.cpu;
     memset(&machine, 0, sizeof machine);
     c->wram = machine.wram;
     c->rom = rom;
     c->rom_bytes = rom_bytes;
-    c->hirom = hirom;
+    c->hirom = map == 1;
+    c->exhirom = map == 2;
     machine.sram_bytes = sram_bytes;
     machine.dsp1_attached = (uint8_t)(dsp1 != 0);
     snes_dsp1_reset();

@@ -781,11 +781,16 @@ static int rom_at(const snes_cpu_t *c, uint32_t at, uint8_t *out) {
     if (bank == 0x7E || bank == 0x7F) return 0;
     if (off < 0x2000 || (off >= 0x2000 && off < 0x8000)) return 0;
     if ((bank >= 0x40 && bank <= 0x7D) || bank >= 0xC0) {
-        if (!c->hirom) return 0;
+        if (!c->hirom && !c->exhirom) return 0;
     }
-    const uint32_t fo =
-        c->hirom ? (uint32_t)(bank & 0x3F) * 0x10000u + off
-                 : (uint32_t)(bank & 0x3F) * 0x8000u + (off & 0x7FFFu);
+    uint32_t fo;
+    if (c->exhirom)
+        fo = bank >= 0xC0 ? (uint32_t)(bank - 0xC0) * 0x10000u + off
+                          : 0x400000u + (uint32_t)(bank & 0x3F) * 0x10000u + off;
+    else if (c->hirom)
+        fo = (uint32_t)(bank & 0x3F) * 0x10000u + off;
+    else
+        fo = (uint32_t)(bank & 0x3F) * 0x8000u + (off & 0x7FFFu);
     if (fo >= c->rom_bytes) return 0;
     *out = c->rom[fo];
     return 1;

@@ -74,28 +74,32 @@ static int header_map(const uint8_t *rom, uint32_t bytes, size_t at) {
     return -1;
 }
 static int detect_hirom(const uint8_t *rom, uint32_t bytes) {
+    /* ExHiROM: the header at $40FFC0, a paired checksum and a map nibble 5 */
+    if (bytes > 0x40FFC0u + 0x40) {
+        const int ex = header_map(rom, bytes, 0x40FFC0);
+        if (ex >= 0 && (ex & 0x0F) == 5) return 2;
+    }
     const int hi = header_map(rom, bytes, 0xFFC0);
     const int lo = header_map(rom, bytes, 0x7FC0);
     if (hi == 1 || hi == 5) return 1;
     if (lo == 0 || lo == 2 || lo == 3) return 0;
-    return hi >= 0 && lo < 0;
+    return hi >= 0 && lo < 0 ? 1 : 0;
 }
 /* the header's RAM byte, as the generator reads it: $01-$03 are 2/8/32 KiB,
  * the runtime's window mirrors 32 KiB at most */
-static uint32_t header_sram(const uint8_t *rom, uint32_t bytes, int hirom) {
+static uint32_t header_sram(const uint8_t *rom, uint32_t bytes, int map) {
     static const uint32_t table[4] = {0, 2048, 8192, 32768};
-    const size_t at = (hirom ? 0xFFC0u : 0x7FC0u) + 0x18;
+    const size_t at = (size_t)(map == 0 ? 0x7FC0u : (map == 1 ? 0xFFC0u : 0x40FFC0u)) + 0x18;
     if (at >= bytes) return 0;
     return rom[at] < 4 ? table[rom[at]] : 0;
 }
-
 /* the header's DSP-1 mark: the map byte's high nibble $3 (LoROM/HiROM +
  * DSP-1) or a low nibble of 3 (LoROM + SRAM + DSP-1, $23) */
-static int header_dsp1(const uint8_t *rom, uint32_t bytes, int hirom) {
-    const size_t at = (size_t)(hirom ? 0xFFC0u : 0x7FC0u);
-    if (at + 0x16 > bytes) return 0;
-    const unsigned map = rom[at + 0x15];
-    return ((map & 0xF0) == 0x30 || (map & 0x0F) == 3) ? 1 : 0;
+static int header_dsp1(const uint8_t *rom, uint32_t bytes, int map) {
+    const size_t at = (size_t)(map == 0 ? 0x7FC0u : (map == 1 ? 0xFFC0u : 0x40FFC0u)) + 0x15;
+    if (at + 1 > bytes) return 0;
+    const unsigned map_byte = rom[at];
+    return ((map_byte & 0xF0) == 0x30 || (map_byte & 0x0F) == 3) ? 1 : 0;
 }
 
 int main(int argc, char **argv) {
@@ -124,7 +128,7 @@ int main(int argc, char **argv) {
 #ifdef SNES_EMBEDDED
         rom = snes_rom;
         rom_bytes = SNES_ROM_SIZE;
-        hirom = SNES_HIROM;
+        hirom = SNES_MAP;
         sram_bytes = SNES_SRAM_BYTES;
 #else
         fprintf(stderr, "usage: snes_host rom.sfc [--frames n] [--input f] [--coverage f] [--interp]\n");

@@ -109,7 +109,9 @@ std::vector<CoverageEntry> read_coverage(const std::vector<fs::path>& files) {
 }
 
 /* the header's map nibble: $20/$22/$23 LoROM, $21/$25 HiROM; the checksum
- * complement pairing tells a real header from noise */
+ * complement pairing tells a real header from noise.  Returns 0 LoROM,
+ * 1 HiROM, 2 ExHiROM (the header at $40FFC0, a paired checksum and a map
+ * nibble of 5). */
 static int header_map(const std::vector<uint8_t>& rom, size_t at) {
     if (at + 0x40 > rom.size()) return -1;
     const unsigned comp = rom[at + 0x3C] | rom[at + 0x3D] << 8;
@@ -119,12 +121,16 @@ static int header_map(const std::vector<uint8_t>& rom, size_t at) {
     if (map == 0 || map == 1 || map == 2 || map == 3 || map == 5) return (int)map;
     return -1;
 }
-static bool detect_hirom(const std::vector<uint8_t>& rom) {
+static int detect_map(const std::vector<uint8_t>& rom) {
+    if (rom.size() > 0x40FFC0u + 0x40) {
+        const int ex = header_map(rom, 0x40FFC0);
+        if (ex >= 0 && (ex & 0x0F) == 5) return 2;
+    }
     const int hi = header_map(rom, 0xFFC0);
     const int lo = header_map(rom, 0x7FC0);
-    if (hi == 1 || hi == 5) return true;
-    if (lo == 0 || lo == 2 || lo == 3) return false;
-    return hi >= 0 && lo < 0;
+    if (hi == 1 || hi == 5) return 1;
+    if (lo == 0 || lo == 2 || lo == 3) return 0;
+    return hi >= 0 && lo < 0 ? 1 : 0;
 }
 
 bool generate(const fs::path& cartridge, const GenerateOptions& o, GenerateStats& stats, std::string& error) {
@@ -151,11 +157,11 @@ bool generate(const fs::path& cartridge, const GenerateOptions& o, GenerateStats
         file.read(reinterpret_cast<char*>(rom.data()), std::streamsize(image_bytes));
         if (size_t(file.gcount()) != image_bytes)
             throw std::runtime_error("Truncated image: " + cartridge.string());
-        const bool hirom = detect_hirom(rom);
+        const int map = detect_map(rom);
         /* the header's RAM byte: $01-$03 are 2/8/32 KiB, the runtime's
          * window mirrors 32 KiB at most */
         static const uint32_t ram_table[4] = {0, 2048, 8192, 32768};
-        const size_t head_at = hirom ? 0xFFC0 : 0x7FC0;
+        const size_t head_at = map == 0 ? 0x7FC0 : (map == 1 ? 0xFFC0 : 0x40FFC0);
         const uint8_t ram_byte = head_at + 0x18 < image_bytes ? rom[head_at + 0x18] : 0;
         const uint32_t sram_bytes = ram_byte < 4 ? ram_table[ram_byte] : 0;
         /* the header's DSP-1 mark: the map byte's high nibble $3 or a low
@@ -184,7 +190,7 @@ bool generate(const fs::path& cartridge, const GenerateOptions& o, GenerateStats
               "const uint8_t snes_rom[] = {\n" + rom_data(rom.data(), image_bytes) + "};\n");
         std::string config = "#pragma once\n"
               "#define SNES_ROM_SIZE " + std::to_string(image_bytes) + "u\n"
-              "#define SNES_HIROM " + std::to_string(hirom ? 1 : 0) + "\n"
+              "#define SNES_MAP " + std::to_string(map) + "\n"
               "#define SNES_SRAM_BYTES " + std::to_string(sram_bytes) + "u\n"
               "#define SNES_DSP1 " + std::to_string(dsp1) + "\n";
         /* the recompiled code's dispatcher (snes_cpu.c) */
@@ -204,7 +210,8 @@ bool generate(const fs::path& cartridge, const GenerateOptions& o, GenerateStats
         if (native) {
             EmitOptions emit;
             emit.rom_bytes = uint32_t(image_bytes);
-            emit.hirom = hirom;
+            emit.hirom = map == 1;
+            emit.exhirom = map == 2;
             emit.precise = o.precise;
             const unsigned bpi = o.bytes_per_instruction ? o.bytes_per_instruction : 24u;
             emit.max_instructions = o.code_budget_bytes ? o.code_budget_bytes / bpi : 0;

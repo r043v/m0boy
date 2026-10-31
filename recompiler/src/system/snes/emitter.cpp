@@ -354,10 +354,16 @@ private:
         if (off < 0x2000) return std::nullopt;                    /* the WRAM mirror */
         if (off < 0x8000) return std::nullopt;                    /* I/O and SRAM */
         if ((bank >= 0x40 && bank <= 0x7D) || bank >= 0xC0) {
-            if (!opt_.hirom) return std::nullopt;                 /* LoROM: open bus */
+            if (!opt_.hirom && !opt_.exhirom) return std::nullopt; /* LoROM: open bus */
         }
-        const uint32_t fo = opt_.hirom ? (uint32_t)(bank & 0x3F) * 0x10000u + off
-                                       : (uint32_t)(bank & 0x3F) * 0x8000u + (off & 0x7FFFu);
+        uint32_t fo;
+        if (opt_.exhirom)
+            fo = bank >= 0xC0 ? (uint32_t)(bank - 0xC0) * 0x10000u + off
+                              : 0x400000u + (uint32_t)(bank & 0x3F) * 0x10000u + off;
+        else if (opt_.hirom)
+            fo = (uint32_t)(bank & 0x3F) * 0x10000u + off;
+        else
+            fo = (uint32_t)(bank & 0x3F) * 0x8000u + (off & 0x7FFFu);
         if (fo >= rom_.size()) return std::nullopt;
         return rom_[fo];
     }

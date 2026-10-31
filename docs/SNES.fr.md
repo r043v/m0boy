@@ -39,7 +39,10 @@ recompilateur.
   $4216 ; division par zéro = $FFFF/$FF), les opérandes verrouillées à
   l'écriture comme sur la puce.
   La SRAM de la cartouche ($6000-$7FFF, taille de l'en-tête) et le port WRAM
-  sont mappés.
+  sont mappés. Les modes de cartouche : LoROM, HiROM et ExHiROM (l'en-tête
+  à $40FFC0, checksum apparié et nibble de map 5 ; banques $C0-$FF au début
+  du fichier, $00-$3F/$80-$BF à $400000) — l'ExHiROM n'a pas tourné sur une
+  ROM réelle, la détection et les fenêtres sont celles de la référence.
 - **PPU** : VRAM/CGRAM/OAM et leurs ports, le DMA général (modes 0-7) et le
   HDMA (tables directes et indirectes, une unité par ligne pendant le
   HBlank), les timers d'IRQ H/V ($4207-$420B, le niveau de TIMEUP), les
@@ -73,6 +76,23 @@ recompilateur.
   32000 Hz.
 - **Pad** : un contrôleur en lecture série ($4016) et automatique ($4218,
   temps approximé à trois lignes).
+- **DSP-1** : la cartouche qui déclare le coprocesseur (l'octet de map
+  d'en-tête, nibble haut $3 ou nibble bas 3 — $23, $30, $31) voit sa
+  fenêtre de registres répondre au protocole : LoROM banques
+  $30-$3F/$B0-$BF dès $8000, HiROM banques $00-$0F/$80-$8F à $6000-$7FFF ;
+  octet pair = DR (données), octet impair = SR (état). La machine
+  d'états du protocole (DRC/DRS/RQM, les commandes figées $1A/$2A/$3A, le
+  mode continu du raster $0A) et les commandes mathématiques calculées
+  directement suivent la rétro-ingénierie publiée de la puce (Overload,
+  The Dumper, Neviksti, Andreas Naive) : multiplications, triangle,
+  rayon/distance/range, rotate/polar, les matrices d'attitude A/B/C et
+  objective/subjective/scalar, gyrate, et la projection complète
+  (parameter $02, raster, target, project $06) avec les tables de la ROM
+  de données de la puce — constantes publiées, du code et non des
+  données de cartouche. Testé par `dsp1_test` (multiplication, triangle,
+  rayon, détection de puce $0F, l'invariant target(0,0) == (Cx,Cy), la
+  projection du centre écran en (0,0)) ; **aucune ROM DSP-1 dans la
+  collection locale : le protocole n'a pas tourné dans un jeu réel**.
 - **Timing du bus** : le DMA général et le HDMA volent leur temps de bus au
   CPU (modèle : 16 cycles de démarrage par canal, 8 par octet ; la tranche
   d'atterrissage d'un DMA lancé en plein milieu est approximative, le total
@@ -184,7 +204,7 @@ et la fenêtre tourne tête-bêche sur la CI (SDL2 requis).
 
 ## Chantiers suivants
 
-Les modes PPU 5/6 et l'EXBG du mode 7, les coprocesseurs de cartouche (DSP-1,
-SuperFX, SA-1), une comparaison contre un émulateur de référence (le bilan
-mednafen de la PCE), et — si un jour les budgets de RAM le permettent — le
-streaming des ROMs pour les consoles.
+Les modes PPU 5/6 et l'EXBG du mode 7, SuperFX et SA-1 (de vrais cœurs
+interprétés — le DSP-1 est fait), une comparaison contre un émulateur de
+référence (le bilan mednafen de la PCE), et — si un jour les budgets de RAM
+le permettent — le streaming des ROMs pour les consoles.
