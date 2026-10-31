@@ -130,6 +130,25 @@ recompilateur.
   rond dans son dispatch de commandes (r3 décompté depuis $FFFF) — la
   commande n'arrive pas où le noyau la lit ; à trancher avec le
   comparatif de référence**.
+- **SA-1** : le type d'en-tête $33/$34 attache une seconde puce 65816 —
+  le même interpréteur, seconde instance (pas de régions recompilées,
+  trois coups d'horloge par cycle du S-CPU, ses propres vecteurs CRV/CNV/
+  CIV par le champ vec_custom du cœur) avec son bus : I-RAM 2 Kio
+  ($3000-$37FF du S-CPU aussi, protections SIWP/CIWP par page), BW-RAM
+  256 Kio (fenêtre 8 Kio du S-CPU à $6000-$7FFF projetée par $2224,
+  banques linéaires $40-$4F ; le mode bitmap et le DMA ne sont pas
+  modélisés), la ROM par les banques Super MMC ($2220-$2223). Le dialogue
+  passe par $2200-$23FF : CCNT/SCNT (les nibbles de message smeg/cmeg, les
+  demandes d'IRQ et de NMI, la sortie de remise à zéro), SIE/SIC/CIE/CIC,
+  le bit ivsw qui fait répondre SNV/SIV aux vecteurs IRQ du S-CPU
+  ($00:FFEE-F), et l'unité arithmétique ($2250-$2254, résultat 40 bits à
+  $2306-$230B : multiplication signée, division non signée, sigma) — les
+  opérandes se verrouillent à l'écriture de MBH. La demande d'IRQ de la
+  puce monte sur la ligne du S-CPU avec celle du GSU. Testé par
+  `sa1_test` (les trois commandes arithmétiques, un programme en I-RAM qui
+  rend le message + 1 avec son IRQ, les fenêtres BW-RAM croisées, la main
+  de vecteur). **Aucune ROM SA-1 dans la collection locale : le protocole
+  n'a pas tourné dans un jeu réel**.
 - **Timing du bus** : le DMA général et le HDMA volent leur temps de bus au
   CPU (modèle : 16 cycles de démarrage par canal, 8 par octet ; la tranche
   d'atterrissage d'un DMA lancé en plein milieu est approximative, le total
@@ -243,6 +262,7 @@ et la fenêtre tourne tête-bêche sur la CI (SDL2 requis).
 
 Les modes PPU 5/6 et l'EXBG du mode 7, SA-1 (le DSP-1 et le SuperFX sont
 faits), le dispatch du noyau GSU de Yoshi's Island (la commande
-n'arrive pas où le noyau la lit), une comparaison contre un émulateur de référence (le
+n'arrive pas où le noyau la lit), le DMA et le mode bitmap du SA-1, une
+comparaison contre un émulateur de référence (le
 bilan mednafen de la PCE), et — si un jour les budgets de RAM le
 permettent — le streaming des ROMs pour les consoles.

@@ -211,3 +211,14 @@ par le miroir $3000) pendant que le noyau GSU boucle dans son dispatch de
 commandes (r3 décompté depuis $FFFF — la commande n'arrive pas où le
 noyau la lit). Reste ouvert, à trancher avec le comparatif de référence.
 Suite du plan : SA-1, puis le comparatif.
+
+**Séance du 30 octobre (fin) — le SA-1**. Détection (type $33/$34), le
+cœur en seconde instance de l'interpréteur partagé (snes_interp_run, les
+vecteurs propres par vec_custom, trois coups par cycle du S-CPU), son bus
+(I-RAM, BW-RAM linéaire + fenêtre CPU, ROM par les banques Super MMC) et
+le protocole $2200-$23FF (messages, IRQ/NMI des deux côtés, SNV/SIV
+sur les vecteurs du S-CPU, unité arithmétique 40 bits). `sa1_test` passe,
+ctest vert, balayage 2/2. Le DMA, le mode bitmap et les timers H/V du
+SA-1 restent dehors, dits tels quel ; aucune ROM SA-1 locale.
+Suite du plan : le comparatif libretro (tranchera aussi le dispatch GSU
+de Yoshi), puis la recompilation SPC700.

@@ -26,6 +26,7 @@ struct EmitOptions {
     bool hirom = false;          /* the cartridge's map */
     bool exhirom = false;        /* the ExHiROM map: banks $C0-$FF at the file's start */
     bool superfx = false;        /* a SuperFX attached: $6000-$7FFF is its register window */
+    bool sa1 = false;            /* an SA-1 attached: $2200-$23FF and the I-RAM window */
     bool dsp1 = false;           /* a DSP-1 attached: its window overlaps the ROM banks */
     bool precise = false;        /* the slice ends after the same instruction as the interpreter's */
     size_t max_instructions = 0; /* 0: every reachable instruction */

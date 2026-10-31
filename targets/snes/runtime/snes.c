@@ -67,7 +67,7 @@ static uint8_t io_read(uint16_t at) {
     case 0x4211: { /* TIMEUP: the H/V timer's flag, cleared by the read */
         const uint8_t v = machine.timeup ? 0x80 : 0;
         machine.timeup = 0;
-        c->irq_line = machine.fx_irq; /* the GSU's request stays */
+        c->irq_line = machine.fx_irq || machine.sa1_cpu_irq;
         return v;
     }
     case 0x4212: return (machine.vblank ? 0x80 : 0) | (machine.hblank ? 0x40 : 0) | machine.joy_busy;
@@ -193,6 +193,7 @@ static const uint8_t fx_bus_vector[16] = {
 };
 
 uint8_t snes_bus_read(uint32_t at) {
+    if (machine.sa1.active) return snes_sa1_bus_read(at);
     snes_cpu_t *c = &machine.cpu;
     const unsigned bank = at >> 16, off = at & 0xFFFF;
     uint8_t v;
@@ -200,6 +201,9 @@ uint8_t snes_bus_read(uint32_t at) {
         v = machine.wram[at & 0x1FFFF];
     } else if (off < 0x2000 && (bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF))) {
         v = machine.wram[at & 0x1FFF]; /* the WRAM mirror */
+    } else if (machine.sa1_attached && snes_sa1_window(c, at)) {
+        snes_sa1_run(c->cycles); /* the register access syncs the SA-1 */
+        v = snes_sa1_cpu_read(at);
     } else if (off >= 0x2000 && off < 0x6000 &&
                (bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF)) && !fx_window(c, at)) {
         v = io_read(off);
@@ -230,6 +234,10 @@ uint8_t snes_bus_read(uint32_t at) {
             const uint32_t fo = rom_offset(c, at);
             v = fo < c->rom_bytes ? c->rom[fo] : c->mdr;
         }
+        if (machine.sa1_attached && bank == 0) { /* the SA-1's vector hand */
+            const int vo = snes_sa1_vector_override(at);
+            if (vo >= 0) v = (uint8_t)vo;
+        }
     }
     c->mdr = v;
     return v;
@@ -238,11 +246,15 @@ uint8_t snes_bus_read(uint32_t at) {
 void snes_bus_write(uint32_t at, uint8_t v) {
     snes_cpu_t *c = &machine.cpu;
     c->mdr = v;
+    if (machine.sa1.active) { snes_sa1_bus_write(at, v); return; }
     const unsigned bank = at >> 16, off = at & 0xFFFF;
     if (bank == 0x7E || bank == 0x7F) {
         machine.wram[at & 0x1FFFF] = v;
     } else if (off < 0x2000 && (bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF))) {
         machine.wram[at & 0x1FFF] = v;
+    } else if (machine.sa1_attached && snes_sa1_window(c, at)) {
+        snes_sa1_run(c->cycles);
+        snes_sa1_cpu_write(at, v);
     } else if (off >= 0x2000 && off < 0x6000 &&
                (bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF)) && !fx_window(c, at)) {
         io_write(off, v);
@@ -261,7 +273,7 @@ void snes_bus_write(uint32_t at, uint8_t v) {
 }
 
 void snes_init(const uint8_t *rom, uint32_t rom_bytes, int map, uint32_t sram_bytes, int dsp1,
-               int fx_attached) {
+               int sa1_attached, int fx_attached) {
     snes_cpu_t *c = &machine.cpu;
     memset(&machine, 0, sizeof machine);
     c->wram = machine.wram;
@@ -272,8 +284,10 @@ void snes_init(const uint8_t *rom, uint32_t rom_bytes, int map, uint32_t sram_by
     machine.sram_bytes = sram_bytes;
     machine.dsp1_attached = (uint8_t)(dsp1 != 0);
     machine.fx_attached = (uint8_t)(fx_attached != 0);
+    machine.sa1_attached = (uint8_t)(sa1_attached != 0);
     snes_dsp1_reset();
     snes_fx_reset();
+    snes_sa1_reset();
     snes_reset();
 }
 
@@ -310,6 +324,7 @@ void snes_reset(void) {
     machine.smp.ports_out[1] = 0xBB;
     machine.dsp.noise_lfsr = 0x4000; /* the noise generator's seed */
     snes_fx_reset();
+    snes_sa1_reset();
     /* the reset vector, always of bank $00 in emulation mode */
     c->pc = (uint16_t)(snes_bus_read(0x00FFFC) | snes_bus_read(0x00FFFD) << 8);
 }
@@ -379,7 +394,8 @@ void snes_frame(void) {
         }
         if (line == 228) machine.joy_busy = 0;
         const int v_match = line == machine.vtime;
-        machine.cpu.irq_line = machine.timeup || machine.fx_irq; /* the level persists */
+        machine.cpu.irq_line = machine.timeup || machine.fx_irq ||
+                               machine.sa1_cpu_irq; /* the level persists */
         if (machine.v_irq_en && v_match && !machine.h_irq_en) irq_fire();
         if (line < 224) snes_render_line(line, machine.screen + line * 256u * 3u);
         const uint32_t line_start = start + (uint32_t)(((uint64_t)line * SNES_FRAME_CYCLES) / 262);
@@ -397,12 +413,14 @@ void snes_frame(void) {
             snes_run(&machine.cpu, h_at);
             snes_apu_run(machine.cpu.cycles - at_slice);
             snes_fx_run(machine.cpu.cycles);
+        if (machine.sa1_attached) snes_sa1_run(machine.cpu.cycles);
             at_slice = machine.cpu.cycles;
             irq_fire();
         }
         snes_run(&machine.cpu, visible - machine.dma_stolen);
         snes_apu_run(machine.cpu.cycles - at_slice);
         snes_fx_run(machine.cpu.cycles);
+        if (machine.sa1_attached) snes_sa1_run(machine.cpu.cycles);
         at_slice = machine.cpu.cycles;
         machine.hblank = 1;
         snes_hdma_line();
@@ -410,6 +428,7 @@ void snes_frame(void) {
         snes_run(&machine.cpu, line_start + line_cy - machine.dma_stolen);
         snes_apu_run(machine.cpu.cycles - at_slice);
         snes_fx_run(machine.cpu.cycles);
+        if (machine.sa1_attached) snes_sa1_run(machine.cpu.cycles);
         at_line = machine.cpu.cycles;
     }
     machine.hblank = 0;

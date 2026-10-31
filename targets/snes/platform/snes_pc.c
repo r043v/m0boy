@@ -88,7 +88,7 @@ int main(int argc, char **argv) {
     SDL_AudioDeviceID audio = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
     if (audio) SDL_PauseAudioDevice(audio, 0);
 
-    snes_init(snes_rom, SNES_ROM_SIZE, SNES_MAP, SNES_SRAM_BYTES, SNES_DSP1, SNES_FX);
+    snes_init(snes_rom, SNES_ROM_SIZE, SNES_MAP, SNES_SRAM_BYTES, SNES_DSP1, SNES_SA1, SNES_FX);
 
     int running = 1;
     static int16_t pcm[4096];

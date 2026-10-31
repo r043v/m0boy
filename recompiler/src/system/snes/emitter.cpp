@@ -880,6 +880,11 @@ bool Emitter::may_io(const Ins& in) const {
         const unsigned hi = indexed ? hi_off : off;
         if (opt_.superfx && fx_bank && off < 0x8000 && hi >= 0x6000) return true;
         if (opt_.dsp1 && dsp_bank && off >= 0x8000) return true;
+        const bool sa1_bank = dbr <= 0x3F || dbr >= 0x80;
+        if (opt_.sa1 && sa1_bank &&
+            ((off >= 0x2200 && off < 0x2400) || (off >= 0x3000 && off < 0x3800) ||
+             (hi >= 0x2200 && hi < 0x2400) || (hi >= 0x3000 && hi < 0x3800)))
+            return true;
         return false;
     };
     switch (in.info.shape) {

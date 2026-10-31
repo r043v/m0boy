@@ -60,6 +60,10 @@ typedef struct {
     int halted;      /* STP: the CPU stopped until the next reset */
     int waiting;     /* WAI: waits for an interrupt request */
     uint32_t wram_addr; /* the $2181-$2183 port */
+    /* a CPU whose interrupt vectors live in registers (the SA-1): when
+     * vec_custom, the interpreter takes these instead of the bus table */
+    uint8_t vec_custom;
+    uint16_t vec_reset, vec_nmi, vec_irq;
 } snes_cpu_t;
 
 /* the S-SMP (SPC700): the interpreter's state, the 64 KiB A-RAM and the
@@ -111,6 +115,45 @@ typedef struct {
         int16_t env;
     } voice[8];
 } snes_dsp_t;
+
+/* The SA-1: a second 65816 (the interpreter's instance, no regions) with
+ * its own bus — I-RAM 2 KiB, BW-RAM 256 Kio, the cartridge ROM through the
+ * Super MMC banks — the S-CPU talking to it through $2200-$23FF: the
+ * control/message nibbles, the interrupt flags both ways, the vectors
+ * (CRV/CNV/CIV, and SNV/SIV overriding the S-CPU's own), the arithmetic
+ * unit (signed multiply, unsigned divide, 40-bit sigma) and the H/V
+ * latches.  The DMA and the bitmap mode of the BW-RAM are not modelled. */
+typedef struct {
+    snes_cpu_t cpu;
+    uint8_t iram[2048];
+    uint8_t bwram[0x40000];
+    int active;         /* the interpreter's bus reads go to the SA-1 */
+    int last_cpu;       /* the credit model: three cycles per S-CPU cycle */
+    /* $2200 CCNT / $2209 SCNT sides */
+    uint8_t smeg, cmeg;             /* the 4-bit messages */
+    uint8_t sa1_irq, sa1_rdyb, sa1_resb, sa1_nmi;    /* CPU -> SA-1 */
+    uint8_t cpu_irq, cpu_ivsw, cpu_nvsw;             /* SA-1 -> CPU */
+    uint16_t crv, cnv, civ;         /* the SA-1's own vectors */
+    uint16_t snv, siv;              /* the S-CPU's overridden vectors */
+    /* the interrupt flags and their enables/clears (bit=flag naming) */
+    uint8_t sa1_irqfl, sa1_irqen, sa1_irqcl;
+    uint8_t cpu_irqfl, cpu_irqen, cpu_irqcl;
+    uint8_t timer_irqfl, timer_irqen, timer_irqcl;
+    uint8_t dma_irqfl, dma_irqen, dma_irqcl;
+    uint8_t sa1_nmifl, sa1_nmien, sa1_nmicl;
+    uint8_t nmi_latched;
+    /* the memories' write protection and windows */
+    uint8_t swen, cwen, siwp, ciwp, bwp, sbm, cbm, sw46;
+    uint8_t cbmode, dbmode, ebmode, fbmode, cb, db, eb, fb;
+    /* the arithmetic unit */
+    uint16_t ma, mb;
+    uint64_t mr;
+    uint8_t md, acm, overflow;
+    /* the H/V latches and the variable-length decoder */
+    uint16_t hcnt, vcnt, hcr, vcr;
+    uint32_t va;
+    uint8_t vbit, vb, hl;
+} snes_sa1_t;
 
 /* The DSP-1 coprocessor's protocol state (the FSM and the projection
  * state the parameter command leaves behind; the core itself is
@@ -201,6 +244,9 @@ typedef struct {
     uint8_t fx_attached;   /* the header declared a SuperFX */
     uint8_t fx_irq;        /* the GSU's request on the CPU's IRQ line */
     uint8_t fx_ram[65536]; /* the GSU's RAM, the CPU's window at $70-$7F */
+    snes_sa1_t sa1;
+    uint8_t sa1_attached;  /* the header declared an SA-1 */
+    uint8_t sa1_cpu_irq;   /* the SA-1's request on the S-CPU's IRQ line */
     uint32_t frames;
 } snes_t;
 
@@ -209,7 +255,7 @@ typedef struct {
  * SRAM window stays open bus); dsp1 says the header declared a DSP-1 and
  * its window answers the protocol; fx says it declared a SuperFX */
 extern snes_t machine;
-void snes_init(const uint8_t *rom, uint32_t rom_bytes, int map, uint32_t sram_bytes, int dsp1,
+void snes_init(const uint8_t *rom, uint32_t rom_bytes, int map, uint32_t sram_bytes, int dsp1, int sa1,
                int fx);
 /* the DSP-1's registers on the bus (snes_dsp1.c) */
 void snes_dsp1_reset(void);
@@ -218,6 +264,15 @@ uint8_t snes_dsp1_sr_read(void);
 void snes_dsp1_dr_write(uint8_t v);
 /* the SuperFX (snes_fx.c) */
 void snes_fx_reset(void);
+void snes_sa1_reset(void);
+void snes_sa1_run(uint32_t target_cpu);
+int snes_sa1_window(const snes_cpu_t *c, uint32_t at);
+uint8_t snes_sa1_cpu_read(uint32_t at);
+void snes_sa1_cpu_write(uint32_t at, uint8_t v);
+uint8_t snes_sa1_bus_read(uint32_t at);
+int snes_sa1_vector_override(uint32_t at);
+void snes_sa1_bus_write(uint32_t at, uint8_t v);
+void snes_interp_run(snes_cpu_t *cpu, uint32_t until);
 void snes_fx_run(uint32_t target_cpu); /* credit the CPU time and drain it */
 uint8_t snes_fx_reg_read(uint16_t off);
 void snes_fx_reg_write(uint16_t off, uint8_t v);

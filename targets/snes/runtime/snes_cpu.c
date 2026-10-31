@@ -241,38 +241,41 @@ extern void snes_trace_dyn(uint32_t pc24);
 } while (0)
 
 #ifdef SNES_NATIVE
+static void snes_interp(snes_cpu_t *cpu, uint32_t until);
+void snes_interp_run(snes_cpu_t *cpu, uint32_t until) { snes_interp(cpu, until); }
 #define SNES_INTERP_FN static void snes_interp
 #else
-#define SNES_INTERP_FN void snes_run
+#define SNES_INTERP_FN void snes_interp_run
+void snes_run(snes_cpu_t *cpu, uint32_t until) { snes_interp_run(cpu, until); }
 #endif
 SNES_INTERP_FN(snes_cpu_t *cpu, uint32_t until) {
     (void)cpu;
-    int32_t budget = (int32_t)(until - machine.cpu.cycles);
-    uint16_t pc_ = machine.cpu.pc;
-    uint16_t a_ = machine.cpu.a, x_ = machine.cpu.x, y_ = machine.cpu.y;
-    uint16_t s_ = machine.cpu.s, d_ = machine.cpu.d;
-    uint8_t k_ = machine.cpu.k, dbr_ = machine.cpu.dbr, p_ = machine.cpu.p;
-    uint8_t e_ = machine.cpu.e;
+    int32_t budget = (int32_t)(until - cpu->cycles);
+    uint16_t pc_ = cpu->pc;
+    uint16_t a_ = cpu->a, x_ = cpu->x, y_ = cpu->y;
+    uint16_t s_ = cpu->s, d_ = cpu->d;
+    uint8_t k_ = cpu->k, dbr_ = cpu->dbr, p_ = cpu->p;
+    uint8_t e_ = cpu->e;
     uint32_t left;
     int pc_set; /* the case put an address in pc_ by itself: the step below
         must not move it */
     while (budget > 0) {
-        if (machine.cpu.halted) { budget = 0; break; }
-        if (machine.cpu.waiting) {
-            if (!machine.cpu.nmi_pending && !machine.cpu.irq_line) { budget = 0; break; }
-            machine.cpu.waiting = 0;
+        if (cpu->halted) { budget = 0; break; }
+        if (cpu->waiting) {
+            if (!cpu->nmi_pending && !cpu->irq_line) { budget = 0; break; }
+            cpu->waiting = 0;
         }
         pc_set = 0;
         const uint16_t pc0 = pc_;
-        if (machine.cpu.nmi_pending) {
-            machine.cpu.nmi_pending = 0;
-            INTERRUPT(e_ ? 0xFFEA : 0xFFFA);
+        if (cpu->nmi_pending) {
+            cpu->nmi_pending = 0;
+            INTERRUPT(cpu->vec_custom ? cpu->vec_nmi : (e_ ? 0xFFEA : 0xFFFA));
             budget -= e_ ? 7 : 8;
             SNES_DYN_HOOK((uint32_t)k_ << 16 | pc_);
             continue;
         }
-        if (machine.cpu.irq_line && !(p_ & SNES_P_I)) {
-            INTERRUPT(e_ ? 0xFFEE : 0xFFFE);
+        if (cpu->irq_line && !(p_ & SNES_P_I)) {
+            INTERRUPT(cpu->vec_custom ? cpu->vec_irq : (e_ ? 0xFFEE : 0xFFFE));
             budget -= e_ ? 7 : 8;
             SNES_DYN_HOOK((uint32_t)k_ << 16 | pc_);
             continue;
@@ -281,7 +284,7 @@ SNES_INTERP_FN(snes_cpu_t *cpu, uint32_t until) {
 #ifdef SNES_TRACE
         /* the trace's per-instruction cycles: the hot cycles commit only
          * at the loop's exit, the hook reads them stale without this */
-        machine.cpu.cycles = (uint32_t)(until - budget);
+        cpu->cycles = (uint32_t)(until - budget);
 #endif
         left = 2;
         switch (OP8(0)) {
@@ -736,27 +739,27 @@ SNES_INTERP_FN(snes_cpu_t *cpu, uint32_t until) {
         case 0xCB: /* WAI: wakes on the next interrupt; nothing pending, the
             rest of the slice is spent here (the frame's NMI lands at its
             end, the boundary check takes it next slice) */
-            pc_ += 1; pc_set = 1; left = 3; machine.cpu.waiting = 1;
+            pc_ += 1; pc_set = 1; left = 3; cpu->waiting = 1;
             break;
         case 0xDB: /* STP: stopped until the next reset */
-            pc_ += 1; pc_set = 1; left = 3; machine.cpu.halted = 1;
+            pc_ += 1; pc_set = 1; left = 3; cpu->halted = 1;
             break;
         default: break;
         }
         if (!pc_set && pc_ == pc0) pc_ = (uint16_t)(pc0 + 1);
         budget -= left;
     }
-    machine.cpu.pc = pc_;
-    machine.cpu.a = a_;
-    machine.cpu.x = x_;
-    machine.cpu.y = y_;
-    machine.cpu.s = s_;
-    machine.cpu.d = d_;
-    machine.cpu.k = k_;
-    machine.cpu.dbr = dbr_;
-    machine.cpu.p = p_;
-    machine.cpu.e = e_;
-    machine.cpu.cycles = until - (uint32_t)budget;
+    cpu->pc = pc_;
+    cpu->a = a_;
+    cpu->x = x_;
+    cpu->y = y_;
+    cpu->s = s_;
+    cpu->d = d_;
+    cpu->k = k_;
+    cpu->dbr = dbr_;
+    cpu->p = p_;
+    cpu->e = e_;
+    cpu->cycles = until - (uint32_t)budget;
 }
 
 #ifdef SNES_NATIVE

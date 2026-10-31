@@ -171,6 +171,7 @@ bool generate(const fs::path& cartridge, const GenerateOptions& o, GenerateStats
         /* the header's SuperFX mark: type $15, or the map byte $13/$14 */
         const unsigned type_byte = head_at + 0x17 <= image_bytes ? rom[head_at + 0x16] : 0;
         const int fx = type_byte == 0x15 || map_byte == 0x13 || map_byte == 0x14 ? 1 : 0;
+        const int sa1 = type_byte == 0x33 || type_byte == 0x34 ? 1 : 0;
 
         const auto marker = o.output / "snes-project.txt";
         if (fs::exists(o.output) && !fs::exists(marker) && !fs::is_empty(o.output)) {
@@ -196,6 +197,7 @@ bool generate(const fs::path& cartridge, const GenerateOptions& o, GenerateStats
               "#define SNES_MAP " + std::to_string(map) + "\n"
               "#define SNES_SRAM_BYTES " + std::to_string(sram_bytes) + "u\n"
               "#define SNES_DSP1 " + std::to_string(dsp1) + "\n"
+              "#define SNES_SA1 " + std::to_string(sa1) + "\n"
               "#define SNES_FX " + std::to_string(fx) + "\n";
         /* the recompiled code's dispatcher (snes_cpu.c) */
         if (!o.interpret) config += "#ifndef SNES_NATIVE\n#define SNES_NATIVE 1\n#endif\n";
@@ -203,7 +205,7 @@ bool generate(const fs::path& cartridge, const GenerateOptions& o, GenerateStats
 
         for (const char* name :
              { "snes_cpu.c", "snes.c", "snes_ppu.c", "snes_smp.c", "snes_dsp.c", "snes_dsp1.c",
-               "snes_fx.c", "snes.h", "snes_gen.h" })
+               "snes_fx.c", "snes_sa1.c", "snes.h", "snes_gen.h" })
             copy_template(tpl / "runtime" / name, src / name);
         /* the idle loops' count (snes_gen.h, the dispatcher) */
         copy_template(o.meta_templates.parent_path() / "common" / "runtime" / "m0_idle.h", src / "m0_idle.h");
@@ -218,6 +220,7 @@ bool generate(const fs::path& cartridge, const GenerateOptions& o, GenerateStats
             emit.exhirom = map == 2;
             emit.precise = o.precise;
             emit.superfx = fx != 0;
+            emit.sa1 = sa1 != 0;
             emit.dsp1 = dsp1 != 0;
             const unsigned bpi = o.bytes_per_instruction ? o.bytes_per_instruction : 24u;
             emit.max_instructions = o.code_budget_bytes ? o.code_budget_bytes / bpi : 0;
@@ -239,7 +242,7 @@ bool generate(const fs::path& cartridge, const GenerateOptions& o, GenerateStats
         copy_template(o.meta_templates.parent_path() / "consoles" / "pc" / "pc_input.h", o.output / "host" / "pc_input.h");
         const std::string sources =
             "${SRC}/snes.c ${SRC}/snes_cpu.c ${SRC}/snes_ppu.c ${SRC}/snes_smp.c ${SRC}/snes_dsp.c"
-            " ${SRC}/snes_dsp1.c ${SRC}/snes_fx.c ${SRC}/snes_cart.c" + std::string(native ? " ${SRC}/snes_gen.c" : "");
+            " ${SRC}/snes_dsp1.c ${SRC}/snes_fx.c ${SRC}/snes_sa1.c ${SRC}/snes_cart.c" + std::string(native ? " ${SRC}/snes_gen.c" : "");
         write(o.output / "host" / "CMakeLists.txt",
               "cmake_minimum_required(VERSION 3.20)\nproject(" + o.name + "_snes_host C)\nset(CMAKE_C_STANDARD 11)\n"
               "if(NOT CMAKE_BUILD_TYPE)\n    set(CMAKE_BUILD_TYPE Release)\nendif()\n"
@@ -265,7 +268,7 @@ bool generate(const fs::path& cartridge, const GenerateOptions& o, GenerateStats
                   "${CMAKE_CURRENT_SOURCE_DIR}/src/snes.c ${CMAKE_CURRENT_SOURCE_DIR}/src/snes_cpu.c "
                   "${CMAKE_CURRENT_SOURCE_DIR}/src/snes_ppu.c ${CMAKE_CURRENT_SOURCE_DIR}/src/snes_smp.c "
                   "${CMAKE_CURRENT_SOURCE_DIR}/src/snes_dsp.c ${CMAKE_CURRENT_SOURCE_DIR}/src/snes_dsp1.c "
-                  "${CMAKE_CURRENT_SOURCE_DIR}/src/snes_fx.c "
+                  "${CMAKE_CURRENT_SOURCE_DIR}/src/snes_fx.c ${CMAKE_CURRENT_SOURCE_DIR}/src/snes_sa1.c "
                   "${CMAKE_CURRENT_SOURCE_DIR}/src/snes_cart.c" +
                   std::string(native ? " ${CMAKE_CURRENT_SOURCE_DIR}/src/snes_gen.c" : "") + ")\n"
                   "target_include_directories(" + o.name + "_pc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)\n"

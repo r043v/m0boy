@@ -108,6 +108,11 @@ static int header_fx(const uint8_t *rom, uint32_t bytes, int map) {
     const unsigned map_byte = rom[at];
     return map_byte == 0x15 || rom[at - 1] == 0x13 || rom[at - 1] == 0x14 ? 1 : 0;
 }
+static int header_sa1(const uint8_t *rom, uint32_t bytes, int map) {
+    (void)bytes; (void)map;
+    const uint8_t type = rom[0x16];
+    return type == 0x33 || type == 0x34;
+}
 
 int main(int argc, char **argv) {
     const char *rom_path = 0, *input_path = 0, *coverage = 0, *capture = 0, *wav_path = 0;
@@ -160,7 +165,7 @@ int main(int argc, char **argv) {
     }
 
     snes_init(rom, rom_bytes, hirom, sram_bytes, header_dsp1(rom, rom_bytes, hirom),
-              header_fx(rom, rom_bytes, hirom));
+              header_sa1(rom, rom_bytes, hirom), header_fx(rom, rom_bytes, hirom));
     static const char *const names[12] = {
         "b", "y", "select", "start", "up", "down", "left", "right", "a", "x", "l", "r"
     };
