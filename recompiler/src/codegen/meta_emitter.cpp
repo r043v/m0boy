@@ -432,9 +432,12 @@ public:
 
 bool Generator::load_coverage(MetaTargetStats& stats, std::string& error) {
     /* flags: 1 executed, 2 entered non-sequentially, 4 speculative (from
-     * static analysis rather than a play session). */
+     * static analysis rather than a play session), 8 proven data (memscan:
+     * verbatim copy to VRAM or pointer table — the explorer executed it as
+     * code on purpose, m0boy must not compile it). */
     std::map<uint32_t, uint8_t> cov;
     std::set<uint32_t> played;
+    std::set<uint32_t> data;
     std::unordered_map<uint32_t, uint64_t> hits; /* optional 4th column */
     for (const fs::path& path : opt_.coverage_files) {
         std::ifstream in(path);
@@ -451,7 +454,10 @@ bool Generator::load_coverage(MetaTargetStats& stats, std::string& error) {
             if (addr >= 0x8000 || bank >= rom_.bank_count()) continue;
             const uint32_t k = key(static_cast<uint16_t>(bank), static_cast<uint16_t>(addr));
             cov[k] |= static_cast<uint8_t>(flags & 3);
-            if (!(flags & 4)) {
+            if (flags & 8) data.insert(k);
+            /* a proven-data line is not played code: no hit, no streaming
+             * weight, no flash-ranking preference */
+            if (!(flags & 4) && !(flags & 8)) {
                 played.insert(k);
                 hits[k] += count ? count : 1;
             }
@@ -489,6 +495,11 @@ bool Generator::load_coverage(MetaTargetStats& stats, std::string& error) {
 
     std::vector<Ins> all;
     for (const auto& [k, flags] : cov) {
+        /* proven data never executed: leave it to the ROM reads entirely */
+        if (data.count(k) && !(flags & 1)) {
+            stats.data_skipped++;
+            continue;
+        }
         Ins in;
         if (!decode(rom_, static_cast<uint16_t>(k >> 16), static_cast<uint16_t>(k), in)) {
             dropped_++;

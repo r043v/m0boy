@@ -1968,6 +1968,9 @@ static int run_meta_target(const char* argv0, const std::string& rom_path,
               << "  compiled:           " << stats.compiled << " instructions in "
               << stats.regions << " regions\n"
               << "  interpreter only:   " << stats.dropped << "\n"
+              << (stats.data_skipped ? "  proven data:        " + std::to_string(stats.data_skipped) +
+                                             " coverage records left as data (cov flag 8)\n"
+                                     : "")
               << "  dispatch entries:   " << stats.dispatch_entries << "\n"
               << (thumb ? "  register IR:        " + std::to_string(stats.register_blocks) +
                           " blocks, " + std::to_string(stats.thumb_blocks) + " Thumb blocks\n" : "")

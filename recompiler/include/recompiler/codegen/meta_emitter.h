@@ -81,6 +81,7 @@ struct MetaTargetStats {
     size_t thumb_blocks = 0;    ///< register blocks with native Thumb lowering
     size_t speculative = 0;      ///< static-analysis instructions offered
     size_t speculative_kept = 0; ///< ... and compiled within the budget
+    size_t data_skipped = 0;     ///< cov lines flagged data (8) and not executed
     size_t budget_instructions = 0;
     bool stream = false;         ///< ROM streamed from the SD card
     std::string stream_file;     ///< its 8.3 name on the card
