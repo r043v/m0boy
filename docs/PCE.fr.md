@@ -295,16 +295,21 @@ hooks de traçage ne comptent que sur `--coverage`.  Bilan : le natif
 rejoint la vitesse de l'interpréteur sur le titre de Raiden (0.165 s contre
 0.165 s pour 300 images, l'interpréteur seul) là où il était deux fois
 plus lent, et le profilé complet reste l'item ouvert du paragraphe
-précédent.  L'expérience suivante, non retenue : planifier les régions
-**par contexte** (le tri (pc, contexte) du map entrelace les instances du
-même span sous ses plusieurs contextes et fait éclater les régions en
-~1 instruction, d'où un appel de fonction par instruction exécutée) —
-5 153 régions au lieu de 58 702 et 0.122 s (25 % sous l'interpréteur),
-mais le run_hash précis profilé de Raiden diverge, et la cause exacte
-(échantillonnage d'IRQ à travers les enchaînements internes à une région
-longue ?) n'est pas tranchée ; le code est revenu à l'ordre du map et
-l'outillage (diff d'écritures WRAM horodatées, flux de dispatch, états
-par dispatch) est en place pour la reprise.
+précédent.  L'expérience non retenue de la session précédente — planifier
+les régions **par contexte** — est depuis passée en règle : le tri
+(pc, contexte) du map entrelace les instances du même span sous ses
+plusieurs contextes et fait éclater les régions en ~1 instruction (d'où
+un appel de fonction par instruction exécutée) ; le plan construit donc
+ses régions dans un ordre contexte puis pc, et la divergence du run_hash
+alors observée sur Raiden avait une tout autre cause : le spin de poll du
+dispatcher (`huc6280.c`) dépensait la branche du tour même où le budget
+de la tranche s'épuisait sur la lecture — +4 cycles par occurrence, un
+décalage que l'interpréteur ne fait pas (son test de boucle arrête avant
+la branche).  Le spin rend maintenant pc sur la branche et sort ; le
+natif précis profilé imprime le run_hash de l'interpréteur sur Raiden
+(300 images et quatre sessions de 3 000 avec script d'entrée).  Bilan :
+5 400 régions au lieu de 64 418, et l'app slot du firmware AKA tombe de
+92,7 % à 86,1 % (moins de fonctions, moins de surcoût d'entrée).
 
 Le rendu du fond lit maintenant BAT et plans 4 bpp par tuile au lieu de
 les relire à chaque pixel. Sur le harness Raiden en partie, 3 000 images
@@ -445,16 +450,38 @@ partition `rom` (voir la cible AKA ci-dessus) et les régions passent en
 `-O2` — Raiden gagne 5 350 instructions compilées (14 210 → 19 560) en
 descendant de 98,4 % à 92,7 % de la flash de l'app slot.
 
+**E2, les régions regroupées par contexte (30 octobre 2026)** : voir « Le
+recompilateur HuC6280 → C » ci-dessus — 2 239 régions sur le projet AKA,
+flash d'app slot à 86,1 %.
+
+**Pourquoi pas un doublon de la VRAM en pixels finaux** : l'idée d'une
+copie de la VRAM déjà dans le format de sortie du panneau (pour évincer
+toute conversion au rendu) ne tient pas ici. Le format final dépend de la
+palette VCE, qui change à l'exécution (les fondues) — chaque écriture
+VCE déprécierait tout le doublon, pire que le recalcul actuel ; il dépend
+de la composition (fond puis sprites, priorité par ligne), qui n'existe
+pas par mot VRAM isolé ; et du rétrécissement 256→160, dont le filtre box
+mêle ~1,6 pixels sources par pixel de sortie à travers la fenêtre de
+scroll. La part extractible par mot VRAM est déjà prise : le cache de
+cellules du fond, le cache de rangées de sprites, la LUT finale VCE.
+Une variante à marque de salete paierait un test par accès pour un gain
+déjà encaissé. (Le `fetch_sprites` ne se saute pas non plus quand les
+sprites sont désactivés : le drapeau OR du registre $02 reste observable,
+CR bit 6 coupé.)
+
 **Le triage fidélité/vitesse, façon émulateurs classiques** : le port a
 déjà les coupes standard — chronométrage mémoire par instruction (pas
 par accès), PSG 11025 Hz mono, 16 sprites par ligne, rendu VDC borné à
 la fenêtre active, palette reconstruite à l'écriture. Ce qui reste
 coûteux est visible s'il est coupé : le pas de ligne (les raster IRQ de
 Raiden), le budget par bloc (frontière de tranche), l'entrée/sortie de
-région (5 registres + les fenêtres, par bloc — la région générée type
-fait 1 à 5 instructions). Le mode « rapide mais moins fidèle » n'a donc
-pas de prise ici sans casser le pas de ligne ; la marge se gagne en
-qualité de code (D, E2), pas en fidélité.
+région (5 registres + les fenêtres, par bloc). Le mode « rapide mais
+moins fidèle » n'a donc pas de prise ici sans casser le pas de ligne ;
+la marge s'est gagnée en qualité de code (D, E2 — fait), pas en fidélité.
+NES et Mega Drive n'avaient rien à gagner à E2 : sans contexte dans leur
+clé d'instruction, leurs runs sont déjà denses (SMB : 20 instructions par
+région ; Sonic : 58) — l'entrelacement (pc, contexte) qui éclatait les
+régions PCE puis SNES n'existe pas chez eux.
 
 ### Passe VDP du 27 octobre 2026
 

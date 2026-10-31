@@ -535,13 +535,21 @@ void Emitter::plan() {
     /* regions: runs of neighbouring instructions under one context — a
      * TAM whose bank the walk could not prove ends its run (its exit
      * hands the new mapping back to the dispatcher's check).  The runs
-     * stay in the map's (pc, ctx) order: grouping per context first
-     * (longer regions, a fifth of the dispatch round-trips) broke the
-     * profiled precise run_hash on Raiden for reasons the tooling has
-     * not pinned yet — the experiment and its numbers are in
-     * docs/PCE.fr.md. */
+     * are built context first, then pc: the map's (pc, ctx) order
+     * interleaves the instances of one span under its several contexts
+     * and shatters the regions down to ~1 instruction, one function
+     * call per executed instruction.  A run never spans two contexts:
+     * the dispatcher only enters an entry whose MPR bytes still match,
+     * and the joins below keep requiring back.ctx == key.ctx. */
     const size_t cap = 256;
-    for (auto& [key, in] : ins_) {
+    std::vector<Key> order;
+    order.reserve(ins_.size());
+    for (const auto& [key, in] : ins_) order.push_back(key);
+    std::sort(order.begin(), order.end(), [](const Key& a, const Key& b) {
+        return a.ctx != b.ctx ? a.ctx < b.ctx : a.pc < b.pc;
+    });
+    for (const Key& key : order) {
+        Ins& in = ins_.at(key);
         const bool joins = !regions_.empty() && regions_.back().size() < cap &&
                            [&] {
                                const Ins& back = ins_.at(regions_.back().back());

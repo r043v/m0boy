@@ -671,9 +671,22 @@ void Emitter::plan() {
     }
     /* regions: runs of neighbouring instructions under one context — a
      * mapping the walk could not prove (PLB, PLD, an unknown TCD or XCE,
-     * a native PLP) ends its run */
+     * a native PLP) ends its run.  The runs are built context first, then
+     * pc: the map's (pc, ctx) order interleaves the instances of one span
+     * under its several contexts (K, DBR, D, M, X) and shatters the
+     * regions down to ~1 instruction, one function call per executed
+     * instruction.  A run never spans two contexts: the dispatcher only
+     * enters an entry whose context bytes still match, and the joins keep
+     * requiring back.follow_ctx == key.ctx. */
     const size_t cap = 256;
-    for (auto& [key, in] : ins_) {
+    std::vector<Key> order;
+    order.reserve(ins_.size());
+    for (const auto& [key, in] : ins_) order.push_back(key);
+    std::sort(order.begin(), order.end(), [](const Key& a, const Key& b) {
+        return a.ctx != b.ctx ? a.ctx < b.ctx : a.pc < b.pc;
+    });
+    for (const Key& key : order) {
+        Ins& in = ins_.at(key);
         const bool joins = !regions_.empty() && regions_.back().size() < cap &&
                            [&] {
                                const Ins& back = ins_.at(regions_.back().back());

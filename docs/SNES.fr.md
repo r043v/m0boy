@@ -182,7 +182,10 @@ instruction porte le contexte *résultant* de ce qui la suit (un SEP, un
 XCE ou un TCD le change) et les régions n'enchaînent que l'instance qui
 porte ce contexte-là —, et le
 dispatcher n'entre dans une région que si le contexte de la machine
-correspond encore. Le mode précis vérifie le budget après chaque
+correspond encore. Les régions se construisent contexte puis adresse (le
+tri (pc, contexte) du map entrelace les instances d'un même span sous ses
+plusieurs contextes et les éclate, comme sur la PCE — même correction,
+même jour). Le mode précis vérifie le budget après chaque
 instruction et sort avant toute accès possible à l'I/O ; le mode rapide ne
 vérifie qu'aux étiquettes — c'est lui qui exécute les formes longues et
 les lectures en bus ouvert à l'intérieur d'une région.

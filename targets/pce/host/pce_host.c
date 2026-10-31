@@ -31,6 +31,9 @@ extern const uint8_t pce_rom[];
 extern int pce_native;
 #endif
 
+static int state_hash; /* --state-hash: the fingerprint after every frame */
+static const char *wram_dump; /* --dump-wram FRAME FILE: WRAM's bytes then */
+static unsigned wram_dump_frame;
 static uint16_t frame[262][512];
 static void on_row(void *host, unsigned line, const uint16_t *pixels, unsigned width) {
     (void)host;
@@ -118,6 +121,33 @@ static FILE *audio;
 static uint32_t audio_bytes;
 static pc_input_t script = {0};
 
+/* the run fingerprint's fields, shared by --state-hash and the final
+ * print (the struct's bytes would hash bus pointers and padding) */
+static uint32_t state_fingerprint(void) {
+    uint32_t h = 2166136261u;
+    /* registers field by field, then the frame count: the struct carries
+     * the bus's fast-path pointers, and hashing its bytes would hash
+     * addresses and padding */
+    const uint8_t regs[12] = {
+        machine.cpu.a, machine.cpu.x, machine.cpu.y, machine.cpu.s, machine.cpu.p,
+        (uint8_t)machine.cpu.pc, (uint8_t)(machine.cpu.pc >> 8),
+        (uint8_t)machine.cpu.cycles, (uint8_t)(machine.cpu.cycles >> 8),
+        (uint8_t)(machine.cpu.cycles >> 16), (uint8_t)(machine.cpu.cycles >> 24),
+        (uint8_t)(machine.frames & 0xFFu),
+    };
+    h = fnv(regs, sizeof regs, h);
+    h = fnv(machine.wram, sizeof machine.wram, h);
+    h = fnv(machine.vdc.vram, sizeof machine.vdc.vram, h);
+    h = fnv(machine.vdc.sat, sizeof machine.vdc.sat, h);
+    h = fnv(machine.vce_colors, sizeof machine.vce_colors, h);
+    if (machine.have_frame) {
+        for (unsigned y = 0; y < machine.vdc.active_height; y++)
+            h = fnv(frame[machine.first_active_line + y],
+                    machine.vdc.active_width * sizeof frame[0][0], h);
+    }
+    return h;
+}
+
 static void host_frame(unsigned f) {
     if (xh.on) {
         machine.input = (uint8_t)m0xh_keys(&xh, explore_keys);
@@ -129,6 +159,18 @@ static void host_frame(unsigned f) {
     }
     machine.input = (uint8_t)pc_input_keys(&script, f);
     pce_frame();
+    if (state_hash)
+        printf("frame %u state=%08x pc=%04x cyc=%u "
+               "wram=%08x vram=%08x sat=%08x vce=%08x\n", f,
+               state_fingerprint(), machine.cpu.pc, (unsigned)machine.cpu.cycles,
+               fnv(machine.wram, sizeof machine.wram, 2166136261u),
+               fnv(machine.vdc.vram, sizeof machine.vdc.vram, 2166136261u),
+               fnv(machine.vdc.sat, sizeof machine.vdc.sat, 2166136261u),
+               fnv(machine.vce_colors, sizeof machine.vce_colors, 2166136261u));
+    if (wram_dump && f == wram_dump_frame) {
+        FILE *out = fopen(wram_dump, "wb");
+        if (out) { fwrite(machine.wram, 1, sizeof machine.wram, out); fclose(out); }
+    }
     if (audio) {
         uint8_t samples[512];
         /* 119210 CPU cycles per frame: the samples that covers */
@@ -159,6 +201,11 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--input") && i + 1 < argc) input_path = argv[++i];
         else if (!strcmp(argv[i], "--coverage") && i + 1 < argc) coverage = argv[++i];
         else if (!strcmp(argv[i], "--interp")) interp = 1;
+        else if (!strcmp(argv[i], "--state-hash")) state_hash = 1;
+        else if (!strcmp(argv[i], "--dump-wram") && i + 2 < argc) {
+            wram_dump_frame = (unsigned)atoi(argv[++i]);
+            wram_dump = argv[++i];
+        }
         else if (m0xh_arg(&xh, argc, argv, &i)) { /* --explore, --random */ }
         else rom_path = argv[i];
     }
@@ -249,26 +296,7 @@ int main(int argc, char **argv) {
             fclose(out);
         }
     }
-    uint32_t h = 2166136261u;
-    /* registers field by field: the struct carries the bus's fast-path
-     * pointers, and hashing its bytes would hash addresses and padding */
-    const uint8_t regs[12] = {
-        machine.cpu.a, machine.cpu.x, machine.cpu.y, machine.cpu.s, machine.cpu.p,
-        (uint8_t)machine.cpu.pc, (uint8_t)(machine.cpu.pc >> 8),
-        (uint8_t)machine.cpu.cycles, (uint8_t)(machine.cpu.cycles >> 8),
-        (uint8_t)(machine.cpu.cycles >> 16), (uint8_t)(machine.cpu.cycles >> 24),
-        (uint8_t)(machine.frames & 0xFFu),
-    };
-    h = fnv(regs, sizeof regs, h);
-    h = fnv(machine.wram, sizeof machine.wram, h);
-    h = fnv(machine.vdc.vram, sizeof machine.vdc.vram, h);
-    h = fnv(machine.vdc.sat, sizeof machine.vdc.sat, h);
-    h = fnv(machine.vce_colors, sizeof machine.vce_colors, h);
-    if (machine.have_frame) {
-        for (unsigned y = 0; y < machine.vdc.active_height; y++)
-            h = fnv(frame[machine.first_active_line + y],
-                    machine.vdc.active_width * sizeof frame[0][0], h);
-    }
+    uint32_t h = state_fingerprint();
     if (coverage) {
         FILE *out = fopen(coverage, "w");
         if (!out) { fprintf(stderr, "cannot write %s\n", coverage); return 2; }
