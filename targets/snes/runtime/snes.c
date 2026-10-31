@@ -172,8 +172,10 @@ static int dsp1_window(snes_cpu_t *c, uint32_t at) {
 static int fx_window(snes_cpu_t *c, uint32_t at) {
     if (!machine.fx_attached) return 0;
     const unsigned bank = at >> 16, off = at & 0xFFFF;
-    return off >= 0x6000 && off < 0x8000 &&
-           (bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF));
+    if (!(bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF))) return 0;
+    /* the registers answer at $6000-$7FFF and their mirror $3000-$32FF
+     * (the window the games poll to wait the GSU out) */
+    return (off >= 0x6000 && off < 0x8000) || (off >= 0x3000 && off < 0x3300);
 }
 
 /* the GSU's RAM, the CPU's window at banks $70-$7F ($7E/$7F stay WRAM) */
@@ -199,7 +201,7 @@ uint8_t snes_bus_read(uint32_t at) {
     } else if (off < 0x2000 && (bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF))) {
         v = machine.wram[at & 0x1FFF]; /* the WRAM mirror */
     } else if (off >= 0x2000 && off < 0x6000 &&
-               (bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF))) {
+               (bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF)) && !fx_window(c, at)) {
         v = io_read(off);
     } else if (fx_window(c, at)) {
         snes_fx_run(c->cycles); /* the register access syncs the GSU */
@@ -212,7 +214,15 @@ uint8_t snes_bus_read(uint32_t at) {
     } else if (machine.sram_bytes && sram_window(c, at)) {
         v = machine.sram[(off - 0x6000u) & (machine.sram_bytes - 1)];
     } else if ((bank >= 0x40 && bank <= 0x7D) || bank >= 0xC0) {
-        v = c->hirom ? c->rom[rom_offset(c, at) % (c->rom_bytes ? c->rom_bytes : 1)] : c->mdr;
+        /* LoROM: those banks mirror $00-$3D (the offset maths already
+         * masks); HiROM/ExHiROM: $C0-$FF is the ROM's start, the mirrors
+         * wrap on the declared size */
+        if (c->hirom || c->exhirom)
+            v = c->rom[rom_offset(c, at) % (c->rom_bytes ? c->rom_bytes : 1)];
+        else {
+            const uint32_t fo = rom_offset(c, at);
+            v = fo < c->rom_bytes ? c->rom[fo] : c->mdr;
+        }
     } else { /* banks $00-$3F and $80-$BF from $8000: the cartridge */
         if (machine.fx_attached && (machine.fx.sfr & 0x20) && (machine.fx.scmr & 0x10))
             v = fx_bus_vector[at & 15];
@@ -234,7 +244,7 @@ void snes_bus_write(uint32_t at, uint8_t v) {
     } else if (off < 0x2000 && (bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF))) {
         machine.wram[at & 0x1FFF] = v;
     } else if (off >= 0x2000 && off < 0x6000 &&
-               (bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF))) {
+               (bank <= 0x3F || (bank >= 0x80 && bank <= 0xBF)) && !fx_window(c, at)) {
         io_write(off, v);
     } else if (fx_window(c, at)) {
         snes_fx_run(c->cycles); /* the register access syncs the GSU */

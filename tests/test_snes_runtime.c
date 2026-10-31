@@ -397,6 +397,21 @@ static void apu_test(void) {
     CHECK(d0 >= 14 && d0 <= 19);   /* ~1000 Hz over one frame */
     CHECK(d2 >= 128 && d2 <= 138); /* ~8000 Hz over one frame */
     machine.smp.control = 0;
+
+    /* the timer outputs answer at $FD-$FF (the $FF index once ran off the
+     * three-entry array into the IPL's state byte): a three-instruction
+     * SPC program copies T2OUT into A-RAM $00 through the port itself */
+    machine.smp.timer_out[0] = 0x11; machine.smp.timer_out[1] = 0x22;
+    machine.smp.timer_out[2] = 0x33;
+    machine.smp.ram[0x300] = 0xe5; machine.smp.ram[0x301] = 0xff;
+    machine.smp.ram[0x302] = 0x00;                                /* mov a,$00ff */
+    machine.smp.ram[0x303] = 0xc5; machine.smp.ram[0x304] = 0x00;
+    machine.smp.ram[0x305] = 0x00;                                /* mov $0000,a */
+    machine.smp.ram[0x306] = 0x2f; machine.smp.ram[0x307] = 0xfb; /* bra self */
+    machine.smp.pc = 0x0300;
+    machine.smp.halted = 0;
+    snes_frame();
+    CHECK(machine.smp.ram[0x00] == 0x33);
 }
 
 static void interrupt_test(int emulation, int interpreter) {
@@ -789,6 +804,9 @@ int main(void) {
     rom[0x7ffb] = rom[0x7feb] = rom[0x7ffd] = 0x80;
     snes_init(rom, sizeof rom, 0, 0, 0, 0);
     CHECK(snes_bus_read(0x808000) == 0x42);
+    /* LoROM mirrors: banks $40-$7D and $C0+ read the ROM like $00-$3D
+     * (Yoshi's Island fetches its data through bank $42) */
+    CHECK(snes_bus_read(0x428000) == 0x42 && snes_bus_read(0xc08000) == 0x42);
     hdma_test();
     muldiv_test();
     irq_test();

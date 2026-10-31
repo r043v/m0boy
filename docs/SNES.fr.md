@@ -43,6 +43,9 @@ recompilateur.
   à $40FFC0, checksum apparié et nibble de map 5 ; banques $C0-$FF au début
   du fichier, $00-$3F/$80-$BF à $400000) — l'ExHiROM n'a pas tourné sur une
   ROM réelle, la détection et les fenêtres sont celles de la référence.
+  En LoROM, les banques $40-$7D renvoient la ROM aussi (miroirs de
+  $00-$3D) — Yoshi's Island y lit ses données ; l'oubli laissait la
+  cartouche en bus ouvert.
 - **PPU** : VRAM/CGRAM/OAM et leurs ports, le DMA général (modes 0-7) et le
   HDMA (tables directes et indirectes, une unité par ligne pendant le
   HBlank), les timers d'IRQ H/V ($4207-$420B, le niveau de TIMEUP), les
@@ -70,7 +73,10 @@ recompilateur.
   haut non nul = blocs, nul = saut) ; chaque octet porte son compteur sur
   $2140, que le S-SMP renvoie en guise d'accusé ; un compteur signé en avance
   termine le transfert (port 1 nul = sauter à l'adresse, sinon bloc suivant,
-  compteur reparti à zéro). Le S-DSP rend huit voix BRR
+  compteur reparti à zéro). Les sorties des timers ($FD-$FF) répondaient
+  hors bornes (l'index $FF déborde du tableau de trois) — corrigé, les
+  empreintes run des sessions qui les lisent ont bougé, les audio_hash non.
+  Le S-DSP rend huit voix BRR
   (filtres, bouclage, drapeaux de fin) avec ADSR ou GAIN, le pitch compteur
   et les volumes, dans un anneau que le harness et la fenêtre drainent à
   32000 Hz.
@@ -105,8 +111,9 @@ recompilateur.
   suivent celles publiées du GSU (le cœur bsnes comme référence de
   lecture, implémentation C maison). Horloge : le CPU crédite six coups
   d'horloge GSU par cycle aux mêmes tranches que l'APU et à chaque accès
-  de registre ; la fenêtre de registres ($6000-$7FFF, banques
-  $00-$3F/$80-$BF) répond comme la puce (R0-R15, SFR avec l'acquittement
+  de registre ; la fenêtre de registres ($6000-$7FFF et son miroir
+  $3000-$32FF — la fenêtre où les jeux sondent la puce pour attendre sa
+  fin, banques $00-$3F/$80-$BF) répond comme la puce (R0-R15, SFR avec l'acquittement
   de l'IRQ par $3031, PBR, ROMBR, CBR, SCBR/SCMR/CLSR, le registre de
   version $04) et l'octet haut de R15 met le drapeau go. Pendant que le
   GSU tient le bus (go et RON/RAN), les lectures ROM du CPU voient le
@@ -116,10 +123,12 @@ recompilateur.
   sans chemin spécial dans la PPU. Testé par `fx_test` (IWT, FROM, MULT,
   COLOR, PLOT à travers la fenêtre, le cache de pixels, STOP et son
   IRQ). Le mode précis sort des régions sur toute accès $6000-$7FFF.
-  **La ROM SuperFX de la collection locale (Yoshi's Island) n'amorce pas
-  encore : le chargement du programme S-SMP boucle sur le premier bloc
-  du protocole IPL — c'est le modèle S-SMP/IPL qui est en cause, pas le
-  GSU (la même boucle sans le GSU attaché) ; à creuser avec le
+  **Yoshi's Island (la ROM SuperFX de la collection locale) boote
+  maintenant jusqu'au lancement du GSU : le programme S-SMP est servi et
+  tourne (l'empreinte audio évolue), puis le CPU attend la fin du GSU
+  (bit go sondé par le miroir $3000) pendant que le noyau GSU tourne en
+  rond dans son dispatch de commandes (r3 décompté depuis $FFFF) — la
+  commande n'arrive pas où le noyau la lit ; à trancher avec le
   comparatif de référence**.
 - **Timing du bus** : le DMA général et le HDMA volent leur temps de bus au
   CPU (modèle : 16 cycles de démarrage par canal, 8 par octet ; la tranche
@@ -199,7 +208,7 @@ construit doit imprimer le run_hash et les cycles de son `--interp` —
   titre, menu d'options puis partie jouable avec l'input scripté de
   `logs/dm_play.txt` (Start au titre, Start pour lancer). À 900 images le
   projet `--meta-precise` imprime
-  `run_hash=37b5db72 image_hash=f2a41fc5 audio_hash=873178f5`, identiques à
+  `run_hash=e05f0049 image_hash=f2a41fc5 audio_hash=873178f5`, identiques à
   son `--interp`, cycles compris. Le jeu sert son programme APU par le
   protocole IPL et se sert de l'unité de multiplication/division — les deux
   sont venues avec lui. Avec le profil du balayage (`tools/snes_sweep.py`,
@@ -233,7 +242,7 @@ et la fenêtre tourne tête-bêche sur la CI (SDL2 requis).
 ## Chantiers suivants
 
 Les modes PPU 5/6 et l'EXBG du mode 7, SA-1 (le DSP-1 et le SuperFX sont
-faits), l'amorçage S-SMP des jeux qui ne passent pas le protocole IPL
-(Yoshi's Island), une comparaison contre un émulateur de référence (le
+faits), le dispatch du noyau GSU de Yoshi's Island (la commande
+n'arrive pas où le noyau la lit), une comparaison contre un émulateur de référence (le
 bilan mednafen de la PCE), et — si un jour les budgets de RAM le
 permettent — le streaming des ROMs pour les consoles.

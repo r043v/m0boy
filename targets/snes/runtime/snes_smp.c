@@ -46,7 +46,7 @@ static uint8_t smp_read(uint16_t at) {
         case 2: return machine.smp.dsp_addr;
         case 3: return snes_dsp_read(machine.smp.dsp_addr);
         case 4: case 5: case 6: case 7: return machine.smp.ports_in[at & 3];
-        case 0xD: case 0xE: case 0xF: return machine.smp.timer_out[at & 3];
+        case 0xD: case 0xE: case 0xF: return machine.smp.timer_out[(at & 0xF) - 0xD];
         case 0: return 0; /* TEST */
         default: break;   /* $F8-$FC: plain RAM */
         }
@@ -69,7 +69,7 @@ static void smp_write(uint16_t at, uint8_t v) {
             machine.smp.ports_out[at & 3] = v;
             return;
         case 0xD: case 0xE: case 0xF:
-            machine.smp.timer_out[at & 3] = 0;
+            machine.smp.timer_out[(at & 0xF) - 0xD] = 0;
             return;
         default: break; /* $F0, $F8-$FC: plain RAM */
         }

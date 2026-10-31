@@ -189,3 +189,25 @@ $50 à l'infini, aucun terminate) ; la même boucle sans le GSU attaché,
 donc le modèle S-SMP/IPL est en cause, pas le GSU. À creuser avec le
 chantier 5 (le comparatif de référence tranchera ce que le vrai ROM IPL
 répond). Suite du plan : SA-1, puis le comparatif.
+
+**Séance du 30 octobre (fin) — l'amorçage de Yoshi débloqué**. Le bouclage
+IPL n'était pas le protocole : trois fautes d'accès réelles. (1) En LoROM,
+les banques $40-$7D renvoyaient le bus ouvert au lieu des miroirs ROM de
+$00-$3D — Yoshi lit ses données en banque $42, d'où l'upload de $50 à
+l'infini (chaque lecture revenait open bus). (2) La fenêtre de registres
+du GSU ne couvrait pas son miroir $3000-$32FF : le jeu y sonde le bit go
+du SFR ($00:3030) pour attendre la fin du GSU ; le test I/O ($2000-$5FFF)
+passait avant. (3) Les sorties de timers du S-SMP ($FD-$FF) indexaient
+`timer_out[at & 3]` : $FF lisait/effaçait l'octet IPL suivant dans la
+structure — le programme SPC écrasait l'état du protocole en écrivant
+T2OUT. Empreintes re-enregistrées : Dr. Mario 900 images
+`run_hash=e05f0049` (les `image_hash`/`audio_hash` inchangés), les
+synthétiques et Bucket identiques ; ctest vert, balayage 2/2
+(natif == interp, Yoshi compris).
+
+**Nouvel état de Yoshi** : le programme S-SMP est servi et tourne
+(l'empreinte audio évolue), le CPU attend ensuite la fin du GSU (bit go
+par le miroir $3000) pendant que le noyau GSU boucle dans son dispatch de
+commandes (r3 décompté depuis $FFFF — la commande n'arrive pas où le
+noyau la lit). Reste ouvert, à trancher avec le comparatif de référence.
+Suite du plan : SA-1, puis le comparatif.
