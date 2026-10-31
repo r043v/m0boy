@@ -693,17 +693,20 @@ void huc6280_run(huc6280_t *cpu, uint32_t until) {
                                 }
                                 cpu->cycles += 4;
                                 budget -= 4;
-                                /* the budget may expire on the read: the
-                                 * interpreter's loop-top check would stop
-                                 * here, pc left on the branch — spending
-                                 * the branch anyway adds 4 cycles the
-                                 * reference never spends */
+                                /* the LDA is done whatever the budget says:
+                                 * the register and the flags the reference
+                                 * leaves, then the budget may have expired
+                                 * on the read — the interpreter's loop-top
+                                 * check stops here, pc left on the branch;
+                                 * spending the branch anyway adds 4 cycles
+                                 * the reference never spends */
+                                cpu->a = a;
+                                cpu->p &= (uint8_t)~(PCE_P_T | PCE_P_Z | PCE_P_N);
+                                if (a & 0x80u) cpu->p |= PCE_P_N; else if (a == 0) cpu->p |= PCE_P_Z;
                                 if (budget <= 0) {
                                     cpu->pc = br_at;
                                     break;
                                 }
-                                cpu->p &= (uint8_t)~(PCE_P_T | PCE_P_Z | PCE_P_N);
-                                if (a & 0x80u) cpu->p |= PCE_P_N; else cpu->p |= PCE_P_Z;
                                 if (poll_bne ? a == 0 : a != 0) {
                                     cpu->cycles += 2; /* the branch not taken */
                                     budget -= 2;

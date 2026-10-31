@@ -102,6 +102,12 @@ const std::vector<OpInfo>& table() {
         group(Op::adc, Shape::arith, adc);
         group(Op::sbc, Shape::arith, sbc);
         group(Op::cmp, Shape::cmp, cmp_, true);
+        set(0xE0, Op::cpx, Shape::cmp, Mode::imm, 2, 2, true);
+        set(0xE4, Op::cpx, Shape::cmp, Mode::zp, 4, 2, true);
+        set(0xEC, Op::cpx, Shape::cmp, Mode::abs, 5, 3, true);
+        set(0xC0, Op::cpy, Shape::cmp, Mode::imm, 2, 2, true);
+        set(0xC4, Op::cpy, Shape::cmp, Mode::zp, 4, 2, true);
+        set(0xCC, Op::cpy, Shape::cmp, Mode::abs, 5, 3, true);
         set(0xA2, Op::ldx, Shape::load, Mode::imm, 2, 2, true);
         set(0xA6, Op::ldx, Shape::load, Mode::zp, 4, 2, true);
         set(0xB6, Op::ldx, Shape::load, Mode::zpy, 4, 2, true);

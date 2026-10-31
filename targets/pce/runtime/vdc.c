@@ -141,6 +141,7 @@ static void nib2_init(void) {
 }
 
 typedef uint32_t __attribute__((may_alias)) u32a;
+typedef uint64_t __attribute__((may_alias, aligned(8))) u64a;
 
 static void draw_bg(vdc_t *v) {
     if (!nib2_ready) nib2_init();
@@ -249,7 +250,7 @@ static void draw_sprites(vdc_t *v) {
     /* the sprites compose into a scratch row first (the first of the list
      * wins), 16-pixel blocks at a time: only the blocks a sprite touches
      * are cleared, painted and merged into the background */
-    static uint16_t sprite_line[1056] __attribute__((aligned(4)));
+    static uint16_t sprite_line[1056] __attribute__((aligned(8)));
     const unsigned width = v->row_width;
     uint64_t touched = 0;
 
@@ -275,6 +276,25 @@ static void draw_sprites(vdc_t *v) {
          * per-pixel bounds of the reference stay true) */
         const unsigned p0 = (unsigned)(left - pos), p1 = (unsigned)(right - pos);
         uint16_t *dst = sprite_line + pos;
+#if UINTPTR_MAX > 0xFFFFFFFFu
+        if (!collide && p0 == 0 && p1 == 16) {
+            /* a whole sprite row without the collision test: four pixels
+             * a step through the byte -> two pixels table */
+            const uint64_t or4 = (uint64_t)raw_or * 0x0001000100010001ull;
+            for (unsigned k = 0; k < 4; k++) {
+                const uint32_t w = k < 2 ? lo : hi;
+                const unsigned sh = (k & 1) * 16;
+                const uint64_t pix = (uint64_t)nib2[(w >> sh) & 255] | (uint64_t)nib2[(w >> (sh + 8)) & 255] << 32;
+                const uint64_t t = (pix | pix >> 1 | pix >> 2 | pix >> 3) & 0x0001000100010001ull;
+                const uint64_t m = t * 0xFFFFu;
+                uint64_t cur;
+                memcpy(&cur, dst + k * 4, 8);
+                cur = (cur & ~m) | ((pix | or4) & m);
+                memcpy(dst + k * 4, &cur, 8);
+            }
+            continue;
+        }
+#endif
         for (unsigned px = p0; px < p1; px++) {
             const unsigned raw = ((px < 8 ? lo >> (4 * px) : hi >> (4 * (px - 8)))) & 15;
             const uint16_t cur = dst[px];
@@ -289,6 +309,20 @@ static void draw_sprites(vdc_t *v) {
         touched &= touched - 1;
         unsigned x = blk * 16, end = x + 16;
         if (end > width) end = width;
+#if UINTPTR_MAX > 0xFFFFFFFFu
+        /* a 64-bit host: four pixels a step */
+        for (; x < end; x += 4) {
+            const uint64_t sp = *(const u64a *)(sprite_line + x);
+            u64a *bgp = (u64a *)(v->linebuf + x);
+            const uint64_t bg = *bgp;
+            const uint64_t st = sp & 0x000F000F000F000Full, bt = bg & 0x000F000F000F000Full;
+            const uint64_t snz = (st | st >> 1 | st >> 2 | st >> 3) & 0x0001000100010001ull;
+            const uint64_t bz = ~(bt | bt >> 1 | bt >> 2 | bt >> 3) & 0x0001000100010001ull;
+            const uint64_t take = snz & (bz | ((sp >> 9) & 0x0001000100010001ull));
+            const uint64_t m = take * 0xFFFFu;
+            *bgp = (bg & ~m) | (sp & 0x01FF01FF01FF01FFull & m);
+        }
+#else
         for (; x < end; x += 2) {
             const uint32_t sp = *(const u32a *)(sprite_line + x);
             u32a *bgp = (u32a *)(v->linebuf + x);
@@ -300,6 +334,7 @@ static void draw_sprites(vdc_t *v) {
             const uint32_t m = take * 0xFFFFu;
             *bgp = (bg & ~m) | (sp & 0x01FF01FFu & m);
         }
+#endif
     }
 }
 
