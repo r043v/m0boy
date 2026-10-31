@@ -392,17 +392,13 @@ def main():
             assert len(found) > 5, f"the explorer discovered almost nothing ({len(found)})"
             assert explore_locations in (None, len(found)), "unstable explore coverage"
             explore_locations = len(found)
-        md = work / "meta"
+        # The META is no longer a Mega Drive target (capability matrix).
         run(exe, rom, "--system", "megadrive", "--target", "meta",
-            "--meta-precise", "-o", md)
-        assert (md / "platformio.ini").is_file()
+            "--meta-precise", "-o", work / "meta", success=False)
         bad = bytearray(rom_image())
         bad[0x200:0x202] = b"\x4e\x75"  # RTS is outside the bounded profile.
         broken = work / "unsupported.md"
         broken.write_bytes(bad)
-        assert "Unsupported M68k opcode" in run(exe, broken, "--system", "megadrive",
-                                                  "--target", "meta", "-o", work / "broken",
-                                                  success=False)
         fallback = work / "pc_native"
         run(exe, broken, "--system", "megadrive", "--target", "pc", "-o", fallback)
         assert (fallback / "native-status.txt").read_text() == "native-c\n"

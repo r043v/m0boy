@@ -151,7 +151,7 @@ la table des faits, et un refus dit lequel des deux manque et pourquoi
 | nes | desktop, meta, pokitto, pc (6502 recompilé, interpréteur de repli) | — |
 | pce | desktop, pc (interpréteur HuC6280 ; voir `docs/PCE.fr.md`) | consoles > 32 Kio RAM, VRAM 64 Kio |
 | vectrex | meta, pc, aka (6809 recompilé, interpréteur de repli ; voir `docs/VECTREX.fr.md`) | (pokitto et espboy non câblés) |
-| megadrive | desktop, pc, aka (68000 recompilé, interpréteur de repli ; voir `docs/MEGADRIVE.fr.md`) | (meta : le vieux profil « 4 Kio » seulement) |
+| megadrive | desktop, pc, aka (68000 recompilé, interpréteur de repli ; voir `docs/MEGADRIVE.fr.md`) | (meta retirée de la matrice ; pokitto et espboy non câblés) |
 
 Les cibles pc (fenêtre SDL2, la carte en fichier `sd.img` ; les save states
 sans carte — les emplacements d'un même fichier à plat dans le répertoire

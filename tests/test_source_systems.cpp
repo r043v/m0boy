@@ -63,10 +63,10 @@ int main() {
                 detect_system("game.VEC") == SystemId::vectrex,
                 "Vectrex must be wired for the PC and the META");
         const auto& md = system_descriptor(SystemId::megadrive);
-        require(md.cpu == CpuId::m68k && md.supports(TargetId::desktop) && md.supports(TargetId::meta) &&
-                md.supports(TargetId::pc) && !md.supports(TargetId::pokitto) &&
+        require(md.cpu == CpuId::m68k && md.supports(TargetId::desktop) && !md.supports(TargetId::meta) &&
+                md.supports(TargetId::pc) && md.supports(TargetId::aka) && !md.supports(TargetId::pokitto) &&
                 detect_system("game.MD") == SystemId::megadrive,
-                "Mega Drive bounded M68k profile must be wired for desktop, META and PC");
+                "Mega Drive bounded M68k profile must be wired for desktop, PC and AKA, not the META");
         require(detect_system("game.sms") == SystemId::mastersystem && parse_system("sms") == SystemId::mastersystem,
                 "Master System detection failed");
         require(detect_system("game.nes") == SystemId::nes && detect_system("game.PCE") == SystemId::pce,

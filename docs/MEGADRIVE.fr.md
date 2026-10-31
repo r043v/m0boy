@@ -169,9 +169,9 @@ génération C donne les mêmes états et pixels que l'interpréteur, sans fallb
 sur cette séquence. Ne pas confondre ce résultat avec une compatibilité
 générale : Sonic 1 est jouable dans ce frontend, mais le plan fenêtre, le
 mode ombre/surbrillance et l'entrelacement du VDP manquent, et d'autres
-cartouches n'ont pas été essayées. Le
-profil META conserve encore son ancien sous-ensemble restreint ; la jouabilité
-sur matériel embarqué n'est pas établie.
+cartouches n'ont pas été essayées. La
+META n'est plus une cible du Mega Drive ; la jouabilité sur matériel embarqué
+(AKA) n'est pas établie.
 
 Une ROM synthétique de test vérifie aussi l'en-tête, les vecteurs, l'exécution
 du décodeur, la génération C et le rendu d'une tuile. La ROM libre de

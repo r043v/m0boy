@@ -20,7 +20,7 @@ assert "pico8 cpu=lua inspect=yes disasm=no codegen=desktop,meta,pokitto,espboy,
 assert "nes cpu=6502 inspect=yes disasm=yes codegen=desktop,meta,pokitto,pc" in listing
 assert "pce cpu=huc6280 inspect=yes disasm=yes codegen=desktop" in listing
 assert "vectrex cpu=6809 inspect=yes disasm=no codegen=meta,pc,aka" in listing
-assert "megadrive cpu=m68k inspect=yes disasm=no codegen=desktop,meta,pc" in listing
+assert "megadrive cpu=m68k inspect=yes disasm=no codegen=desktop,pc,aka" in listing
 assert "meta cpu=m0plus inspect=yes disasm=yes codegen=pc,aka" in listing
 assert "pokitto cpu=m0plus inspect=yes disasm=yes codegen=pc" in listing
 targets = run("--list-targets", contains='meta host=no ram=32K')

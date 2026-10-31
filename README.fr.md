@@ -44,29 +44,23 @@ système peut générer pour quelle console vient de la matrice de capacités
 
 ## Ce qui tourne où
 
-| Source | META | Pokitto | ESPboy |
-|---|---|---|---|
-| Game Boy (DMG) | oui | oui | oui |
-| SG-1000 | oui | oui | oui |
-| Game Gear | oui | oui | oui |
-| Master System | oui | oui | oui |
-| MSX1 (mappers ASCII8/16, Konami et Konami SCC ; AY-3-8910 et SCC ; expérimental) | oui | oui | — |
-| PICO-8 | oui | oui | oui |
-| NES (NROM : PRG 16/32 Kio, CHR ROM 8 Kio ; expérimental) | oui | oui | — |
-| PC Engine (HuCards, interpréteur ; expérimental, PC seulement) | — | — | — |
-| Vectrex (cartouches jusqu'à 32 Kio, ROM système intégrée ; expérimental) | oui | — | — |
-| Mega Drive (profil M68k borné ; expérimental) | oui | — | — |
+| Source | Harnais bureau | META | Pokitto | ESPboy | AKA | ODROID-GO | PC (SDL2) |
+|---|---|---|---|---|---|---|---|
+| Game Boy (DMG) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| SG-1000 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Game Gear | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Master System | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| MSX1 (ASCII8/16, Konami, Konami SCC ; AY-3-8910, SCC ; expérimental) | ✅ | ✅ | ✅ | — | — | — | ✅ |
+| PICO-8 | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| NES (NROM, PRG 16/32 Kio, CHR ROM 8 Kio ; expérimental) | ✅ | ✅ | ✅ | — | — | — | ✅ |
+| PC Engine (HuCards, recompilateur HuC6280 + interpréteur ; expérimental) | ✅ | — | — | — | ✅ | — | ✅ |
+| Vectrex (≤ 32 Kio, ROM système ; expérimental) | — | ✅ | — | — | ✅ | — | ✅ |
+| Mega Drive (profil M68k borné ; expérimental) | ✅ | — | — | — | ✅ | — | ✅ |
+| SNES (recompilateur 65816 ; expérimental) | ✅ | — | — | — | — | — | ✅ |
+| Source M0+ : un firmware META (`--system meta`) | — | — | — | — | ✅ | — | ✅ |
+| Source M0+ : un firmware Pokitto (`--system pokitto`) | — | — | — | — | — | — | ✅ |
 
-Matrice de capacités des cibles récentes (d'après `gbrecomp --list-systems` ;
-expérimental là où les lignes ci-dessus le disent) :
-
-| Source | PC | ODROID-GO | AKA |
-|---|---|---|---|
-| Game Boy, SG-1000, Game Gear, Master System | oui | oui | oui |
-| MSX1, NES | oui | — | — |
-| PICO-8, Vectrex, Mega Drive, PC Engine | oui | — | oui (ODROID : non) |
-| SNES (expérimental, harnais et fenêtre PC seulement) | oui | — | — |
-| Source M0+ (un firmware META ou Pokitto, `--system meta`) | oui | — | oui (META seulement) |
+✅ = la matrice de capacités autorise la génération (`gbrecomp --list-systems`) ; — = refusé. Une coche dit que le projet se génère, pas que le jeu est jouable : ce qui a été exécuté, sur quoi et avec quelle étiquette de preuve (vérifié sur l'hôte, gm0, console, estimé) est dans les notes de chaque système et dans `docs/META_STATUS_2026-09-30.md`. Le Mega Drive n'est plus une cible META.
 
 SNES (`--system snes`) : le 65816 est recompilé en C avec une marche de
 contextes, un PPU/HDMA/IRQ par ligne, un interpréteur SPC700 et un DSP BRR ;

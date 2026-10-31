@@ -46,7 +46,7 @@ constexpr std::array pce_targets = {TargetId::desktop, TargetId::pc, TargetId::a
 // Vectrex: the 6809 recompiled in front of the interpreter on the META and
 // the Gamebuino AKA (the ESP32 family's shared core), and the SDL host (pc).
 constexpr std::array vectrex_targets = {TargetId::meta, TargetId::pc, TargetId::aka};
-constexpr std::array megadrive_targets = {TargetId::desktop, TargetId::meta, TargetId::pc, TargetId::aka};
+constexpr std::array megadrive_targets = {TargetId::desktop, TargetId::pc, TargetId::aka};
 constexpr std::array m0plus_targets = {TargetId::pc};
 // the META firmware also runs on the AKA, through the standalone SAMD21 runtime
 constexpr std::array meta_source_targets = {TargetId::pc, TargetId::aka};

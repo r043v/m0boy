@@ -71,13 +71,13 @@ run time): the 6809 recompiled to C in front of the interpreter. On a META,
 Berzerk's demo runs at 36 frames/s of 50 (measured; 19 with the interpreter
 alone), the VIA now being the larger cost. See [Vectrex notes](docs/VECTREX.fr.md).
 
-An experimental Mega Drive M68k recompiler profile generates META, desktop
-harness and SDL2 PC projects. The PC project emits covered 68000 opcodes as C
+An experimental Mega Drive M68k recompiler profile generates desktop
+harness, SDL2 PC and AKA projects (not the META). The PC project emits covered 68000 opcodes as C
 and has an in-tree 68000 fallback, 64 KiB work RAM, VRAM and a Plane A tile
 renderer. Sonic 1 reaches Green Hill and responds to movement and jump input in
 the native C project. The PC frontend now accepts SDL gamepads, has gm0-style
 display filters, and produces experimental Z80/PSG/YM2612 audio (SDL or WAV).
-VDP features, FM accuracy and META compatibility remain incomplete. See
+VDP features and FM accuracy remain incomplete. See
 [Mega Drive notes](docs/MEGADRIVE.fr.md).
 
 Build local Linux and Windows PC binaries from a locally supplied Sonic ROM
@@ -105,29 +105,23 @@ the YM2612 matches ymfm sample for sample in the tests, the PSG and Z80 share
 its clock, and the VDP runs line by line with horizontal interrupts. The sound
 has not been compared with a console (see the Mega Drive notes).
 
-| Source | META | Pokitto | ESPboy |
-|---|---|---|---|
-| Game Boy (DMG) | yes | yes | yes |
-| SG-1000 | yes | yes | yes |
-| Game Gear | yes | yes | yes |
-| Master System | yes | yes | yes |
-| MSX1 (ASCII8/16, Konami and Konami SCC mappers; AY-3-8910 and SCC sound; experimental) | yes | yes | — |
-| PICO-8 | yes | yes | yes |
-| NES (NROM: 16/32 KiB PRG, 8 KiB CHR ROM; experimental) | yes | yes | — |
-| PC Engine (HuCards, interpreter; experimental; PC window + harness, no console) | — | — | — |
-| Vectrex (cartridges up to 32 KiB, system ROM built in; experimental) | yes | — | — |
-| Mega Drive (bounded M68k colour-loop profile; experimental) | yes | — | — |
+| Source | Desktop harness | META | Pokitto | ESPboy | AKA | ODROID-GO | PC (SDL2) |
+|---|---|---|---|---|---|---|---|
+| Game Boy (DMG) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| SG-1000 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Game Gear | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Master System | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| MSX1 (ASCII8/16, Konami, Konami SCC; AY-3-8910, SCC; experimental) | ✅ | ✅ | ✅ | — | — | — | ✅ |
+| PICO-8 | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| NES (NROM, 16/32 KiB PRG, 8 KiB CHR ROM; experimental) | ✅ | ✅ | ✅ | — | — | — | ✅ |
+| PC Engine (HuCards, HuC6280 recompiler + interpreter; experimental) | ✅ | — | — | — | ✅ | — | ✅ |
+| Vectrex (≤ 32 KiB, system ROM; experimental) | — | ✅ | — | — | ✅ | — | ✅ |
+| Mega Drive (bounded M68k profile; experimental) | ✅ | — | — | — | ✅ | — | ✅ |
+| SNES (65816 recompiler; experimental) | ✅ | — | — | — | — | — | ✅ |
+| M0+ source: a META firmware (`--system meta`) | — | — | — | — | ✅ | — | ✅ |
+| M0+ source: a Pokitto firmware (`--system pokitto`) | — | — | — | — | — | — | ✅ |
 
-Capability matrix for the newer targets (from `gbrecomp --list-systems`;
-experimental where the rows above say so):
-
-| Source | PC | ODROID-GO | AKA |
-|---|---|---|---|
-| Game Boy, SG-1000, Game Gear, Master System | yes | yes | yes |
-| MSX1, NES | yes | — | — |
-| PICO-8, Vectrex, Mega Drive, PC Engine | yes | — | yes (ODROID: no) |
-| SNES (experimental, desktop harness and PC window only) | yes | — | — |
-| M0+ source (a META or Pokitto firmware, `--system meta`) | yes | — | yes (META only) |
+✅ = the capability matrix allows generation (`gbrecomp --list-systems`); — = refused. A check is a statement about generation, not about playability: what has been run, on what, and with which evidence label (checked on the host, gm0, device, estimate) is in each system's notes and in `docs/META_STATUS_2026-09-30.md`. The Mega Drive is no longer a META target.
 
 SNES (`--system snes`): the 65816 is recompiled to C with a context walk, with
 a per-line PPU/HDMA/IRQ, an SPC700 interpreter and BRR DSP, DSP-1, SuperFX and
