@@ -35,7 +35,7 @@ static const unsigned sprite_width_tab[2] = { 16, 32 };
 typedef struct {
     uint16_t x, palette;
     uint32_t flags; /* includes the internal sprite-0 marker above bit 15 */
-    uint16_t pattern[4];
+    uint32_t packed[2]; /* the row's 16 nibbles, leftmost pixel first */
 } sprite_t;
 
 static sprite_t sprite_list[16];
@@ -76,8 +76,40 @@ static uint32_t cell_nibbles(uint16_t w0, uint16_t w1) {
 static uint16_t cell_cache_addr[16];
 static uint32_t cell_cache_bits[16];
 
-static void cell_cache_drop(unsigned address) {
+/* the sprite pattern-row cache, the same idea for the 4-plane rows the
+ * fetch reads (16 pixels, 64 bits of packed nibbles): the same row comes
+ * back every frame while a sprite holds still, and the per-pixel spread
+ * expansion ran 256 times a line.  512 entries, direct mapped on
+ * (address >> 2); a row's address tops at $FFCF. */
+#define SPRITE_CACHE 512
+static uint16_t sprite_cache_addr[SPRITE_CACHE];
+static uint32_t sprite_cache_bits[SPRITE_CACHE][2];
+
+static void vram_cache_drop(unsigned address) {
     cell_cache_addr[(address >> 3) & 15] = 0xFFFFu;
+    sprite_cache_addr[(address >> 2) & (SPRITE_CACHE - 1)] = 0xFFFFu;
+}
+
+/* one sprite row's 16 nibbles, leftmost pixel first (the draw's own
+ * non-flipped order: pixel px is word bit 15-px of the four planes) */
+static void sprite_pack_row(const uint16_t w[4], uint32_t out[2]) {
+    uint32_t lo = 0, hi = 0;
+    for (unsigned px = 0; px < 16; px++) {
+        const unsigned sh = 15 - px;
+        const unsigned n = ((w[0] >> sh) & 1) | (((w[1] >> sh) & 1) << 1) |
+            (((w[2] >> sh) & 1) << 2) | (((w[3] >> sh) & 1) << 3);
+        if (px < 8) lo |= n << (4 * px); else hi |= n << (4 * (px - 8));
+    }
+    out[0] = lo;
+    out[1] = hi;
+}
+
+/* the hflip: all 16 nibbles reversed */
+static uint64_t sprite_nibrev(uint64_t x) {
+    x = (x & 0x0000FFFF0000FFFFull) << 16 | (x & 0xFFFF0000FFFF0000ull) >> 16;
+    x = (x & 0x00FF00FF00FF00FFull) << 8 | (x & 0xFF00FF00FF00FF00ull) >> 8;
+    x = (x & 0x0F0F0F0F0F0F0F0Full) << 4 | (x & 0xF0F0F0F0F0F0F0F0ull) >> 4;
+    return x;
 }
 
 static void draw_bg(vdc_t *v) {
@@ -155,10 +187,21 @@ static void fetch_sprites(vdc_t *v) {
             sprite_list[active_sprites].palette = palette;
             sprite_list[active_sprites].flags = flags | (i ? 0 : SPRF_SPRITE0);
             const unsigned pattern = no_half * 64 + (y_offset & 15);
-            sprite_list[active_sprites].pattern[0] = vram_read(v, pattern);
-            sprite_list[active_sprites].pattern[1] = vram_read(v, pattern + 16);
-            sprite_list[active_sprites].pattern[2] = vram_read(v, pattern + 32);
-            sprite_list[active_sprites].pattern[3] = vram_read(v, pattern + 48);
+            const unsigned slot = (pattern >> 2) & (SPRITE_CACHE - 1);
+            uint32_t pk[2];
+            if (sprite_cache_addr[slot] == pattern) {
+                pk[0] = sprite_cache_bits[slot][0];
+                pk[1] = sprite_cache_bits[slot][1];
+            } else {
+                const uint16_t w[4] = { vram_read(v, pattern), vram_read(v, pattern + 16),
+                    vram_read(v, pattern + 32), vram_read(v, pattern + 48) };
+                sprite_pack_row(w, pk);
+                sprite_cache_addr[slot] = (uint16_t)pattern;
+                sprite_cache_bits[slot][0] = pk[0];
+                sprite_cache_bits[slot][1] = pk[1];
+            }
+            sprite_list[active_sprites].packed[0] = pk[0];
+            sprite_list[active_sprites].packed[1] = pk[1];
             active_sprites++;
 
             x += 16; /* the second half sits 16 pixels to the right */
@@ -195,26 +238,17 @@ static void draw_sprites(vdc_t *v) {
         const int left = pos > 0 ? pos : 0;
         const int right = pos + 16 < (int)width ? pos + 16 : (int)width;
         const unsigned hflip = flags & SPRF_HFLIP;
-        for (unsigned px = 0; px < 16; px += 4) {
-            if (pos + (int)px >= right) break; /* the groups only grow */
-            const unsigned shift = hflip ? px : 12 - px;
-            unsigned packed = spread4[(sprite_list[i].pattern[0] >> shift) & 15] |
-                (spread4[(sprite_list[i].pattern[1] >> shift) & 15] << 1) |
-                (spread4[(sprite_list[i].pattern[2] >> shift) & 15] << 2) |
-                (spread4[(sprite_list[i].pattern[3] >> shift) & 15] << 3);
-            if (hflip)
-                packed = ((packed & 0x000F) << 12) | ((packed & 0x00F0) << 4) |
-                    ((packed & 0x0F00) >> 4) | ((packed & 0xF000) >> 12);
-            if (!packed) continue;
-            for (unsigned j = 0; j < 4; j++, packed >>= 4) {
-                const unsigned raw = packed & 15;
-                if (!raw) continue;
-                const int tx = pos + (int)px + (int)j;
-                if (tx < left) continue;
-                if (tx >= right) break;
-                if (collide && (sprite_line[tx] & 0xF)) v->status |= VDCS_CR;
-                sprite_line[tx] = (uint16_t)(raw | raw_or);
-            }
+        const uint64_t row = (uint64_t)sprite_list[i].packed[0] |
+            (uint64_t)sprite_list[i].packed[1] << 32;
+        const uint64_t nibbles = hflip ? sprite_nibrev(row) : row;
+        for (unsigned px = 0; px < 16; px++) {
+            const int tx = pos + (int)px;
+            if (tx >= right) break; /* the pixels only grow */
+            const unsigned raw = (unsigned)(nibbles >> (4 * px)) & 15;
+            if (!raw) continue;
+            if (tx < left) continue;
+            if (collide && (sprite_line[tx] & 0xF)) v->status |= VDCS_CR;
+            sprite_line[tx] = (uint16_t)(raw | raw_or);
         }
     }
     /* a sprite pixel wins over a transparent BG pixel, or with the
@@ -233,7 +267,7 @@ static void run_vram_dma(vdc_t *v) {
     do {
         if (dst < VDC_VRAM_WORDS) {
             v->vram[dst] = vram_read(v, src);
-            cell_cache_drop(dst);
+            vram_cache_drop(dst);
         }
         src = (uint16_t)(src + sdir);
         dst = (uint16_t)(dst + ddir);
@@ -256,6 +290,8 @@ static void run_sat_dma(vdc_t *v) {
 void vdc_reset(vdc_t *v) {
     memset(v->vram, 0, sizeof v->vram);
     memset(v->sat, 0, sizeof v->sat);
+    memset(cell_cache_addr, 0xFF, sizeof cell_cache_addr);
+    memset(sprite_cache_addr, 0xFF, sizeof sprite_cache_addr);
     v->select = 0;
     v->mawr = v->marr = 0;
     v->cr = v->rcr = v->bxr = v->byr = v->mwr = 0;
@@ -322,7 +358,7 @@ void vdc_write(vdc_t *v, unsigned at, uint8_t value) {
         else {
             if (v->mawr < VDC_VRAM_WORDS) {
                 v->vram[v->mawr] = (uint16_t)(v->write_latch | value << 8);
-                cell_cache_drop(v->mawr);
+                vram_cache_drop(v->mawr);
             }
             v->mawr = (uint16_t)(v->mawr + vram_inc_tab[(v->cr >> 11) & 3]);
         }

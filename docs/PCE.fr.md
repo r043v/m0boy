@@ -377,21 +377,25 @@ la largeur 256 -> 160 au filtre 5-in-8 (`m0_box58_fast` ; une autre
 largeur : pixel le plus proche) et mélange les deux lignes sources d'une
 même rangée (`m0_avg2_panel`) ; le menu d'options, le repli au launcher
 (redémarrage) et la vitesse du pad suivent le contrat commun (`sg_menu.h`,
-`sg_frontend.h`, `esp32_hw`).  Avec `PCE_RENDER_THREAD` (posé par le
-générateur dans `pce_config.h`, motif du `MD_RENDER_THREAD` du Mega Drive),
-l'émulation ne fait plus la chaîne pixels : son rappel de ligne pousse les
-lignes brutes du VDC (indices de palette 9 bits, deux contextes de huit
-lignes sous sémaphores) et la tâche `pce_rend` du cœur 0 applique la VCE,
-le filtre 5-in-8, le mélange des paires et les soumissions LCD du chemin
-wide asynchrone (quatre lots de huit rangées en vol).  Le harnais et la
+`sg_frontend.h`, `esp32_hw`).  La HuCard voyage dans la partition flash
+`rom` (0x380000, 3 Mio — rejet au-delà) : le générateur écrit `rom.bin`
+et `PCE_ROM_PARTITION`, le frontend la mappe au démarrage
+(`esp_partition_mmap`) et les fenêtres MPR pointent dans le cache flash ;
+l'app slot (3 000 Kio) garde le code seul, ce qui achète `-O2` pour les
+régions recompilées (`PCE_GEN_O2`, le pragma émis) — Raiden : 19 560
+instructions compilées, 2 846 217 octets de flash et 146 224 octets de
+RAM (rapports de compilation, aucune exécution sur console physique).
+Avec `PCE_RENDER_THREAD` (posé par le générateur dans `pce_config.h`,
+motif du `MD_RENDER_THREAD` du Mega Drive), l'émulation ne fait plus la
+chaîne pixels : son rappel de ligne pousse les lignes brutes du VDC
+(indices de palette 9 bits, deux contextes de huit lignes sous
+sémaphores) et la tâche `pce_rend` du cœur 0 applique la VCE, le filtre
+5-in-8, le mélange des paires et les soumissions LCD du chemin wide
+asynchrone (quatre lots de huit rangées en vol).  Le harnais et la
 fenêtre PC restent sur le `rowbuf` RGB565 (`machine.row_raw` à 0) ; le
 chemin mono-cœur synchrone se reconstruit avec `-DAKA_EMU_SYNC=1` pour
-aka_headless, qui ne termine jamais les DMA.  La HuCard voyage entière
-dans la partition application (0x370000, rejet au-delà de 2,5 Mio — la
-fenêtrage en flash des plus grandes suit) ; `pio run` construit le
-firmware (Raiden : succès de la chaîne ESP-IDF/Arduino, aucune exécution
-sur console physique).  Le pad : A/B = I/II, RUN ou D = Start, MENU ou
-C = options, joystick complet.
+aka_headless, qui ne termine jamais les DMA.  Le pad : A/B = I/II, RUN
+ou D = Start, MENU ou C = options, joystick complet.
 
 ## Chantiers suivants
 
@@ -409,8 +413,13 @@ bougent pas, `pce_end_to_end` le vérifie) :
 - **Cache de lignes de motif** (`vdc.c`) : la même rangée de tuile se
   rend sur beaucoup de lignes ; les 8 nibbles d'une rangée de motif sont
   gardés dans un cache direct de 16 entrées indexé par l'adresse (le même
-  choix que le `bg_tile_cache` de mednafen). Une écriture VRAM (port ou
-  DMA) retire l'entrée correspondante.
+  choix que le `bg_tile_cache` de mednafen).  **Les rangées de sprites
+  partagent l'idée** : les 4 mots de plans du fetch sont empaquetés une
+  fois en 16 nibbles (64 bits, pixel gauche d'abord) dans un cache direct
+  de 512 entrées (5 Kio), le `draw_sprites` n'applique plus que le flip
+  horizontal (renversement de nibbles) et la fusion priorité/collision —
+  les 256 décodages `spread4` par ligne disparaissent.  Une écriture VRAM
+  (port ou DMA) retire l'entrée correspondante des deux caches.
 - **PSG** : un canal à volume 0 sort de la somme après son avance de
   phase (le produit par zéro tombait de toute façon).
 - La tâche de rendu du cœur 0 passe en `-O2` (le projet construit `-Os`
@@ -428,8 +437,13 @@ aboutit à ~60 opérations vectorielles par 8 pixels contre ~60 scalaires
 au code C actuel — aucun gain. Les tables (VCE, `spread4`, BAT) sont des
 gathers, absents de l'ISA. Le goulot mesuré (phase A) est de toute façon
 l'exécution guest du cœur 1, pas la chaîne pixels du cœur 0 : les
-leviers restent la partition ROM + `-O2` (phase D) et des régions plus
-longues (E2).
+leviers restent des régions plus longues (E2) — la partition ROM (phase
+D, faite) et le cache de sprites ont déjà réduit le reste.
+
+**La phase D (30 octobre 2026)** : la HuCard quitte l'app slot pour la
+partition `rom` (voir la cible AKA ci-dessus) et les régions passent en
+`-O2` — Raiden gagne 5 350 instructions compilées (14 210 → 19 560) en
+descendant de 98,4 % à 92,7 % de la flash de l'app slot.
 
 **Le triage fidélité/vitesse, façon émulateurs classiques** : le port a
 déjà les coupes standard — chronométrage mémoire par instruction (pas
@@ -472,10 +486,10 @@ conversions de 256 indices VCE, 6 ms pour un million de copies de ces
 lignes et 20 ms pour 100 000 DMA de 256 mots (ports compris). Ces boucles
 isolées indiquent le coût relatif des postes sur ce CPU, pas celui d'une
 trame Raiden ni d'un ESP32-S3.
-Le projet Raiden précis pour AKA construit avec PlatformIO : 141 096
+Le projet Raiden précis pour AKA construit avec PlatformIO : 146 224
 octets de RAM utilisés sur 327 680 (le ring DMA de quatre lots, les deux
-contextes de lignes du cœur 0, la LUT VCE finale et le cache de motifs
-ajoutent ~38 Kio) et 3 022 429 octets de flash sur 3 072 000 (rapport de
+contextes de lignes du cœur 0, la LUT VCE finale et les caches de motifs
+ajoutent ~43 Kio) et 2 846 217 octets de flash sur 3 072 000 (rapport de
 compilation, aucune mesure sur console).
 Dans gm0 AKA (`4b4e145`), ce firmware Raiden s'arrête dès l'initialisation
 sur `AKA memset 00000000 + 1070170304 pc=400011e8` ; le compteur

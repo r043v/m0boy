@@ -54,7 +54,10 @@ flux 44100 Hz. La pause coupe le flux sans créer une seconde tâche audio.
 Le stockage utilise les secteurs SDMMC directement sous le FAT commun ;
 le protocole SD SPI ne compile pas pour l'AKA. La RAM de cartouche GB reste
 en RAM, avec persistance .SAV sur la carte. La partition application conserve
-0x370000 octets et l'ensemble de la table tient dans 8 Mio.
+0x370000 octets et l'ensemble de la table tient dans 8 Mio. Le PC Engine
+détache sa HuCard dans la partition `rom` (0x380000, 3 Mio) que le runtime
+mappe au démarrage (`esp_partition_mmap`) : l'app slot garde le code seul et
+les régions recompilées passent en -O2 (docs/PCE.fr.md).
 
 ## Validation
 

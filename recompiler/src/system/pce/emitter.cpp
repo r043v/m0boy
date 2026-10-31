@@ -1138,7 +1138,9 @@ std::string Emitter::run(const std::vector<CoverageEntry>& coverage, EmitStats& 
         << "#pragma GCC diagnostic ignored \"-Wunused-label\"\n"
         << "#pragma GCC diagnostic ignored \"-Wunused-variable\"\n"
         << "#pragma GCC diagnostic ignored \"-Wunused-but-set-variable\"\n"
-        << "#if defined(__arm__) && !defined(PCE_GEN_O2)\n"
+        << "#ifdef PCE_GEN_O2\n"
+        << "#pragma GCC optimize(\"O2\") /* the HuCard left the app slot: the code fits */\n"
+        << "#elif defined(__arm__)\n"
         << "#pragma GCC optimize(\"Os\") /* a fifth smaller than -O2 on Thumb-1 */\n"
         << "#endif\n\n";
     o << pre.str();

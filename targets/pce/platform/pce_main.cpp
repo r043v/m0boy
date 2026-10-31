@@ -25,9 +25,31 @@
 #endif
 #include "m0_scale.h" /* the box filter (256 -> 160) and the vertical plan */
 #include "m0_rows.h"
+#ifdef PCE_ROM_PARTITION
+#include <esp_partition.h>
+/* the HuCard rides in the flash's rom partition (aka.csv.in: 0x380000,
+ * 3 MiB): mapped once into the flash cache — the MPR windows are plain
+ * pointers into it, huc6280_map sees no difference with the array */
+static const uint8_t *rom_map(void) {
+    static const uint8_t *mapped;
+    if (!mapped) {
+        const esp_partition_t *part = esp_partition_find_first(
+            (esp_partition_type_t)0x01, ESP_PARTITION_SUBTYPE_ANY, "rom");
+        spi_flash_mmap_handle_t handle;
+        const void *mem = 0;
+        ESP_ERROR_CHECK(esp_partition_mmap(part, 0, PCE_ROM_SIZE,
+            SPI_FLASH_MMAP_DATA, &mem, &handle));
+        mapped = (const uint8_t *)mem;
+    }
+    return mapped;
+}
+#define PCE_ROM rom_map()
+#else
 extern "C" {
 extern const uint8_t pce_rom[];
 }
+#define PCE_ROM pce_rom
+#endif
 static const char version[] __attribute__((used)) = "m0boy-pce-" M0_TARGET_NAME " " GBL_GEN_VERSION;
 
 static uint16_t line_buffer[2][160] __attribute__((aligned(4)));
@@ -225,7 +247,7 @@ static void send_row(const uint16_t *src, unsigned r) {
 
 static void row(void *, unsigned line, const uint16_t *pixels, unsigned width);
 static void pce_start(void) {
-    pce_init(pce_rom, PCE_ROM_SIZE);
+    pce_init(PCE_ROM, PCE_ROM_SIZE);
     machine.row = row; /* pce_init clears it: every rendered line comes here */
     machine.row_raw = PCE_TWO_CORE; /* the raw lines go to the render core */
 }

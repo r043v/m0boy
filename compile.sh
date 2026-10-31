@@ -576,6 +576,12 @@ aka_package() { # project, game directory, title
     cp "$built/$file" "$game/$file" || return 1
   done
   cp "$boot_app" "$game/boot_app0.bin" || return 1
+  # the HuCard rides in the flash's rom partition (0x380000), outside the app slot
+  local romline=""
+  if [ -f "$project/rom.bin" ]; then
+    cp "$project/rom.bin" "$game/rom.bin" || return 1
+    romline=" 0x380000 rom.bin"
+  fi
   cp "$project/README.md" "$game/README.md" || return 1
   python3 - "$game/meta.json" "$title" "$CUR_VERSION" <<'PY'
 import datetime, json, sys
@@ -584,7 +590,7 @@ Path(sys.argv[1]).write_text(json.dumps(dict(title=sys.argv[2], author='m0boy',
     description='Converted with m0boy', version=sys.argv[3], date=str(datetime.date.today())),
     ensure_ascii=False, indent=2)+'\n')
 PY
-  printf 'esptool.py --chip esp32s3 --port PORT write_flash --flash_mode dio --flash_freq 80m --flash_size 8MB 0x0000 bootloader.bin 0x8000 partitions.bin 0xe000 boot_app0.bin 0x10000 firmware.bin\n' > "$game/FLASH.txt"
+  printf 'esptool.py --chip esp32s3 --port PORT write_flash --flash_mode dio --flash_freq 80m --flash_size 8MB 0x0000 bootloader.bin 0x8000 partitions.bin 0xe000 boot_app0.bin 0x10000 firmware.bin%s\n' "${romline}" > "$game/FLASH.txt"
 }
 
 # ESPboy : la pile de continuation (CONT_STACKSIZE, 12 Kio par défaut) cède
