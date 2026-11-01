@@ -5,8 +5,18 @@
 
 typedef struct { unsigned kind, reg; uint32_t addr, imm; } Ea;
 
-static uint16_t fetch16(MdFull *m) { const uint16_t v = md_rd16(m, m->pc); m->pc += 2u; return v; }
-static uint32_t fetch32(MdFull *m) { const uint32_t v = md_rd32(m, m->pc); m->pc += 4u; return v; }
+#ifdef MD_TRACE
+MdTrace md_trace;
+#define MD_QUIET(x) (++md_trace.quiet, (x))
+#define MD_UNQUIET() (--md_trace.quiet)
+#define MD_FETCHED(n) (md_trace.fetched += (n))
+#else
+#define MD_QUIET(x) (x)
+#define MD_UNQUIET() ((void)0)
+#define MD_FETCHED(n) ((void)0)
+#endif
+static uint16_t fetch16(MdFull *m) { const uint16_t v = MD_QUIET(md_rd16(m, m->pc)); MD_UNQUIET(); MD_FETCHED(2u); m->pc += 2u; return v; }
+static uint32_t fetch32(MdFull *m) { const uint32_t v = MD_QUIET(md_rd32(m, m->pc)); MD_UNQUIET(); MD_FETCHED(4u); m->pc += 4u; return v; }
 static uint32_t index_disp(MdFull *m, uint32_t base) {
     const uint16_t ext = fetch16(m);
     const unsigned reg = (ext >> 12) & 7u;
@@ -423,17 +433,26 @@ void md_full_step_interp(MdFull *m) {
             m->coverage_locations++; /* the explorer's novelty */
         }
     }
-    const uint16_t op = md_rd16(m, pc);   /* timed by md_full_execute */
+    const uint16_t op = MD_QUIET(md_rd16(m, pc));   /* timed by md_full_execute */
+    MD_UNQUIET();
     m->pc = pc + 2u;
     if (m->fault) return;
+#ifdef MD_TRACE
+    md_trace.fetched = 0;
+    if (md_trace.step) md_trace.step(md_trace.user, m, pc, op);
+#endif
     md_full_execute(m, op);
+#ifdef MD_TRACE
+    if (md_trace.end) md_trace.end(md_trace.user, m, pc, m->pc);
+#endif
     /* An idle loop's test just ran: spend the rest of the spin at once, as
      * the recompiled loop does (md_m68k_idle_loop). */
     if (pc < md_rom_size && ((op & 0xff00u) == 0x4a00u || (op & 0xff00u) == 0x0800u || (op & 0xff00u) == 0x0c00u) &&
         m->frame_cycles < m->slice_limit) {
         const unsigned len = md_m68k_idle_loop(md_rom, md_rom_size, pc);
         if (len) {
-            const uint16_t bop = md_rd16(m, pc + len);
+            const uint16_t bop = MD_QUIET(md_rd16(m, pc + len));
+            MD_UNQUIET();
             if (md_cc(m, (bop >> 8) & 15u)) md_full_idle(m, md_m68k_cycles(op), 10u, pc, pc + len);
         }
     }

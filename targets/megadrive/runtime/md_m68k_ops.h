@@ -7,6 +7,14 @@
 #define M0BOY_MD_M68K_OPS_H
 #include "md_full.h"
 #include "md_m68k_time.h"
+#ifdef MD_TRACE
+#include "md_trace.h"
+#define MD_T_RD(m, a, sz) do { if (md_trace.rd && !md_trace.quiet) md_trace.rd(md_trace.user, (m), (a), (sz)); } while (0)
+#define MD_T_WR(m, a, sz, v) do { if (md_trace.wr) md_trace.wr(md_trace.user, (m), (a), (sz), (v)); } while (0)
+#else
+#define MD_T_RD(m, a, sz) ((void)0)
+#define MD_T_WR(m, a, sz, v) ((void)0)
+#endif
 
 enum { MD_X = 16, MD_N = 8, MD_Z = 4, MD_V = 2, MD_C = 1, MD_S = 0x2000 };
 
@@ -20,6 +28,7 @@ static inline uint32_t md_sext(uint32_t v, unsigned size) {
 /* ---- Bus: work RAM and ROM directly, the rest through md_full_bus.c -- */
 static inline uint8_t md_rd8(MdFull *m, uint32_t a) {
     a &= 0xffffffu;
+    MD_T_RD(m, a, 1u);
     if (m->sram_enable && a >= 0x200000u && a < 0x210000u) return m->sram[a & 0xffffu];
     if (a >= 0xff0000u) return m->ram[a & 0xffffu];
     if (a < md_rom_size) return md_rom[a];
@@ -27,6 +36,7 @@ static inline uint8_t md_rd8(MdFull *m, uint32_t a) {
 }
 static inline uint16_t md_rd16(MdFull *m, uint32_t a) {
     a &= 0xffffffu;
+    MD_T_RD(m, a, 2u);
     if (!(a & 1u)) {
         if (m->sram_enable && a >= 0x200000u && a < 0x20ffffu)
             return (uint16_t)(m->sram[a & 0xffffu] << 8 | m->sram[(a + 1u) & 0xffffu]);
@@ -41,11 +51,13 @@ static inline uint32_t md_rd32(MdFull *m, uint32_t a) {
 }
 static inline void md_wr8(MdFull *m, uint32_t a, uint8_t v) {
     a &= 0xffffffu;
+    MD_T_WR(m, a, 1u, v);
     if (a >= 0xff0000u) m->ram[a & 0xffffu] = v;
     else md_full_write8(m, a, v);
 }
 static inline void md_wr16(MdFull *m, uint32_t a, uint16_t v) {
     a &= 0xffffffu;
+    MD_T_WR(m, a, 2u, v);
     if (a >= 0xff0000u && !(a & 1u)) { m->ram[a & 0xffffu] = (uint8_t)(v >> 8); m->ram[(a + 1u) & 0xffffu] = (uint8_t)v; }
     else md_full_write16(m, a, v);
 }
