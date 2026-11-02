@@ -231,7 +231,7 @@ static uint32_t run_hash(void) {
 
 static int sms __attribute__((unused));
 int main(int argc, char **argv) {
-    const char *rom_path = 0, *shot = 0, *cov_path = 0, *wav_path = 0;
+    const char *rom_path = 0, *shot = 0, *cov_path = 0, *wav_path = 0, *ram_out_path = 0;
     int interp = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--interp")) interp = 1;
@@ -239,6 +239,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--shot") && i + 1 < argc) shot = argv[++i];
         else if (!strcmp(argv[i], "--wav") && i + 1 < argc) wav_path = argv[++i];
         else if (!strcmp(argv[i], "--coverage") && i + 1 < argc) cov_path = argv[++i];
+        else if (!strcmp(argv[i], "--ram-rom-out") && i + 1 < argc) ram_out_path = argv[++i];
 #ifdef GG_ROM_TRACE
         else if (!strcmp(argv[i], "--rom-trace-out") && i + 1 < argc) rom_trace_path = argv[++i];
         else if (!strcmp(argv[i], "--rom-trace-skip") && i + 1 < argc) rom_trace_skip_path = argv[++i];
@@ -280,7 +281,7 @@ int main(int argc, char **argv) {
     if (!interp) machine.lookup = sg_gen_lookup;
 #else
     (void)interp;
-    if (!rom_path) { fprintf(stderr, "Usage: gg_host cartridge.gg|.sms [--frames N] [--shot file.ppm] [--coverage file]\n"); return 1; }
+    if (!rom_path) { fprintf(stderr, "Usage: gg_host cartridge.gg|.sms [--frames N] [--shot file.ppm] [--coverage file] [--ram-rom-out file]\n"); return 1; }
     const char *dot = strrchr(rom_path, '.');
     sms = dot && (!strcmp(dot, ".sms") || !strcmp(dot, ".SMS"));
     FILE *file = fopen(rom_path, "rb");
@@ -391,6 +392,12 @@ int main(int argc, char **argv) {
                 if (fwrite(p, 1, 3, f) != 3) { fclose(f); free(loaded); return 1; }
             }
         if (fclose(f)) { free(loaded); return 1; }
+    }
+    if (ram_out_path) { /* the session's C000-DFFF image: m0recomp --ram-image compiles it */
+        FILE *rf = fopen(ram_out_path, "wb");
+        if (!rf || fwrite(machine.ram, 1, sizeof machine.ram, rf) != sizeof machine.ram || fclose(rf)) {
+            perror(ram_out_path); free(loaded); return 1;
+        }
     }
     printf("frames=%u cycles=%u pc=%04x page=%u,%u,%u compiled=%u interpreted=%u run_hash=%08x\n",
            machine.frames, machine.cyc, machine.cpu.pc, machine.page[0], machine.page[1], machine.page[2],

@@ -13,6 +13,8 @@ struct GenerateOptions {
     std::string sd_name; ///< 8.3 base of NAME.BIN, NAME.GG/.SMS, NAME.SAV; empty: derived from name
     TargetId target;
     std::vector<std::filesystem::path> coverage;
+    std::filesystem::path coverage_map; ///< deepeel's physical-bank memory map: every code range seeds the walk
+    std::filesystem::path ram_image;   ///< 8 KiB snapshot of C000-DFFF from a played session (compiled in place)
     bool precise = false;          ///< sync before every instruction (differential tests)
     unsigned sync_cycles = 0;      ///< EmitOptions::sync_cycles (40: bounded interrupt latency)
     bool gamegear = false;         ///< Game Gear cartridge (Sega mapper, VDP mode 4)

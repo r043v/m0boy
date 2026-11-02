@@ -185,6 +185,9 @@ void print_usage(const char* program) {
     std::cout << "  --target odroid       ODROID-GO (ESP32, ILI9341 320x240, SD, 4 MiB PSRAM)\n";
     std::cout << "  --target aka          Gamebuino AKA (ESP32-S3, 320x240, SD, 8 MiB PSRAM)\n";
     std::cout << "  --coverage <file>     gbl coverage profile for --target meta (repeatable)\n";
+    std::cout << "  --coverage-map <file> deepeel's memory map (.map): every code range seeds the\n"
+                 "                        SG-1000/GG/SMS/MSX walk (computed dispatch into a\n"
+                 "                        switched bank is compiled, not interpreted)\n";
     std::cout << "  --meta-compiler <gcc|clang>  Firmware compiler (default gcc)\n";
     std::cout << "  --meta-thumb          Experimental register-IR / Thumb-1 code generation\n";
     std::cout << "  --meta-precise        Poll interrupts before every instruction (differential tests)\n";
@@ -2088,6 +2091,8 @@ int main(int argc, char* argv[]) {
     bool meta_bpi_set = false;
     size_t meta_fill = 0;
     fs::path rom_plan;
+    fs::path coverage_map; /* --coverage-map FILE: deepeel's physical-bank map (SG-1000 family) */
+    fs::path ram_image;    /* --ram-image FILE: a session's C000-DFFF snapshot, compiled in place */
     fs::path meta_dir;
     std::string msx_mapper_name;
     bool msx_pack = false;
@@ -2240,6 +2245,14 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--coverage") {
             if (i + 1 < argc) {
                 coverage_paths.emplace_back(argv[++i]);
+            }
+        } else if (arg == "--coverage-map") {
+            if (i + 1 < argc) {
+                coverage_map = argv[++i];
+            }
+        } else if (arg == "--ram-image") {
+            if (i + 1 < argc) {
+                ram_image = argv[++i];
             }
         } else if (arg == "--meta-compiler") {
             if (i + 1 >= argc) {
@@ -2653,6 +2666,8 @@ int main(int argc, char* argv[]) {
         options.output = output_dir.empty() ? fs::path(options.name + (msx ? "_msx_" : mastersystem ? "_sms_" : gamegear ? "_gg_" : "_sg1000_") + target) : fs::path(output_dir);
         options.meta_templates = resolve_meta_dir(argv[0], meta_dir);
         options.coverage = coverage_paths;
+        options.coverage_map = coverage_map;
+        options.ram_image = ram_image;
         options.code_budget_bytes = g_meta_code_budget;
         if (meta_bpi_set) options.bytes_per_instruction = meta_bpi;
         options.fill_bytes = meta_fill;
@@ -2868,8 +2883,8 @@ int main(int argc, char* argv[]) {
                                coverage_paths, meta_precise, meta_static, meta_bpi, emit_comments,
                                *m0boy::parse_target(target), meta_thumb, meta_compiler, meta_sweep);
     }
-    if (!coverage_paths.empty() || meta_compiler != "gcc" || meta_thumb || meta_precise || meta_static || meta_sweep || !meta_dir.empty()) {
-        std::cerr << "Error: --coverage, --meta-compiler, --meta-thumb, --meta-precise, --meta-static, --meta-sweep and --meta-dir require a console target (meta, pokitto, espboy, pc, odroid, aka)\n";
+    if (!coverage_paths.empty() || !coverage_map.empty() || !ram_image.empty() || meta_compiler != "gcc" || meta_thumb || meta_precise || meta_static || meta_sweep || !meta_dir.empty()) {
+        std::cerr << "Error: --coverage, --coverage-map, --ram-image, --meta-compiler, --meta-thumb, --meta-precise, --meta-static, --meta-sweep and --meta-dir require a console target (meta, pokitto, espboy, pc, odroid, aka)\n";
         return 1;
     }
     if (!emit_android_project && (!android_package.empty() || !android_app_name.empty())) {

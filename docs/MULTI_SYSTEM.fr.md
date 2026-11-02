@@ -188,6 +188,34 @@ build/bin/m0recomp jeu.bin --system sg1000 --cpu z80 --info
 build/bin/m0recomp jeu.gb --system gameboy --target meta -o output/jeu
 build/bin/sg1000_host jeu.sg --frames 300 --coverage output/jeu-sg.cov
 build/bin/m0recomp jeu.sg --target pokitto --coverage output/jeu-sg.cov -o output/jeu-pokitto
+build/bin/m0recomp jeu.gg --target pc \
+  --coverage output/jeu-gg.cov \
+  --coverage-map output/jeu-gg.map \
+  -o output/jeu-pc
+```
+
+### Carte deepeel (--coverage-map) et code en RAM (--ram-image)
+
+`--coverage-map` lit la memory map physique de deepeel (« physical-bank
+offset-start offset-end class », 16 Ko par banque, `output/batch-z80/.../*.map`
+de memscan) : chaque plage `code-natural`, `code-forced` ou `code-static` sème
+la marche de reachabilité instruction par instruction, dans toutes les
+fenêtres où le mapper peut montrer la banque (Sega : 0000/4000/8000 ;
+Codemasters : les trois commutables ; Korean 150 et MSX bancaisé : unités de
+8 Ko ; MSX simple : la fenêtre unique). Le dispatch calculé vers une banque
+commutée que la marche seule ne prouve pas est alors compilé au lieu de rester
+à l'interpréteur. Sur *Cosmic Spacehead* (GG, dispatch calculé banques 8-15),
+la build `--target pc --meta-precise --coverage-map` passe le test
+différentiel (`run_hash` identique à `--interp`, 300 frames).
+
+`--ram-image` (paire avec `gg_host --ram-rom-out`) compile le code que le jeu
+écrit lui-même en C000-DFFF, d'après l'instantané d'une session. **Expérimental
+et non validé** : sur Cosmic Spacehead le différentiel précis diverge (frame 6,
++6 T-states) — les données que le code RAM lit changent entre l'instantané et
+l'exécution, et le timing mesuré au moment de la génération ne correspond plus.
+À n'utiliser qu'avec une vérification `--meta-precise` vs `--interp` sur la
+session visée ; hors de cette vérification, le repli interpréteur reste le
+comportement sûr.
 cmake -G Ninja -S output/jeu-pokitto/host -B output/jeu-pokitto/host/build
 ninja -C output/jeu-pokitto/host/build
 cmake -G Ninja -S output/jeu-pokitto -B output/jeu-pokitto/build -DCMAKE_TOOLCHAIN_FILE=arm-toolchain.cmake

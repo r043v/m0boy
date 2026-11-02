@@ -173,6 +173,64 @@ Profile read_coverage(const std::vector<fs::path>& files, bool gamegear, bool sm
     return profile;
 }
 
+/* deepeel's memory map (scan_all digest, "physical-bank offset-start
+ * offset-end class", 16 KiB banks): every observed or proven code range
+ * seeds the walk instruction by instruction, through every window the
+ * mapper can show the bank in — the reachability walk alone cannot prove
+ * computed dispatch into a switched bank.  Accepted classes: code-natural
+ * (observed executions), code-forced (boot, IRQ, copies) and code-static
+ * (static pointer scan); data and inferred lines are ignored. */
+void read_coverage_map(const fs::path& path, bool gamegear, bool mastersystem, bool msx, bool banked_msx,
+                       unsigned mapper, unsigned bank_shift, unsigned msx_base, Profile& profile) {
+    std::ifstream file(path);
+    if (!file) throw std::runtime_error("Cannot read coverage map: " + path.string());
+    std::string line;
+    if (!std::getline(file, line) || line.rfind("# physical-bank", 0) != 0)
+        throw std::runtime_error("Expected deepeel's \"# physical-bank ...\" map: " + path.string());
+    const bool korean = gamegear && bank_shift == 13 && !msx; /* six 8 KiB windows, the unit is the Loc's page */
+    const bool sega_fixed = gamegear && !msx && mapper == M0_MAPPER_SEGA; /* slots 0-1 fixed to banks 0-1 */
+    /* Window bases through which each bank can execute (Codemasters: the
+     * three slots switch; Korean 150-in-1 and MSX banked: the 8 KiB unit
+     * shows in every slot; MSX plain: one window at rom_start). */
+    unsigned unit_shift = 0;
+    std::vector<uint32_t> bases;
+    if (msx) { unit_shift = banked_msx ? 13 : 0; bases = banked_msx ? std::vector<uint32_t>{0x4000, 0x6000, 0x8000, 0xA000}
+                                                   : std::vector<uint32_t>{0x4000}; }
+    else if (korean) { unit_shift = 13; bases = {0x0000, 0x2000, 0x4000, 0x6000, 0x8000, 0xA000}; }
+    else if (gamegear) { bases = sega_fixed ? std::vector<uint32_t>{} : std::vector<uint32_t>{0x0000, 0x4000, 0x8000}; }
+    else { bases = {0x0000}; } /* SG-1000: unbanked, the ROM at 0000 */
+    while (std::getline(file, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        std::istringstream in(line);
+        in >> std::hex;
+        unsigned bank = 0, lo = 0, hi = 0;
+        std::string klass;
+        if (!(in >> bank >> lo >> hi >> klass) || hi < lo || lo > 0x3fff) throw std::runtime_error("Invalid coverage map line: " + line);
+        if (klass != "code-natural" && klass != "code-forced" && klass != "code-static") continue;
+        for (unsigned off = lo; off <= hi; off++) {
+            const auto seed = [&](uint32_t page, uint32_t pc) {
+                const Loc loc = page << 16 | pc;
+                profile.entries.push_back(loc);
+                if (!profile.hits.count(loc)) profile.hot.push_back(loc);
+                profile.hits[loc] += 1;
+            };
+            if (msx && !banked_msx) { seed(0, msx_base + off); continue; }
+            if (!gamegear && !msx) { seed(0, off); continue; }
+            if (sega_fixed) { /* banks 0-1 through their fixed slot, the rest through 8000-BFFF */
+                const uint32_t base = bank < 2 ? bank * 0x4000 : 0x8000;
+                seed(bank, base + off);
+                continue;
+            }
+            if (unit_shift) { /* the 8 KiB unit is the page; every slot can show it */
+                const uint32_t unit = bank * (0x4000 >> unit_shift) + (off >> unit_shift);
+                for (uint32_t base : bases) seed(unit, base + (off & ((1u << unit_shift) - 1)));
+                continue;
+            }
+            for (uint32_t base : bases) seed(bank, base + off);
+        }
+    }
+}
+
 /* Flash for generated code: the application area, less the runtime and
  * drivers (measured at about 24 KiB) and the ROM image. */
 constexpr size_t runtime_bytes = 30 * 1024; /* drivers, runtime and, since 0.10.28, the option
@@ -240,6 +298,15 @@ bool generate(const fs::path& path, const GenerateOptions& o, GenerateStats& sta
         }
         rom.resize(m0_msx_padded(rom.size()), 0xff);
     }
+    std::vector<uint8_t> ram_image;
+    if (!o.ram_image.empty()) {
+        if (!gg) { error = "--ram-image needs a Game Gear or Master System cartridge"; return false; }
+        std::ifstream file(o.ram_image, std::ios::binary);
+        if (!file) { error = "Cannot read RAM image: " + o.ram_image.string(); return false; }
+        ram_image.assign(std::istreambuf_iterator<char>(file), {});
+        if (ram_image.size() > 0x2000) { error = "RAM image must hold at most 8 KiB (C000-DFFF)"; return false; }
+        ram_image.resize(0x2000, 0xff);
+    }
     const std::string system_name = msx ? "MSX" : o.mastersystem ? "Master System" : gg ? "Game Gear" : "SG-1000";
     try {
         const auto shared = o.meta_templates.parent_path() / "sg1000";
@@ -253,7 +320,9 @@ bool generate(const fs::path& path, const GenerateOptions& o, GenerateStats& sta
         const unsigned mapper = gg ? m0_sega_mapper(rom.data(), rom.size()) : 0;
         const unsigned bank_shift = mapper == M0_MAPPER_KOREAN150 ? 13 : 14;
         const bool msx_banked = msx && msx_layout.mapper != M0_MSX_PLAIN;
-        const Profile profile = read_coverage(o.coverage, gg, o.mastersystem, msx_banked ? 13 : bank_shift, msx, msx_banked);
+        Profile profile = read_coverage(o.coverage, gg, o.mastersystem, msx_banked ? 13 : bank_shift, msx, msx_banked);
+        if (!o.coverage_map.empty())
+            read_coverage_map(o.coverage_map, gg, o.mastersystem, msx, msx_banked, mapper, bank_shift, msx ? msx_layout.base : 0x4000, profile);
         const auto& hot = profile.hot;
         const auto& entries = profile.entries;
         const auto& reads = profile.reads;
@@ -307,6 +376,7 @@ bool generate(const fs::path& path, const GenerateOptions& o, GenerateStats& sta
         }
         eo.aggressive_scan = o_aggressive;
         eo.infer_data_zones = o_infer;
+        eo.ram = ram_image;
         eo.entries.assign(entries.begin(), entries.end());
         /* Codemasters boards: checksum and its complement at 7FE6/7FE8 */
         if (gg) {
@@ -648,7 +718,8 @@ bool generate(const fs::path& path, const GenerateOptions& o, GenerateStats& sta
                << "#define SG_ROM_STREAM " << (streamed ? 1 : 0) << "\n"
                << "#define GG_MAPPER " << mapper << " /* 0 Sega, 1 Codemasters, 2 Korean 150-in-1 */\n"
                << "#define GG_CART_SD " << (cart_on_card ? 1 : 0) << " /* cartridge RAM in the save file */\n"
-               << "#define GG_SMS " << (o.mastersystem ? 1 : 0) << " /* Master System */\n";
+               << "#define GG_SMS " << (o.mastersystem ? 1 : 0) << " /* Master System */\n"
+               << "#define SG_RAM_ROM " << (ram_image.empty() ? 0 : 1) << " /* the C000-DFFF snapshot compiles (--ram-image) */\n";
         /* The game's files on the card share the .BIN's 8.3 base; the
          * firmware looks for them in the folder of its own .BIN. */
         if (!esp) config << "#define GG_BIN_NAME83 \"" << name83(sd, "BIN") << "\"\n";

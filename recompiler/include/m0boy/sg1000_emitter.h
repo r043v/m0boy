@@ -52,6 +52,11 @@ struct EmitOptions {
     std::vector<Loc> entries; ///< dynamic jump targets seen by profiling
     bool aggressive_scan = true;  ///< seed sweep-validated unreached courses (GB aggressive scan)
     bool infer_data_zones = true; ///< static code/data sweep of the ROM before seeding
+    /// 8 KiB snapshot of C000-DFFF from a played session: code the game wrote
+    /// in RAM compiles at its own addresses (locations stay the plain pc).
+    /// A later session that rewrites that code would diverge — check the
+    /// host's run_hash against --interp.
+    std::vector<uint8_t> ram;
 };
 
 struct EmitStats {

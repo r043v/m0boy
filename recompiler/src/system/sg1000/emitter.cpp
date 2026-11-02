@@ -92,6 +92,7 @@ static int msx_bios_direct(unsigned address) {
 /* ---- sandbox: the interpreter measures cycles and flow ------------------ */
 struct Sandbox {
     std::span<const uint8_t> rom;
+    const std::vector<uint8_t>* ram = nullptr; ///< C000-DFFF snapshot (--ram-image)
     bool banked = false, fixed_kib = true;
     bool msx = false;       ///< zero-based image of the ROM window only
     unsigned rom_start = 0;
@@ -100,18 +101,29 @@ struct Sandbox {
     int slot = -1;          ///< its slot (-1: fixed area)
     int defaults[6] = { 0, 1, 2, 3, 4, 5 };
     bool wrote = false;     ///< the measured instruction wrote memory
+    uint16_t pc = 0;        ///< the instruction being decoded or measured: its bytes are code
+    uint8_t ram_byte(uint16_t a) const {
+        return ram && a >= 0xc000 && a < 0xc000 + ram->size() ? (*ram)[a - 0xc000] : 0;
+    }
+    /* The snapshot's bytes feed the RAM code's own bus (fetch and data: the
+     * interpreter runs it on live RAM, whose frame-N state the snapshot of
+     * the same session holds).  A ROM instruction still reads RAM as 0, the
+     * model its measured timing always used. */
+    bool ram_bus(uint16_t a) const {
+        return pc >= 0xc000;
+    }
     /* Bus of the decoded instruction: its own slot at its page, the others
-     * at their usual pages; RAM reads 0. */
+     * at their usual pages; RAM reads 0, or the snapshot with --ram-image. */
     uint8_t read(uint16_t a) const {
         const size_t n = rom.size();
         if (msx && !banked) return a >= 0xc000 ? 0 : a >= rom_start && a < n ? rom[a] : 0xff;
         if (msx && a < rom_start) return a >= 0xc000 ? 0 : 0xff; /* the BIOS */
         if (!banked) {
-            if (a >= 0xc000) return 0;
+            if (a >= 0xc000) return ram_bus(a) ? ram_byte(a) : 0;
             if (n && !(n & (n - 1))) return rom[a & (n - 1)];
             return a < n ? rom[a] : 0xff;
         }
-        if (a >= 0xc000) return 0;
+        if (a >= 0xc000) return ram_bus(a) ? ram_byte(a) : 0;
         if (a < 0x400 && fixed_kib) return a < n ? rom[a] : 0xff;
         const int s = a >> bank_shift;
         const unsigned page = s == slot ? this->page : static_cast<unsigned>(defaults[s] < 0 ? s : defaults[s]);
@@ -169,6 +181,7 @@ static bool z80_scan_step(const void* ctxp, size_t pc, size_t end, m0boy::ScanSt
     };
     ctx->sb->slot = opt.banked ? slot_of(addr) : -1;
     ctx->sb->page = ctx->page;
+    ctx->sb->pc = addr;
     z80_t c{};
     c.user = ctx->sb;
     c.read = sb_read;
@@ -228,6 +241,7 @@ struct Run { unsigned cycles; uint16_t pc; };
 Run measure(Sandbox& sb, const z80_decoded_t& d, uint16_t addr, uint8_t f, uint16_t bc) {
     z80_t c{};
     c.user = &sb; c.read = sb_read; c.write = sb_write; c.in = sb_in; c.out = sb_out;
+    sb.pc = addr;
     c.pc = addr; c.f = f; c.bc = bc; c.a = 0x5a; c.hl = 0xc100; c.sp = 0xd000;
     unsigned cycles = z80_execute_decoded(&c, &d);
     return { cycles, c.pc };
@@ -309,6 +323,7 @@ public:
         /* a sync per instruction makes large functions very costly to compile */
         if (opt_.precise) opt_.max_region_instructions = std::min<size_t>(opt_.max_region_instructions, 32);
         sb_.rom = rom;
+        sb_.ram = opt.ram.empty() ? nullptr : &opt.ram;
         sb_.banked = opt.banked;
         sb_.fixed_kib = opt.fixed_kib;
         sb_.bank_shift = opt.bank_shift;
@@ -346,10 +361,12 @@ private:
         if (opt_.msx && a < opt_.rom_start) return -1;
         return (a < 0x400 && opt_.fixed_kib) || a >= 0xc000 ? -1 : a >> opt_.bank_shift;
     }
-    /* ROM byte at a location (bus semantics of the runtime) */
+    /* ROM byte at a location (bus semantics of the runtime); the RAM
+     * snapshot's bytes with --ram-image */
     uint8_t rom_at(Loc l) const {
         const uint16_t a = addr_of(l);
         if (!opt_.banked) return sb_.read(a);
+        if (a >= 0xc000) return sb_.ram_byte(a);
         const size_t n = rom_.size();
         if (a < 0x400 && opt_.fixed_kib) return a < n ? rom_[a] : 0xff;
         const size_t off = (static_cast<size_t>(page_of(l)) << opt_.bank_shift) + (a & ((1u << opt_.bank_shift) - 1));
@@ -357,7 +374,7 @@ private:
     }
     bool in_rom(Loc l) const {
         const uint16_t a = addr_of(l);
-        if (a >= 0xc000) return false;
+        if (a >= 0xc000) return sb_.ram && a < 0xc000 + sb_.ram->size(); /* compiled RAM with --ram-image */
         if (opt_.msx && a < opt_.rom_start) return false;
         if (!opt_.banked) return a < rom_.size();
         if (a < 0x400 && opt_.fixed_kib) return a < rom_.size();
@@ -451,6 +468,7 @@ bool Emitter::decode(Loc loc, Ins& in) {
     for (int s = 0; s < (0xc000 >> opt_.bank_shift); s++) sb_.defaults[s] = defaults_[s];
     z80_t c{};
     c.user = &sb_; c.read = sb_read;
+    sb_.pc = addr;
     c.pc = addr;
     in.addr = addr;
     in.loc = loc;
@@ -1320,11 +1338,21 @@ std::string Emitter::run(const std::vector<HotLoc>& hot, EmitStats& stats) {
     if (opt_.banked && opt_.msx) /* the unit each window shows, while the slots show the cartridge there */
         o << "    if (pc >= 0xc000 || pc < 0x4000 || !(machine.cart_vis >> (pc >> 13) & 1)) return 0;\n"
           << "    const uint32_t loc = (uint32_t)machine.page[pc >> 13] << 16 | pc;\n";
-    else if (opt_.banked) /* the location of pc under the current mapping; RAM: interpreter */
-        o << "    if (pc >= 0xc000) return 0;\n"
-          << (opt_.fixed_kib ? "    const uint32_t loc = pc < 0x400 ? pc : (uint32_t)machine.page[pc >> " + std::to_string(opt_.bank_shift) + "] << 16 | pc;\n"
-                             : "    const uint32_t loc = (uint32_t)machine.page[pc >> " + std::to_string(opt_.bank_shift) + "] << 16 | pc;\n")
-          ;
+    else if (opt_.banked) { /* the location of pc under the current mapping; RAM compiles with --ram-image */
+        o << (opt_.ram.empty() ? std::string("    if (pc >= 0xc000) return 0;\n")
+                               : std::string("    if (pc >= 0xc000) { /* the RAM snapshot's code: the plain pc keys it */\n"
+                                             "        const uint32_t rloc = pc;\n"
+                                             "        unsigned rh = ((uint32_t)rloc * 0x9e3779b1u) >> ") + std::to_string(32 - bits) + ";\n"
+                                             "        for (;;) {\n"
+                                             "            const sg_slot_t i = entry_slot[rh];\n"
+                                             "            if (i == (sg_slot_t)~0u) return 0;\n"
+                                             "            if (entry_pc[i] == rloc) return entry_fn[i];\n"
+                                             "            rh = (rh + 1) & " + std::to_string(slots - 1) + ";\n"
+                                             "        }\n"
+                                             "    }\n");
+        o << (opt_.fixed_kib ? "    const uint32_t loc = pc < 0x400 ? pc : (uint32_t)machine.page[pc >> " + std::to_string(opt_.bank_shift) + "] << 16 | pc;\n"
+                             : "    const uint32_t loc = (uint32_t)machine.page[pc >> " + std::to_string(opt_.bank_shift) + "] << 16 | pc;\n");
+    }
     else if (opt_.msx) /* the cartridge, and only while the slots show it there */
         o << "    if (pc >= 0xc000 || pc < " << hex(opt_.rom_start) << ") return 0;\n"
           << "    if (machine.rd_win[pc >> 13] != machine.rom + ((pc & 0xe000u) - " << hex(opt_.rom_start) << ")) return 0;\n"
