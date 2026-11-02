@@ -15,12 +15,17 @@ extern char __StackTop;
 }
 
 /* NTSC: 59736 T-states at 3.579545 MHz.  The CPU, the PSG and the sprite
- * status keep full precision whatever is skipped. */
+ * status keep full precision whatever is skipped.  A frontend may give its
+ * own frame before including this file (the NES paces at 50 Hz). */
+#ifndef SG_FRAME_US
 #define SG_FRAME_US 16688u
+#endif
 /* Behind by six frames (a stall): restart from now instead of running fast
  * to catch up; smaller debts are paid back.  Signed, so SG_PACE_FRAME's
  * comparison stays the signed one the frontends had. */
+#ifndef SG_STALL_US
 #define SG_STALL_US 100128
+#endif
 
 #if M0_TARGET_ESPBOY
 /* ESPboy: the Arduino core has started the chip; the emulation runs in

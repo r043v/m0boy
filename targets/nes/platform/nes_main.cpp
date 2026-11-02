@@ -34,6 +34,11 @@
 #include "meta_hw.h"
 #endif
 #include "m0_pad.h"
+/* the frame paced at 50 Hz: the shared constant is the SG-1000's NTSC
+ * frame; the NES panel release follows the 50 Hz displays.  The emulation
+ * itself stays NTSC (the frame's 29781 CPU cycles, the audio with it). */
+#define SG_FRAME_US 20000u
+#define SG_STALL_US (6u * 20000u)
 #include "sg_frontend.h"
 #include "m0_rows.h"
 #if defined(NES_STATE_NAME83)
