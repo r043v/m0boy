@@ -69,6 +69,7 @@ add_library(gbrecomp_core STATIC
     src/codegen/c_emitter.cpp
     src/codegen/register_ir.cpp
     src/codegen/meta_emitter.cpp
+    src/codegen/deepeel_png.cpp
     src/target_info.cpp
 )
 

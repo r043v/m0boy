@@ -345,6 +345,22 @@ def build_host(project: Path, name: str = "build", cflags: str = "") -> Path:
     return build
 
 
+def deepeel_png(path: Path, chunks: dict[str, str]) -> None:
+    """A minimal deepeel map PNG: a 1x1 image and zTXt chunks (deepeel_cov,
+    deepeel_rom, ...), the container `gbrecomp --coverage` accepts."""
+    import struct
+    import zlib
+
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+
+    data = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+    data += chunk(b"IDAT", zlib.compress(b"\x00\x00\x00\x00"))
+    for key, text in chunks.items():
+        data += chunk(b"zTXt", key.encode() + b"\x00\x00" + zlib.compress(text.encode()))
+    path.write_bytes(data + chunk(b"IEND", b""))
+
+
 def parse(out: str) -> dict[str, str]:
     vals = {}
     for key in ("run_hash", "wram_hash", "interp_instrs"):
@@ -437,6 +453,18 @@ def main() -> int:
         swept = parse(run([str(swept_build / "e2e_host"), "--frames", str(FRAMES),
                            "--wram-hash-bytes", str(RESULT_BYTES)]))
         assert swept["run_hash"] == ref["run_hash"], "--meta-sweep moved the run"
+
+        # a deepeel map PNG as --coverage: its deepeel_cov chunk is read like
+        # the .cov (same compiled set), its deepeel_rom chunk becomes the ROM
+        # read profile when streaming
+        png = tmp / "deepeel.map.png"
+        deepeel_png(png, {"deepeel_cov": cov.read_text(), "deepeel_rom": "10 1000\n20 5\n"})
+        png_text = run([args.gbrecomp, str(rom), "--target", "meta", "--coverage", str(png),
+                        "-o", str(tmp / "png")] + common)
+        assert count(png_text) == count(plain_text), (count(plain_text), count(png_text))
+        png_stream = run([args.gbrecomp, str(rom), "--target", "meta", "--coverage", str(png),
+                          "--meta-stream", "on", "-o", str(tmp / "png_stream")] + common)
+        assert "ROM read profile:   deepeel_rom of deepeel.map.png" in png_stream, png_stream
 
         # Runtime options: with batching, the frame/line signatures and -Os
         # disabled (and the pal32 table enabled) the fast build must behave

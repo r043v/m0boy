@@ -114,6 +114,15 @@ Coverage is incremental. Run a compiled build with `--coverage` but without
 `--interp`: it records only the instructions that still fall back to the
 interpreter. Regenerate with every coverage file.
 
+`--coverage` also takes a deepeel map PNG (`deepeel explore game.gb --play
+--map game.map.png`). Its `deepeel_cov` chunk is the coverage of the played
+sessions only (hit counts rank the flash budget; proven-data runs exclude
+bytes from compilation), and, with no `--rom-profile`, its `deepeel_rom`
+chunk (played ROM reads per 256-byte page) picks the resident ROM chunks when
+the ROM is streamed or packed (`ROM read profile:` in the summary).
+`deepeel mapx game.map.png out --chunk deepeel_heat` lists the zones ranked
+by played usage (the hot set carries 90% of it).
+
 The firmware is bare metal (`meta_startup.c`, `meta_spi.c`; no Arduino
 core, no USB stack): it prints nothing on USB, and `-t upload` only reaches
 a META whose bootloader is already running, since nothing in the firmware

@@ -22,6 +22,7 @@
 #include "m0boy/sweep.h"
 #include "recompiler/decoder.h"
 #include "recompiler/codegen/register_ir.h"
+#include "recompiler/codegen/deepeel_png.h"
 
 #include <algorithm>
 #include <cctype>
@@ -440,21 +441,27 @@ bool Generator::load_coverage(MetaTargetStats& stats, std::string& error) {
     std::set<uint32_t> data;
     std::unordered_map<uint32_t, uint64_t> hits; /* optional 4th column */
     for (const fs::path& path : opt_.coverage_files) {
-        std::ifstream in(path);
-        if (!in) {
-            error = "cannot read coverage file " + path.string();
-            return false;
-        }
+        /* a .cov text file, or a deepeel map PNG (its deepeel_cov chunk:
+         * hits from played sessions only) */
+        std::string text;
+        if (!m0boy::deepeel::coverage_text(path, text, error)) return false;
+        std::istringstream in(text);
         std::string line;
         while (std::getline(in, line)) {
             if (line.empty() || line[0] == '#') continue;
-            unsigned bank = 0, addr = 0, flags = 0, count = 1;
-            if (std::sscanf(line.c_str(), "%x %x %x %x", &bank, &addr, &flags, &count) < 3) continue;
+            unsigned bank = 0, addr = 0, flags = 0, count = 1, run = 1;
+            if (std::sscanf(line.c_str(), "%x %x %x %x %x", &bank, &addr, &flags, &count, &run) < 3) continue;
             if (addr < 0x4000) bank = 0;
             if (addr >= 0x8000 || bank >= rom_.bank_count()) continue;
             const uint32_t k = key(static_cast<uint16_t>(bank), static_cast<uint16_t>(addr));
+            if (flags & 8) {
+                /* proven data; deepeel's compact form gives a run length
+                 * (5th column) instead of one line per byte */
+                const unsigned end = addr < 0x4000 ? 0x4000u : 0x8000u;
+                for (unsigned a = addr; a < addr + (run ? run : 1) && a < end; a++)
+                    data.insert(key(static_cast<uint16_t>(bank), static_cast<uint16_t>(a)));
+            }
             cov[k] |= static_cast<uint8_t>(flags & 3);
-            if (flags & 8) data.insert(k);
             /* a proven-data line is not played code: no hit, no streaming
              * weight, no flash-ranking preference */
             if (!(flags & 4) && !(flags & 8)) {
@@ -644,7 +651,9 @@ bool Generator::plan_stream(MetaTargetStats& stats, std::string& error) {
     if (opt_.stream != 1 && !opt_.rom_resident_bytes) {
         std::set<uint32_t> locations;
         for (const auto& path : opt_.coverage_files) {
-            std::ifstream in(path);
+            std::string text, ignored;
+            m0boy::deepeel::coverage_text(path, text, ignored);
+            std::istringstream in(text);
             std::string line;
             while (std::getline(in, line)) {
                 unsigned bank, address, flags;
@@ -663,18 +672,33 @@ bool Generator::plan_stream(MetaTargetStats& stats, std::string& error) {
     chunk_weight_.assign(chunks, 0);
     resident_index_.assign(chunks, -1);
     for (size_t c = 0; c < 4 && c < chunks; c++) resident_index_[c] = 0; /* bank 0: gbl_rom */
-    for (const fs::path& path : opt_.rom_profile_files) {
-        std::ifstream in(path);
-        if (!in) {
-            error = "cannot read ROM read profile " + path.string();
-            return false;
-        }
+    auto add_rom_profile = [&](std::istream& in) {
         std::string line;
         while (std::getline(in, line)) {
             unsigned page = 0;
             unsigned long long count = 0;
             if (std::sscanf(line.c_str(), "%x %llu", &page, &count) != 2) continue;
             if (page / 16 < chunks) chunk_weight_[page / 16] += count;
+        }
+    };
+    for (const fs::path& path : opt_.rom_profile_files) {
+        std::ifstream in(path);
+        if (!in) {
+            error = "cannot read ROM read profile " + path.string();
+            return false;
+        }
+        add_rom_profile(in);
+        stats.rom_profile_source = "--rom-profile";
+    }
+    /* no explicit profile: a deepeel map PNG given as coverage carries the
+     * played ROM reads per page (deepeel_rom) */
+    if (opt_.rom_profile_files.empty()) {
+        for (const fs::path& path : opt_.coverage_files) {
+            std::string text;
+            if (!m0boy::deepeel::is_png(path) || !m0boy::deepeel::png_text(path, "deepeel_rom", text)) continue;
+            std::istringstream in(text);
+            add_rom_profile(in);
+            stats.rom_profile_source = "deepeel_rom of " + path.filename().string();
         }
     }
     /* --rom-plan: what each block saves when kept, from the card cache

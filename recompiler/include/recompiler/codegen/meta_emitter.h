@@ -94,6 +94,7 @@ struct MetaTargetStats {
     std::string pack_note;       ///< why --meta-pack was not applied
     size_t spin_loops = 0;       ///< polling loops fast-forwarded to the next change
     size_t counted_loops = 0;    ///< DEC/JR NZ delay loops fast-forwarded
+    std::string rom_profile_source; ///< where the ROM read weights came from, if anywhere
 };
 
 /**

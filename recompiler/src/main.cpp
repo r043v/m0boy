@@ -1974,6 +1974,8 @@ static int run_meta_target(const char* argv0, const std::string& rom_path,
               << (stats.data_skipped ? "  proven data:        " + std::to_string(stats.data_skipped) +
                                              " coverage records left as data (cov flag 8)\n"
                                      : "")
+              << (stats.rom_profile_source.empty() ? ""
+                      : "  ROM read profile:   " + stats.rom_profile_source + "\n")
               << "  dispatch entries:   " << stats.dispatch_entries << "\n"
               << (thumb ? "  register IR:        " + std::to_string(stats.register_blocks) +
                           " blocks, " + std::to_string(stats.thumb_blocks) + " Thumb blocks\n" : "")
