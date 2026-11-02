@@ -195,6 +195,7 @@ void print_usage(const char* program) {
     std::cout << "  --nes-interp          NES, Vectrex: no recompiled code, the interpreter only (alias --interp)\n";
     std::cout << "  --pce-sweep           PC Engine: the card swept for JSR/JMP targets the reachability walk cannot prove (pairs with --meta-code-budget)\n";
     std::cout << "  --nes-sweep           NES: the PRG swept the same way (pairs with --meta-code-budget)\n";
+    std::cout << "  --frame-hz <n>        NES: the build's display rate (60 default; the option menu switches 50/60 at run time)\n";
     std::cout << "  --vectrex-sweep       Vectrex: the cartridge swept for JSR/JMP extended targets\n";
     std::cout << "  --megadrive-sweep     Mega Drive: the ROM swept for JSR/JMP absolute long targets\n";
     std::cout << "  --meta-sweep          Game Boy: every bank's CALL/JP abs targets offered as speculative entries\n";
@@ -2083,6 +2084,7 @@ int main(int argc, char* argv[]) {
     bool meta_thumb = false;
     bool meta_precise = false;
     bool nes_interp = false;
+    unsigned nes_frame_hz = 0;
     bool pce_sweep = false;
     bool nes_sweep = false;
     bool vectrex_sweep = false;
@@ -2274,6 +2276,13 @@ int main(int argc, char* argv[]) {
             nes_interp = true;
         } else if (arg == "--pce-sweep") {
             pce_sweep = true;
+        } else if (arg == "--frame-hz") {
+            if (i + 1 >= argc) { std::cerr << "Error: --frame-hz needs a rate (25 to 120)\n"; return 1; }
+            nes_frame_hz = std::strtoul(argv[++i], nullptr, 10);
+            if (nes_frame_hz < 25 || nes_frame_hz > 120) {
+                std::cerr << "Error: --frame-hz needs a rate of 25 to 120\n";
+                return 1;
+            }
         } else if (arg == "--nes-sweep") {
             nes_sweep = true;
         } else if (arg == "--vectrex-sweep") {
@@ -2639,7 +2648,7 @@ int main(int argc, char* argv[]) {
         if (analyze_only || meta_thumb || g_meta_pack ||
             g_meta_stream != -1 || !g_rom_profiles.empty() || g_meta_resident ||
             emit_android_project || !native_patch_manifest_path.empty() ||
-            !symbol_file_path.empty() || !annotation_file_path.empty() ||
+            !symbol_file_path.empty() || !annotation_file_path.empty() || nes_frame_hz ||
             specific_bank > 0 || !manual_entry_points.empty() || !trace_file_path.empty()) {
             std::cerr << "Error: unsupported " << system_label << " option; use --coverage, --target, --meta-precise, --meta-compiler, --meta-code-budget and --meta-bytes-per-instruction\n";
             return 1;
@@ -2725,6 +2734,7 @@ int main(int argc, char* argv[]) {
         options.sweep = nes_sweep;
         options.code_budget_bytes = g_meta_code_budget;
         if (meta_bpi_set) options.bytes_per_instruction = meta_bpi;
+        options.frame_hz = nes_frame_hz;
         std::string error;
         m0boy::nes::GenerateStats stats;
         if (!m0boy::nes::generate(rom_path, options, stats, error)) {
@@ -2746,7 +2756,7 @@ int main(int argc, char* argv[]) {
             return refuse_target(source, *m0boy::parse_target(target), target);
         if (disasm_only || analyze_only || meta_thumb || g_meta_pack || g_meta_stream != -1 ||
             !g_rom_profiles.empty() || g_meta_resident || emit_android_project ||
-            !native_patch_manifest_path.empty() || specific_bank > 0) {
+            !native_patch_manifest_path.empty() || specific_bank > 0 || nes_frame_hz) {
             std::cerr << "Error: unsupported Vectrex option; use --target, --bios, --full-boot, --coverage, "
                          "--meta-precise, --nes-interp and --meta-compiler\n";
             return 1;

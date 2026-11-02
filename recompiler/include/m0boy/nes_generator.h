@@ -22,6 +22,9 @@ struct GenerateOptions {
     bool sweep = false;           /* --nes-sweep: the walk also seeds from the PRG's JSR/JMP targets */
     size_t code_budget_bytes = 0; /* 0: the target's default */
     unsigned bytes_per_instruction = 0; /* 0: the default estimate */
+    unsigned frame_hz = 0;        /* --frame-hz: the build's display rate
+                                   * (0: the frontend's default, 60); the
+                                   * option menu switches 50/60 at run time */
 };
 
 struct GenerateStats {

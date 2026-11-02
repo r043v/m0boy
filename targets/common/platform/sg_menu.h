@@ -53,6 +53,9 @@
 
 static const char *const sg_volume_names[9] = {"0", "1", "2", "3", "4", "5", "6", "7", "8"};
 static const char *const sg_speed_names[2] = {"Normale", "Rapide"};
+#ifdef SG_MENU_HZ /* the frame's rate, a frontend hook away (the NES's) */
+static const char *const sg_hz_names[2] = {"50 Hz", "60 Hz"};
+#endif
 #if !M0_TARGET_PC /* one rate on the PC: no clock line */
 #if M0_TARGET_ESPBOY
 static const char *const sg_clock_names[2] = {"80 MHz", "160 MHz"};
@@ -174,7 +177,7 @@ static void sg_menu_run(void) { sg_call_on_stack(sg_option_menu, SG_MENU_ON_STAC
 static void sg_menu_run(void) { sg_option_menu(); }
 #endif
 
-enum { SGM_RESUME, SGM_RESTART, SGM_SLOT, SGM_SAVE, SGM_LOAD, SGM_VOLUME, SGM_SPEED, SGM_CLOCK,
+enum { SGM_RESUME, SGM_RESTART, SGM_SLOT, SGM_SAVE, SGM_LOAD, SGM_VOLUME, SGM_SPEED, SGM_HZ, SGM_CLOCK,
        SGM_USB_SD, SGM_BOOTLOADER, SGM_QUIT };
 
 static void sg_option_menu(void) {
@@ -205,6 +208,10 @@ static void sg_option_menu(void) {
 #endif
     SG_ADD(SGM_VOLUME, "Volume", META_MENU_CHOICE, &vol, 9, sg_volume_names);
     SG_ADD(SGM_SPEED, "Vitesse", META_MENU_CHOICE, &fast, 2, sg_speed_names);
+#ifdef SG_MENU_HZ
+    uint8_t hz = sg_menu_hz;
+    SG_ADD(SGM_HZ, "Ecran", META_MENU_CHOICE, &hz, 2, sg_hz_names);
+#endif
 #if !M0_TARGET_PC /* the PC has one rate: no "Processeur" line */
     SG_ADD(SGM_CLOCK, "Processeur", META_MENU_CHOICE, &mhz, 2, sg_clock_names);
 #endif
@@ -247,6 +254,9 @@ static void sg_option_menu(void) {
     int action = line >= 0 ? ids[line] : -1;
     m0_audio_set_volume(vol);
     sg_menu_fast = fast;
+#ifdef SG_MENU_HZ
+    SG_MENU_SET_HZ(hz == 0);
+#endif
     m0_lcd_end_frame(); /* no transfer while the clocks change */
     m0_clock_set(M0_TARGET_ESPBOY ? (mhz ? 160 : 80) : M0_TARGET_ESP32 ? (mhz ? 240 : 80) : (mhz ? 72 : 48));
 #ifdef SG_MENU_STATE_SLOTS

@@ -120,7 +120,9 @@ static uint8_t sg_menu_fast, sg_fast_draw;
 
 /* Frame pacing: the game itself keeps its speed, a presentation late by less
  * than a frame is skipped (at most max_skip in a row) and the deadline stays
- * put, so the debt is paid back. */
+ * put, so the debt is paid back.  A frontend may give its own (the NES's
+ * paces a rate the option menu changes at run time). */
+#ifndef SG_PACE_FRAME
 #define SG_PACE_FRAME(deadline, skip_video, skipped_run, max_skip) do { \
         if (sg_menu_fast) { \
             (deadline) = m0_micros(); \
@@ -135,6 +137,7 @@ static uint8_t sg_menu_fast, sg_fast_draw;
         while ((int32_t)(m0_micros() - (deadline)) < 0) m0_audio_idle(); \
         if ((int32_t)(m0_micros() - (deadline)) > SG_STALL_US) (deadline) = m0_micros(); \
     } while (0)
+#endif
 
 /* Free RAM painted at boot, from the end of .bss to 128 bytes below main's
  * frame, as the Game Boy frontend does: the words never written since show

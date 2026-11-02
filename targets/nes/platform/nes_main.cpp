@@ -34,11 +34,15 @@
 #include "meta_hw.h"
 #endif
 #include "m0_pad.h"
-/* the frame paced at 50 Hz: the shared constant is the SG-1000's NTSC
- * frame; the NES panel release follows the 50 Hz displays.  The emulation
- * itself stays NTSC (the frame's 29781 CPU cycles, the audio with it). */
-#define SG_FRAME_US 20000u
-#define SG_STALL_US (6u * 20000u)
+/* The frame's rate: NES_FRAME_HZ is the build's (--frame-hz, 60 by
+ * default); the option menu switches between 50 and 60 Hz at run time.
+ * The emulation itself stays NTSC (the frame's 29781 CPU cycles, the
+ * audio with it). */
+#ifndef NES_FRAME_HZ
+#define NES_FRAME_HZ 60
+#endif
+#define SG_FRAME_US ((1000000u + NES_FRAME_HZ / 2u) / NES_FRAME_HZ)
+#define SG_STALL_US (6u * SG_FRAME_US)
 #include "sg_frontend.h"
 #include "m0_rows.h"
 #if defined(NES_STATE_NAME83)
@@ -97,6 +101,29 @@ static void native_row(void *host, unsigned line, const uint16_t *pixels) {
 }
 #endif
 static uint32_t deadline;
+/* The frame's pace: NES_FRAME_HZ is the build's rate (--frame-hz, 60 by
+ * default, its period is SG_FRAME_US above); the option menu's "Ecran"
+ * switches between 50 and 60 Hz at run time, nes_frame_us carries the
+ * chosen period.  The emulation itself stays NTSC (the frame's 29781 CPU
+ * cycles, the audio with it). */
+static uint32_t nes_frame_us = SG_FRAME_US;
+static uint8_t sg_menu_hz = NES_FRAME_HZ < 55 ? 0 : 1; /* 0: 50 Hz, 1: 60 Hz */
+/* the NES's own pacing: the rate changes at run time (the SG-1000's macro
+ * keeps its constant, its firmwares stay comparable) */
+#define SG_PACE_FRAME(deadline, skip_video, skipped_run, max_skip) do { \
+        if (sg_menu_fast) { \
+            (deadline) = m0_micros(); \
+            (skip_video) = ++sg_fast_draw < 30; \
+            if (!(skip_video)) sg_fast_draw = 0; \
+            (skipped_run) = 0; \
+            break; \
+        } \
+        (deadline) += nes_frame_us; \
+        (skip_video) = (int32_t)(m0_micros() - (deadline)) > 0 && (skipped_run) < (max_skip); \
+        (skipped_run) = (skip_video) ? (skipped_run) + 1 : 0; \
+        while ((int32_t)(m0_micros() - (deadline)) < 0) m0_audio_idle(); \
+        if ((int32_t)(m0_micros() - (deadline)) > SG_STALL_US) (deadline) = m0_micros(); \
+    } while (0)
 #ifndef NES_MAX_SKIP
 #define NES_MAX_SKIP 2
 #endif
@@ -218,6 +245,12 @@ static unsigned start_frames; /* a C tap becomes a Start press */
 #ifndef SG_MENU_TAP
 #define SG_MENU_TAP() do { } while (0)
 #endif
+/* the option menu's "Ecran": 50 or 60 Hz, the frame's period follows */
+#define SG_MENU_HZ 1
+#define SG_MENU_SET_HZ(is50) do { \
+        sg_menu_hz = (is50) ? 0 : 1; \
+        nes_frame_us = (is50) ? 20000u : 16644u; \
+    } while (0)
 #include "sg_menu.h"
 
 static void frame(void *) {

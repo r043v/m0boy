@@ -160,6 +160,8 @@ bool generate(const fs::path& cartridge, const GenerateOptions& o, GenerateStats
                << "#define NES_VERTICAL_MIRROR " << (header[6] & 1) << "\n"
                << "/* the panel's byte order: the META's SPI takes the high byte first */\n"
                << "#define NES_PANEL_SWAP " << (o.target == TargetId::meta ? 1 : 0) << "\n";
+        if (o.frame_hz)
+            config << "#ifndef NES_FRAME_HZ\n#define NES_FRAME_HZ " << o.frame_hz << "\n#endif\n";
         if (o.target != TargetId::desktop) {
             const std::string sd = state_base(o.name);
             config << "#define NES_STATE_NAME \"" << sd << ".ST8\"\n"
