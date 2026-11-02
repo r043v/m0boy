@@ -17,7 +17,8 @@ extern void nes_bus_write(uint16_t, uint8_t);
 
 static inline __attribute__((always_inline)) uint8_t nes_rd(nes6502_t *cpu, uint16_t at) {
     if (at < 0x2000u) return cpu->ram[at & 0x07FFu];
-    if (at >= 0x8000u) return cpu->prg[((uint32_t)at - 0x8000u) & cpu->prg_mask];
+    if (at >= 0x8000u)
+        return cpu->prg[(at & 0x3FFFu) + (at >= 0xC000u ? cpu->fixed_base : cpu->bank_base)];
     return nes_bus_read(at);
 }
 static inline __attribute__((always_inline)) void nes_wr(nes6502_t *cpu, uint16_t at, uint8_t v) {

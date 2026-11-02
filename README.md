@@ -113,7 +113,7 @@ has not been compared with a console (see the Mega Drive notes).
 | Master System | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | MSX1 (ASCII8/16, Konami, Konami SCC; AY-3-8910, SCC; experimental) | ✅ | ✅ | ✅ | — | — | — | ✅ |
 | PICO-8 | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
-| NES (NROM, 16/32 KiB PRG, 8 KiB CHR ROM; experimental) | ✅ | ✅ | ✅ | — | — | — | ✅ |
+| NES (NROM 16/32 KiB or UxROM up to 128 KiB, CHR ROM or CHR-RAM; experimental) | ✅ | ✅ | ✅ | — | — | — | ✅ |
 | PC Engine (HuCards, HuC6280 recompiler + interpreter; experimental) | ✅ | — | — | — | ✅ | — | ✅ |
 | Vectrex (≤ 32 KiB, system ROM; experimental) | — | ✅ | — | — | ✅ | — | ✅ |
 | Mega Drive (bounded M68k profile; experimental) | ✅ | — | — | — | ✅ | — | ✅ |

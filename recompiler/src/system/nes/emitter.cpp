@@ -169,6 +169,9 @@ std::string hex(unsigned v, int digits = 4) {
 struct Ins {
     uint16_t addr = 0;
     uint8_t code = 0, o1 = 0, o2 = 0;
+    uint8_t bank = 0xFF;     /* the switchable bank mapped while this runs
+                              * (0xFF: the fixed window at $C000-$FFFF, all
+                              * of NROM) */
     OpInfo info;
     unsigned len = 1;
     uint16_t next = 0;
@@ -184,6 +187,9 @@ struct Ins {
     uint8_t live_out = 0xF;  /* flags read after this instruction: N|Z|C|V */
 };
 
+/* the fixed window's context: the same bytes whatever the bank register */
+constexpr uint8_t BANK_FIXED = 0xFF;
+
 class Emitter {
 public:
     Emitter(const std::vector<uint8_t>& prg, const EmitOptions& o) : prg_(prg), opt_(o) {}
@@ -192,12 +198,28 @@ public:
 private:
     const std::vector<uint8_t>& prg_;
     EmitOptions opt_;
-    std::map<uint16_t, Ins> ins_;
-    std::vector<std::vector<uint16_t>> regions_;
+    std::map<uint32_t, Ins> ins_;      /* (bank << 16) | address */
+    std::vector<std::vector<uint32_t>> regions_;
 
-    uint8_t rom(uint16_t at) const { return prg_[(at - 0x8000u) & (opt_.prg_size - 1)]; }
-    bool decode(uint16_t at, Ins& in) const;
-    bool compiled(uint16_t at) const { return ins_.count(at) != 0; }
+    bool banked() const { return opt_.prg_size > 0x8000u; }
+    static uint32_t key(uint16_t at, uint8_t bank) { return (uint32_t(bank) << 16) | at; }
+    /* the context control carries from `bank` into `to` */
+    uint8_t ctx_to(uint16_t to, uint8_t bank) const { return banked() && to >= 0xC000u ? BANK_FIXED : bank; }
+    /* and whether the walk can follow at all: on a banked cartridge, a
+     * transfer from the fixed window into the $8000-$BFFF window lands on
+     * whatever bank is mapped — the coverage's, not a static one */
+    bool followable(uint16_t to, uint8_t bank) const {
+        return !banked() || to >= 0xC000u || bank != BANK_FIXED;
+    }
+    /* a byte at `at` under `bank`: past $BFFF the fixed window holds it */
+    uint8_t byte_ctx(uint16_t at, uint8_t bank) const { return banked() && at >= 0xC000u ? BANK_FIXED : bank; }
+    uint8_t rom(uint16_t at, uint8_t bank) const {
+        if (!banked()) return prg_[(at - 0x8000u) & (opt_.prg_size - 1)];
+        if (at >= 0xC000u) return prg_[opt_.prg_size - 0x4000u + (at - 0xC000u)];
+        return prg_[bank * 0x4000u + (at - 0x8000u)];
+    }
+    bool decode(uint16_t at, uint8_t bank, Ins& in) const;
+    bool compiled(uint16_t at, uint8_t bank) const { return ins_.count(key(at, bank)) != 0; }
     void select(const std::vector<CoverageEntry>& coverage, EmitStats& stats);
     void plan();
     void emit_region(std::ostream& o, int r);
@@ -205,19 +227,21 @@ private:
     std::string go(const Ins& from, uint16_t to) const;
     std::string read(const Ins& in, std::string& pre, std::string& cross) const;
     std::string address(const Ins& in, std::string& pre, bool& ram, bool& may_dma) const;
+    static std::string label(uint32_t k) { return "L_" + hex(k, 6).substr(2); }
 };
 
-bool Emitter::decode(uint16_t at, Ins& in) const {
+bool Emitter::decode(uint16_t at, uint8_t bank, Ins& in) const {
     if (at < 0x8000u) return false;
     in = Ins{};
     in.addr = at;
-    in.code = rom(at);
+    in.bank = bank;
+    in.code = rom(at, bank);
     in.info = table()[in.code];
     if (in.info.op == Op::none) return false;
     in.len = length(in.info.mode);
     if (unsigned(at) + in.len - 1 > 0xFFFFu) return false;
-    in.o1 = in.len > 1 ? rom(uint16_t(at + 1)) : 0;
-    in.o2 = in.len > 2 ? rom(uint16_t(at + 2)) : 0;
+    in.o1 = in.len > 1 ? rom(uint16_t(at + 1), byte_ctx(uint16_t(at + 1), bank)) : 0;
+    in.o2 = in.len > 2 ? rom(uint16_t(at + 2), byte_ctx(uint16_t(at + 2), bank)) : 0;
     in.next = uint16_t(at + in.len);
     const uint16_t w = uint16_t(in.o1 | (in.o2 << 8));
     const Op op = in.info.op;
@@ -229,8 +253,11 @@ bool Emitter::decode(uint16_t at, Ins& in) const {
     } else if (op == Op::jmp) {
         in.falls = false;
         if (w >= 0x8000u) { /* through the ROM: a constant, the page-wrap bug included */
-            in.target = uint16_t(rom(w) | (rom(uint16_t((w & 0xFF00u) | ((w + 1) & 0xFFu))) << 8));
-            in.has_target = true;
+            const uint16_t hi_at = uint16_t((w & 0xFF00u) | ((w + 1) & 0xFFu));
+            if (followable(w, byte_ctx(w, bank)) && followable(hi_at, byte_ctx(hi_at, bank))) {
+                in.target = uint16_t(rom(w, byte_ctx(w, bank)) | (rom(hi_at, byte_ctx(hi_at, bank)) << 8));
+                in.has_target = true;
+            }
         }
     } else if (op == Op::jsr) {
         in.target = w; in.has_target = true; /* falls: the return site */
@@ -242,61 +269,71 @@ bool Emitter::decode(uint16_t at, Ins& in) const {
 
 void Emitter::select(const std::vector<CoverageEntry>& coverage, EmitStats& stats) {
     /* every reachable instruction, in the order it is found: the played
-     * ones by executions first, then the vectors and what they reach */
+     * ones by executions first, then the vectors and what they reach.
+     * One instance per (address, bank) pair: the same address under two
+     * banks holds two instructions (a UxROM cartridge switches its $8000
+     * window; the fixed window at $C000-$FFFF and all of NROM share the
+     * 0xFF context). */
     std::vector<CoverageEntry> hot(coverage);
     std::stable_sort(hot.begin(), hot.end(), [](const auto& a, const auto& b) { return a.hits > b.hits; });
-    std::map<uint16_t, Ins> found;
-    std::vector<uint16_t> order;
-    std::deque<uint16_t> work, swept_q;
-    auto visit = [&](uint16_t at, std::deque<uint16_t>& sink, m0::Sweep* budget) {
-        if (found.count(at)) return;
+    std::map<uint32_t, Ins> found;
+    std::vector<uint32_t> order;
+    std::deque<uint32_t> work, swept_q;
+    auto visit = [&](uint16_t at, uint8_t bank, std::deque<uint32_t>& sink, m0::Sweep* budget) {
+        if (at < 0x8000u) return;
+        if (banked() && at >= 0xC000u) bank = BANK_FIXED; /* the fixed window */
+        if (!followable(at, bank)) return;
+        const uint32_t k = key(at, bank);
+        if (found.count(k)) return;
         Ins in;
-        if (!decode(at, in)) return;
+        if (!decode(at, bank, in)) return;
         if (budget && !budget->take()) return;
-        found[at] = in;
-        order.push_back(at);
-        sink.push_back(at);
+        found[k] = in;
+        order.push_back(k);
+        sink.push_back(k);
     };
-    auto drain = [&](std::deque<uint16_t>& queue, m0::Sweep* budget) {
+    auto drain = [&](std::deque<uint32_t>& queue, m0::Sweep* budget) {
         while (!queue.empty()) {
             const Ins in = found[queue.front()];
             queue.pop_front();
-            if (in.falls) visit(in.next, queue, budget);
-            if (in.has_target) visit(in.target, queue, budget);
+            if (in.falls) visit(in.next, in.bank, queue, budget);
+            if (in.has_target) visit(in.target, ctx_to(in.target, in.bank), queue, budget);
         }
     };
-    std::map<uint16_t, const CoverageEntry*> played;
-    for (const auto& e : hot) played[e.pc] = &e;
-    for (const auto& e : hot) visit(e.pc, work, nullptr);
+    std::map<uint32_t, const CoverageEntry*> played; /* (bank << 16) | pc */
+    for (const auto& e : hot) played.emplace(key(e.pc, e.bank), &e);
+    for (const auto& e : hot) visit(e.pc, e.bank, work, nullptr);
     const size_t covered = order.size();
     for (uint16_t v : { uint16_t(0xFFFC), uint16_t(0xFFFA), uint16_t(0xFFFE) })
-        visit(uint16_t(rom(v) | (rom(uint16_t(v + 1)) << 8)), work, nullptr);
+        visit(uint16_t(rom(v, BANK_FIXED) | (rom(uint16_t(v + 1), BANK_FIXED) << 8)), BANK_FIXED, work, nullptr);
     drain(work, nullptr);
     /* the sweep: the PRG's JSR ($20) and JMP abs ($4C) whose target the
      * walk did not reach — the jump-table handlers the reachability
      * cannot prove, compiled the same way.  Nothing lands there until
-     * the game jumps (NROM has no context: the dispatcher enters by PC),
-     * but the generated file grows: the swept instructions rank after
-     * the played ones and take what the code budget has left
-     * (m0/sweep.h), the walk itself never being capped. */
+     * the game jumps (the dispatcher enters by PC, and by bank when the
+     * window is switchable), but the generated file grows: the swept
+     * instructions rank after the played ones and take what the code
+     * budget has left (m0/sweep.h), the walk itself never being capped.
+     * A banked cartridge sweeps its fixed window only: a target under
+     * $C000 has no bank the static walk could name. */
     m0::Sweep swept(m0::sweep_room(covered, opt_.max_instructions));
     if (opt_.sweep)
-        for (uint32_t at = 0x8000; at < 0x10000; at++) {
-            const uint8_t op = rom(uint16_t(at));
+        for (uint32_t at = banked() ? 0xC000u : 0x8000u; at < 0x10000; at++) {
+            const uint8_t op = rom(uint16_t(at), BANK_FIXED);
             if (op != 0x20 && op != 0x4C) continue;
-            const uint16_t target = uint16_t(rom(uint16_t(at + 1)) | rom(uint16_t(at + 2)) << 8);
+            const uint16_t target = uint16_t(rom(uint16_t(at + 1), BANK_FIXED) | rom(uint16_t(at + 2), BANK_FIXED) << 8);
             if (target < 0x8000) continue; /* the code lives in PRG */
-            visit(target, swept_q, &swept);
+            visit(target, ctx_to(target, BANK_FIXED), swept_q, &swept);
         }
     drain(swept_q, &swept);
     const size_t keep = opt_.max_instructions ? std::min(order.size(), opt_.max_instructions) : order.size();
     for (size_t i = 0; i < keep; i++) {
         Ins in = found[order[i]];
-        if (auto p = played.find(in.addr); p != played.end()) {
+        if (auto p = played.find(key(in.addr, in.bank)); p != played.end()) {
             in.hits = p->second->hits;
             in.dynamic = p->second->dynamic;
         }
-        ins_[in.addr] = in;
+        ins_[order[i]] = in;
     }
     stats.covered = std::min(covered, keep);
     stats.compiled = ins_.size();
@@ -306,39 +343,45 @@ void Emitter::plan() {
     /* entries: what a jump from elsewhere, the dispatcher or a return can
      * land on.  Precise mode: every instruction (the slice may end after
      * any of them). */
-    auto mark = [&](uint16_t at) { if (auto p = ins_.find(at); p != ins_.end()) p->second.label = true; };
+    auto mark = [&](uint16_t at, uint8_t bank) {
+        if (auto p = ins_.find(key(at, bank)); p != ins_.end()) p->second.label = true;
+    };
     for (uint16_t v : { uint16_t(0xFFFC), uint16_t(0xFFFA), uint16_t(0xFFFE) })
-        mark(uint16_t(rom(v) | (rom(uint16_t(v + 1)) << 8)));
-    for (auto& [a, in] : ins_) {
+        mark(uint16_t(rom(v, BANK_FIXED) | (rom(uint16_t(v + 1), BANK_FIXED) << 8)), BANK_FIXED);
+    for (auto& [k, in] : ins_) {
+        (void)k;
         if (opt_.precise || in.dynamic) in.label = true;
-        if (in.has_target) mark(in.target);
+        if (in.has_target) mark(in.target, ctx_to(in.target, in.bank));
         const Op op = in.info.op;
         /* the instruction after an exit resumes there: a return site, the
          * end of a DMA, an IRQ window */
         if (op == Op::jsr || op == Op::cli || op == Op::plp ||
             ((op == Op::sta || op == Op::stx || op == Op::sty) && in.info.mode == Mode::abs &&
              (in.o1 | (in.o2 << 8)) == 0x4014))
-            mark(in.next);
+            mark(in.next, in.bank);
     }
     /* regions: runs of neighbouring instructions, the start an entry */
     const size_t cap = 256;
-    for (auto& [a, in] : ins_) {
-        const bool joins = !regions_.empty() && regions_.back().size() < cap &&
-                           ins_.at(regions_.back().back()).next == a;
+    for (auto& [k, in] : ins_) {
+        bool joins = !regions_.empty() && regions_.back().size() < cap;
+        if (joins) {
+            const Ins& prev = ins_.at(regions_.back().back());
+            joins = key(prev.next, ctx_to(prev.next, prev.bank)) == k;
+        }
         if (!joins) {
             regions_.emplace_back();
             in.label = true;
         }
         in.region = int(regions_.size() - 1);
-        regions_.back().push_back(a);
+        regions_.back().push_back(k);
     }
     /* the fast mode's checks: at labels, and no run longer than
      * check_cycles without one */
     if (!opt_.precise)
         for (const auto& r : regions_) {
             unsigned run = 0;
-            for (uint16_t a : r) {
-                Ins& in = ins_.at(a);
+            for (uint32_t k : r) {
+                Ins& in = ins_.at(k);
                 if (in.label) run = 0;
                 if (run > opt_.check_cycles) { in.label = true; run = 0; }
                 run += in.info.cycles + 2;
@@ -346,13 +389,13 @@ void Emitter::plan() {
         }
     for (const auto& r : regions_) {
         unsigned local = 0;
-        for (uint16_t a : r) {
-            Ins& in = ins_.at(a);
+        for (uint32_t k : r) {
+            Ins& in = ins_.at(k);
             if (in.label) in.local = local++;
         }
     }
     unsigned global = 0;
-    for (auto& [a, in] : ins_)
+    for (auto& [k, in] : ins_)
         if (in.label) in.global = global++;
     /* the fast mode can prune a dead flag write: walk every region
      * backwards, keeping all flags live at labels (the budget check may
@@ -373,9 +416,9 @@ void Emitter::plan() {
 
 /* where control goes to reach `to` */
 std::string Emitter::go(const Ins& from, uint16_t to) const {
-    auto p = ins_.find(to);
+    auto p = ins_.find(key(to, ctx_to(to, from.bank)));
     if (p == ins_.end() || !p->second.label) return "{ pc_ = " + hex(to) + "; goto out; }";
-    if (p->second.region == from.region) return "goto L_" + hex(to, 4).substr(2) + ";";
+    if (p->second.region == from.region) return "goto " + label(key(to, p->second.bank)) + ";";
     return "{ pc_ = " + hex(to) + "; ni = " + std::to_string(p->second.global) + "; goto chain; }";
 }
 
@@ -408,9 +451,9 @@ std::string Emitter::address(const Ins& in, std::string& pre, bool& ram, bool& m
     }
 }
 
-/* the operand's value as C: immediates and ROM are constants, RAM is
- * indexed directly, the rest goes through the bus; `cross` is the page
- * penalty's expression when the opcode pays it */
+/* the operand's value as C: immediates and the fixed window are constants,
+ * RAM is indexed directly, the rest goes through the bus; `cross` is the
+ * page penalty's expression when the opcode pays it */
 std::string Emitter::read(const Ins& in, std::string& pre, std::string& cross) const {
     const unsigned w = in.o1 | (in.o2 << 8);
     const std::string mask = hex(opt_.prg_size - 1);
@@ -422,21 +465,29 @@ std::string Emitter::read(const Ins& in, std::string& pre, std::string& cross) c
     case Mode::zpy: return "ram_[(uint8_t)(" + hex(in.o1, 2) + " + y)]";
     case Mode::abs:
         if (w < 0x2000u) return "ram_[" + hex(w & 0x7FFu, 3) + "]";
-        if (w >= 0x8000u) return hex(rom(uint16_t(w)), 2);
+        if (w >= 0x8000u) {
+            if (!banked()) return hex(rom(uint16_t(w), BANK_FIXED), 2);
+            if (w >= 0xC000u) return hex(rom(uint16_t(w), BANK_FIXED), 2);
+            /* the switchable window: the bank is the machine's at run time */
+            return "nes_prg[NES_C.bank_base + " + hex(w - 0x8000u) + "u]";
+        }
         return "nes_bus_read(" + hex(w) + ")";
     case Mode::absx: case Mode::absy: {
         const std::string r = in.info.mode == Mode::absx ? "x" : "y";
         if (in.info.cross && (w & 0xFFu)) cross = "((" + hex(w & 0xFFu, 2) + "u + " + r + ") >> 8)";
         if (w + 0xFFu < 0x2000u) return "ram_[(" + hex(w) + "u + " + r + ") & 0x7FFu]";
-        if (w >= 0x8000u && w + 0xFFu <= 0xFFFFu)
-            return "nes_prg[(" + hex(w - 0x8000u) + "u + " + r + ") & " + mask + "u]";
-        return "nes_gen_rd((uint16_t)(" + hex(w) + " + " + r + "), " + mask + "u)";
+        if (w >= 0x8000u && w + 0xFFu <= 0xFFFFu) {
+            if (!banked()) return "nes_prg[(" + hex(w - 0x8000u) + "u + " + r + ") & " + mask + "u]";
+            if (w >= 0xC000u) /* the whole operand stays in the fixed window */
+                return "nes_prg[NES_C.fixed_base + " + hex(w & 0x3FFFu) + "u + " + r + "]";
+        }
+        return "nes_gen_rd((uint16_t)(" + hex(w) + " + " + r + "))";
     }
     case Mode::izx: case Mode::izy: {
         bool ram, dma;
         const std::string at = address(in, pre, ram, dma);
         if (in.info.mode == Mode::izy && in.info.cross) cross = "(((p_ & 0xFFu) + y) >> 8)";
-        return "nes_gen_rd(" + at + ", " + mask + "u)";
+        return "nes_gen_rd(" + at + ")";
     }
     default: return "0";
     }
@@ -458,7 +509,18 @@ void Emitter::emit_ins(std::ostream& o, const Ins& in) {
             if (m == Mode::abs) return "ram_[" + hex(w & 0x7FFu, 3) + "] = " + value + ";";
             return "ram_[" + at + " & 0x7FFu] = " + value + ";";
         }
-        if (m == Mode::abs && w >= 0x8000u) return std::string("(void)0; /* NROM: no register */");
+        if (m == Mode::abs && w >= 0x8000u) {
+            if (banked()) {
+                /* the write selects the bank; reached from the switchable
+                 * window, the region leaves (the dispatcher resumes under
+                 * the bank the game mapped — nothing follows a bank switch
+                 * but a jump into the fixed window) and from the fixed one
+                 * the bytes it runs on do not move */
+                if (in.bank != BANK_FIXED) after = "{ pc_ = " + hex(in.next) + "; goto out; }";
+                return "nes_bus_write(" + hex(w) + ", " + value + ");";
+            }
+            return std::string("(void)0; /* NROM: no register */");
+        }
         /* $4014: the DMA's stall is the dispatcher's, taken before the next
          * instruction (precise: whenever the address may be it) */
         if (m == Mode::abs && w == 0x4014u) after = "{ pc_ = " + hex(in.next) + "; goto out; }";
@@ -483,7 +545,7 @@ void Emitter::emit_ins(std::ostream& o, const Ins& in) {
             rmw_rd = "ram_[" + at + idx + "]";
             rmw_wr = "ram_[" + at + idx + "] = r_;";
         } else {
-            rmw_rd = "nes_gen_rd(" + at + ", " + hex(opt_.prg_size - 1) + "u)";
+            rmw_rd = "nes_gen_rd(" + at + ")";
             rmw_wr = "nes_gen_wr(" + at + ", r_);";
         }
         /* $4014 may hide behind an indexed address (precise mode stalls) */
@@ -665,25 +727,25 @@ void Emitter::emit_ins(std::ostream& o, const Ins& in) {
 }
 
 void Emitter::emit_region(std::ostream& o, int r) {
-    const auto& addrs = regions_[size_t(r)];
+    const auto& keys = regions_[size_t(r)];
     o << "\nstatic int32_t r_" << r << "(int32_t budget, unsigned entry) {\n"
       << "    NES_LOAD();\n    NES_RAM_BASE();\n    uint16_t pc_;\n    int ni;\n"
       << "    switch (entry) {\n";
-    for (uint16_t a : addrs) {
-        const Ins& in = ins_.at(a);
-        if (in.label) o << "    case " << in.local << ": goto L_" << hex(a).substr(2) << ";\n";
+    for (uint32_t k : keys) {
+        const Ins& in = ins_.at(k);
+        if (in.label) o << "    case " << in.local << ": goto " << label(k) << ";\n";
     }
     o << "    default: __builtin_unreachable();\n    }\n";
-    for (size_t i = 0; i < addrs.size(); i++) {
-        const Ins& in = ins_.at(addrs[i]);
+    for (size_t i = 0; i < keys.size(); i++) {
+        const Ins& in = ins_.at(keys[i]);
         if (in.label) {
-            o << "L_" << hex(in.addr).substr(2) << ":";
+            o << label(keys[i]) << ":";
             if (!opt_.precise) o << " if (budget <= 0) { pc_ = " << hex(in.addr) << "; goto out; }";
             o << "\n";
         }
         emit_ins(o, in);
         /* the region's last instruction falls into the next one's place */
-        if (i + 1 == addrs.size() && in.falls && in.info.op != Op::jmp) o << "    " << go(in, in.next) << "\n";
+        if (i + 1 == keys.size() && in.falls && in.info.op != Op::jmp) o << "    " << go(in, in.next) << "\n";
     }
     o << "out:\n    NES_SAVE(); NES_C.pc = pc_; return budget;\n"
       << "chain:\n    NES_SAVE(); NES_C.pc = pc_; nes_gen_next = ni; return budget;\n"
@@ -710,7 +772,7 @@ std::string Emitter::run(const std::vector<CoverageEntry>& coverage, EmitStats& 
     for (size_t r = 0; r < regions_.size(); r++) emit_region(o, int(r));
 
     std::vector<const Ins*> entries;
-    for (const auto& [a, in] : ins_) if (in.label) entries.push_back(&in);
+    for (const auto& [k, in] : ins_) if (in.label) entries.push_back(&in);
     stats.regions = regions_.size();
     stats.entries = entries.size();
     const size_t count = std::max<size_t>(entries.size(), 1);
@@ -726,28 +788,40 @@ std::string Emitter::run(const std::vector<CoverageEntry>& coverage, EmitStats& 
     o << "\n};\nstatic const uint16_t entry_local[" << count << "] = {";
     for (size_t i = 0; i < entries.size(); i++) o << (i % 16 ? " " : "\n    ") << entries[i]->local << ",";
     if (entries.empty()) o << "0";
-    /* open addressing over the entry addresses, twice as many slots as
-     * entries: one multiply and usually one probe */
+    /* open addressing over the entry keys, twice as many slots as
+     * entries: one multiply and usually one probe.  The key is the PC,
+     * and the bank context with it when the window at $8000 is
+     * switchable: the dispatcher enters an entry only under the bank it
+     * was decoded from (the fixed window and NROM carry 0xFF). */
+    const bool bank_lookup = banked();
     unsigned bits = 4;
     while ((size_t(1) << bits) < entries.size() * 2) bits++;
     const size_t slots = size_t(1) << bits;
     std::vector<uint32_t> slot(slots, 0xFFFFu);
     for (size_t i = 0; i < entries.size(); i++) {
-        size_t h = uint32_t(entries[i]->addr * 0x9E3779B1u) >> (32 - bits);
+        const uint32_t k = key(entries[i]->addr, entries[i]->bank);
+        size_t h = uint32_t(k * 0x9E3779B1u) >> (32 - bits);
         while (slot[h] != 0xFFFFu) h = (h + 1) & (slots - 1);
         slot[h] = uint32_t(i);
     }
+    o << "\n};\nstatic const uint8_t entry_bank[" << count << "] = {";
+    for (size_t i = 0; i < entries.size(); i++) o << (i % 16 ? " " : "\n    ") << hex(entries[i]->bank, 2) << ",";
+    if (entries.empty()) o << "0";
     o << "\n};\nstatic const uint16_t entry_slot[" << slots << "] = {";
     for (size_t i = 0; i < slots; i++) o << (i % 12 ? " " : "\n    ") << hex(slot[i]) << ",";
     o << "\n};\n\n"
       << "int nes_gen_lookup(uint16_t pc) {\n"
+      << "    unsigned bank = 0xFFu;\n";
+    if (bank_lookup)
+        o << "    if (pc < 0xC000u) bank = NES_C.bank;\n";
+    o << "    const uint32_t k = ((uint32_t)bank << 16) | pc;\n"
       << "    const int hint = nes_gen_next;\n"
-      << "    if (hint >= 0 && entry_pc[hint] == pc) return hint;\n"
-      << "    unsigned h = ((uint32_t)pc * 0x9E3779B1u) >> " << (32 - bits) << ";\n"
+      << "    if (hint >= 0 && entry_pc[hint] == pc && entry_bank[hint] == bank) return hint;\n"
+      << "    unsigned h = ((uint32_t)k * 0x9E3779B1u) >> " << (32 - bits) << ";\n"
       << "    for (;;) {\n"
       << "        const unsigned i = entry_slot[h];\n"
       << "        if (i == 0xFFFFu) return -1;\n"
-      << "        if (entry_pc[i] == pc) return (int)i;\n"
+      << "        if (entry_pc[i] == pc && entry_bank[i] == bank) return (int)i;\n"
       << "        h = (h + 1u) & " << (slots - 1) << "u;\n"
       << "    }\n}\n\n"
       << "int32_t nes_gen_enter(int entry, int32_t budget) {\n"

@@ -26,9 +26,10 @@ uint8_t nes_bus_read(uint16_t at) {
         return bit;
     }
     if (at >= 0x8000) {
-        /* NROM: a 32 KiB PRG fills $8000-$FFFF, a 16 KiB one mirrors */
-        const uint32_t mask = nes->prg_size - 1; /* sizes are powers of two */
-        return nes->prg[(uint32_t)(at - 0x8000) & mask];
+        /* the cartridge's two windows: the bank at $8000-$BFFF, the fixed
+         * one at $C000-$FFFF (NROM: the PRG fills $8000-$FFFF, a 16 KiB
+         * one mirrors) */
+        return nes->prg[(at & 0x3FFF) + (at >= 0xC000 ? nes->cpu.fixed_base : nes->cpu.bank_base)];
     }
     return 0; /* the APU's registers and the expander read open bus */
 }
@@ -36,6 +37,17 @@ uint8_t nes_bus_read(uint16_t at) {
 void nes_bus_write(uint16_t at, uint8_t value) {
     nes_t *nes = &machine;
     if (at < 0x2000) { nes->ram[at & 0x7FF] = value; return; }
+    if (at >= 0x8000) {
+        /* UxROM: the write's value is the bank the $8000 window maps (the
+         * bus conflict is ignored: the games' write tables agree with the
+         * ROM byte); NROM has no register */
+        if (nes->cpu.banked) {
+            const unsigned banks = (unsigned)(nes->prg_size / 16384u);
+            nes->cpu.bank = (uint8_t)(value & (banks - 1));
+            nes->cpu.bank_base = (uint32_t)nes->cpu.bank * 16384u;
+        }
+        return;
+    }
     if (at < 0x4000) { nes_ppu_write(&nes->ppu, at & 7, value); return; }
     if (at == 0x4014) { /* OAM DMA: 256 bytes, the CPU stalls for it */
         for (unsigned i = 0; i < 256; i++)
@@ -72,15 +84,29 @@ void nes_init(const uint8_t *prg, uint32_t prg_bytes,
     for (unsigned i = 0; i < sizeof palette; i++) palette[i] = 0;
     nes->prg = prg;
     nes->prg_size = prg_bytes;
-    nes->chr = chr_bytes >= 8192 ? chr : 0;
-    /* the CPU's fast paths (6502.c): RAM and the NROM window */
+#ifndef NES_CHR_RAM
+#define NES_CHR_RAM 0
+#endif
+    const int chr_is_ram = chr_bytes == 0 || NES_CHR_RAM;
+    if (chr_is_ram) {
+        for (unsigned i = 0; i < sizeof nes->chr_ram; i++) nes->chr_ram[i] = 0;
+        nes->chr = nes->chr_ram;
+    } else {
+        nes->chr = chr;
+    }
+    /* the CPU's fast paths (6502.c): RAM, the two PRG windows */
     nes->cpu.ram = nes->ram;
     nes->cpu.prg = prg;
-    nes->cpu.prg_mask = prg_bytes - 1;
+    nes->cpu.bank_base = 0;
+    nes->cpu.fixed_base = prg_bytes - 16384u;
+    nes->cpu.bank = 0;
+    nes->cpu.banked = (uint8_t)(prg_bytes > 32768u);
+    nes->cpu.bank_count = (uint8_t)(prg_bytes / 16384u);
     nes->ppu.nametable = nametable;
     nes->ppu.palette = palette;
     nes->ppu.oam = nes->oam;
     nes->ppu.chr = nes->chr;
+    nes->ppu.chr_writable = (uint8_t)chr_is_ram;
     nes->ppu.vertical_mirror = vertical_mirror != 0;
 #ifdef NES_PPU_REFERENCE
     nes->ppu.render_row = row_bridge;

@@ -330,7 +330,14 @@ au calcul échantillon par échantillon.
 ## Recompilation 6502 (NES)
 
 Le code NES suit le même plan que le Z80, avec un runtime plus simple :
-NROM ne change jamais de banque, la PRG est une constante.
+NROM ne change jamais de banque, la PRG est une constante. Une cartouche
+UxROM (mapper 2) commute la fenêtre $8000-$BFFF par une écriture dans
+$8000-$FFFF ; comme le HuC6280 et son MPR, une instance d'instruction est
+une adresse sous une banque : la couverture note la banque de la lecture
+(`ADRES:BB`), le décodage et les entrées la portent, et le dispatcheur
+n'entre que si la banque est toujours celle-là (la fenêtre fixe
+$C000-$FFFF et tout NROM partagent le contexte 0xFF). La CHR-RAM se remplit
+par $2007.
 
 - **Sélection** : les vecteurs (RESET, NMI, IRQ), les adresses du profil
   (harness `--interp --coverage f`, lignes `adresse exécutions [d]`, `d`

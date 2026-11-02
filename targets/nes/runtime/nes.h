@@ -43,6 +43,8 @@ typedef struct {
     nes_apu_t apu;
     uint8_t ram[2048];
     uint8_t oam[256];
+    uint8_t chr_ram[8192]; /* CHR-RAM cartridges': the PPU writes it through
+                            * $2007 (ROM cartridges leave the board's) */
     const uint8_t *prg;
     uint32_t prg_size;
     const uint8_t *chr;

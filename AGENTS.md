@@ -139,7 +139,9 @@ built firmware in it (`ESPBOY_PIO` for the build).
 - NES (`--target meta`, `--target pokitto` and the desktop harness,
   `recompiler/src/system/nes/generator.cpp`, runtime in
   `targets/nes/runtime/`): 6502 with cycles, per-line 2C02 with sprite-0
-  and loopy v/t, NROM only. The 6502 code is recompiled to C
+  and loopy v/t, NROM and UxROM (mapper 2: the $8000 window's bank is an
+  instruction context, as the PCE's MPR — an entry is entered only under
+  its bank; CHR-RAM fills through $2007). The 6502 code is recompiled to C
   (`recompiler/src/system/nes/emitter.cpp`, `nes_gen.h`; the dispatcher
   and its interpreter fallback in `6502.c` under `NES_NATIVE`;
   `--nes-interp` for an interpreter-only project); profiles come from the

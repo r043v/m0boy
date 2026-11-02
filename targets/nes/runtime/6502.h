@@ -19,10 +19,19 @@ typedef struct {
     uint32_t stall_pending; /* OAM DMA: master cycles the core must burn */
     uint32_t cycles;    /* master cycles consumed since reset */
     /* the bus's fast paths: RAM at $0000-$1FFF and the cartridge at
-     * $8000+, which is where nearly every access lands (nes.c fills them) */
+     * $8000+, which is where nearly every access lands (nes.c fills them).
+     * The PRG sits behind two windows: $8000-$BFFF maps bank_base (0 on
+     * NROM), $C000-$FFFF maps fixed_base (NROM 32 KiB: its second half,
+     * banked: the last 16 KiB bank); an access reads
+     * prg[(at & 0x3FFF) + window], and banked is the UxROM-style mapper a
+     * write to $8000-$FFFF selects through bank. */
     uint8_t *ram;
     const uint8_t *prg;
-    uint32_t prg_mask;
+    uint32_t bank_base;
+    uint32_t fixed_base;
+    uint8_t bank;
+    uint8_t banked;
+    uint8_t bank_count; /* the PRG's 16 KiB banks (1 when unbanked) */
 } nes6502_t;
 
 /* p: N V - B D I Z C */
@@ -41,6 +50,9 @@ void nes6502_reset(nes6502_t *cpu);
  * and the budget is spent. */
 void nes6502_run(nes6502_t *cpu, uint32_t cycles);
 void nes6502_stall(nes6502_t *cpu, uint32_t cycles); /* OAM DMA, pauses */
+/* NES_COVERAGE builds: the coverage tables to the cartridge's banks
+ * (bank_count switchable slots, then the fixed one) */
+void nes_coverage_init(unsigned banks);
 
 #endif
 

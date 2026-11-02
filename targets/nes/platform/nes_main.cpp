@@ -44,7 +44,9 @@
 #endif
 extern "C" {
 extern const uint8_t nes_prg[];
+#if !NES_CHR_RAM
 extern const uint8_t nes_chr[];
+#endif
 }
 
 #if M0_TARGET_PC
@@ -244,7 +246,11 @@ static void frame(void *) {
 
 int main() {
     SG_PLATFORM_INIT();
-    nes_init(nes_prg, NES_PRG_SIZE, NES_CHR_SIZE ? nes_chr : 0, NES_CHR_SIZE, NES_VERTICAL_MIRROR);
+#if NES_CHR_RAM
+    nes_init(nes_prg, NES_PRG_SIZE, 0, 0, NES_VERTICAL_MIRROR); /* the game uploads its CHR */
+#else
+    nes_init(nes_prg, NES_PRG_SIZE, nes_chr, NES_CHR_SIZE, NES_VERTICAL_MIRROR);
+#endif
 #if M0_TARGET_PC && defined(NES_PPU_REFERENCE)
     machine.row = native_row;
 #else

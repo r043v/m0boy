@@ -8,6 +8,10 @@
 #endif
 #include "6502.h"
 #include "nes_native.h"
+#ifdef NES_COVERAGE
+#include <stdio.h>
+#include <stdlib.h>
+#endif
 
 /* The interpreter's hot state — PC, the stack pointer and the bus's two
  * hot windows — lives in nes6502_run's locals, in registers: a read is a
@@ -17,7 +21,8 @@
  * run loop's reach, which nes6502_reset steps around with nes_rd. */
 #define rd(cpu, at) (__extension__({ (void)(cpu); uint16_t a_ = (at); \
     a_ < 0x2000u ? ram_[a_ & 0x7FFu] \
-    : a_ >= 0x8000u ? prg_[(uint32_t)(a_ - 0x8000u) & prg_mask_] : nes_bus_read(a_); }))
+    : a_ >= 0x8000u ? prg_[(a_ & 0x3FFFu) + (a_ >= 0xC000u ? fixed_base_ : cpu->bank_base)] \
+    : nes_bus_read(a_); }))
 #define wr(cpu, at, v) do { (void)(cpu); uint16_t a_ = (at); \
     if (a_ < 0x2000u) ram_[a_ & 0x7FFu] = (v); else nes_bus_write(a_, (v)); } while (0)
 #define push(cpu, v) do { (void)(cpu); ram_[0x100u | s_] = (v); s_--; } while (0)
@@ -96,15 +101,28 @@ void nes6502_stall(nes6502_t *cpu, uint32_t cycles) { cpu->stall_pending += cycl
 #define NES_INTERP_FN void nes6502_run
 #endif
 #ifdef NES_COVERAGE
-/* the harness's --coverage: executions per PRG address, the addresses a
- * dynamic transfer (RTS, RTI, JMP (ind)) landed on — the recompiler's
- * entries the static walk cannot see — and the distinct addresses played,
- * the explorer's novelty (m0_explore.h) */
-uint32_t nes_coverage_hits[0x8000];
-uint8_t nes_coverage_dynamic[0x8000];
+/* the harness's --coverage: executions per PRG address in its bank
+ * context (the switchable bank mapped at the fetch, the fixed window at
+ * $C000-$FFFF, slot bank_count), the addresses a dynamic transfer (RTS,
+ * RTI, JMP (ind)) landed on — the recompiler's entries the static walk
+ * cannot see — and the distinct addresses played, the explorer's novelty
+ * (m0_explore.h).  The tables are allocated to the cartridge's banks
+ * (nes_coverage_init, the host calls it before nes_init). */
+uint32_t *nes_coverage_hits;
+uint8_t *nes_coverage_dynamic;
 uint32_t nes_coverage_locations;
-#define COVER(pc) do { if ((pc) >= 0x8000u && !nes_coverage_hits[(pc) - 0x8000u]++) nes_coverage_locations++; } while (0)
-#define COVER_DYNAMIC(pc) do { if ((pc) >= 0x8000u) nes_coverage_dynamic[(pc) - 0x8000u] = 1; } while (0)
+void nes_coverage_init(unsigned banks) {
+    nes_coverage_hits = calloc((size_t)(banks + 1) * 0x8000u, sizeof *nes_coverage_hits);
+    nes_coverage_dynamic = calloc((size_t)(banks + 1) * 0x8000u, 1);
+    if (!nes_coverage_hits || !nes_coverage_dynamic) { fprintf(stderr, "no memory for coverage\n"); exit(2); }
+}
+#define COVER(pc) do { if ((pc) >= 0x8000u) { \
+    const unsigned slot_ = !cpu->banked ? 0u : (pc) >= 0xC000u ? cpu->bank_count : cpu->bank; \
+    uint32_t *hit_ = &nes_coverage_hits[slot_ * 0x8000u + ((pc) - 0x8000u)]; \
+    if (!(*hit_)++) nes_coverage_locations++; } } while (0)
+#define COVER_DYNAMIC(pc) do { if ((pc) >= 0x8000u) { \
+    const unsigned slot_ = !cpu->banked ? 0u : (pc) >= 0xC000u ? cpu->bank_count : cpu->bank; \
+    nes_coverage_dynamic[slot_ * 0x8000u + ((pc) - 0x8000u)] = 1; } } while (0)
 #else
 #define COVER(pc) do { } while (0)
 #define COVER_DYNAMIC(pc) do { } while (0)
@@ -118,7 +136,9 @@ NES_INTERP_FN(nes6502_t *cpu, uint32_t until) {
     uint8_t s_ = cpu->s;
     uint8_t *ram_ = cpu->ram;
     const uint8_t *prg_ = cpu->prg;
-    uint32_t prg_mask_ = cpu->prg_mask;
+    /* the fixed window never moves; the bank at $8000 does, mid-slice
+     * (a banked game's write to $8000-$FFFF): read cpu->bank_base live */
+    const uint32_t fixed_base_ = cpu->fixed_base;
     uint32_t left;
     while (budget > 0) {
         if (cpu->stall_pending) { /* the slice ends where the DMA bit */

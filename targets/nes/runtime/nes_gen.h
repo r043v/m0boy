@@ -37,10 +37,13 @@ extern const uint8_t nes_prg[];
  * Thumb-1's immediate offsets, and a base register saves an add per access */
 #define NES_RAM_BASE() uint8_t *const ram_ = machine.ram
 
-/* the bus outside RAM and ROM, as the interpreter sees it */
-static inline __attribute__((always_inline)) uint8_t nes_gen_rd(uint16_t at, uint32_t prg_mask) {
+/* the bus outside the folded constants, as the interpreter sees it: RAM
+ * direct, the PRG through its two windows (the bank at $8000-$BFFF is the
+ * machine's — banked cartridges switch it at run time), the rest the bus */
+static inline __attribute__((always_inline)) uint8_t nes_gen_rd(uint16_t at) {
     if (at < 0x2000u) return NES_RAM[at & 0x07FFu];
-    if (at >= 0x8000u) return nes_prg[((uint32_t)at - 0x8000u) & prg_mask];
+    if (at >= 0x8000u)
+        return nes_prg[(at & 0x3FFFu) + (at >= 0xC000u ? NES_C.fixed_base : NES_C.bank_base)];
     return nes_bus_read(at);
 }
 static inline __attribute__((always_inline)) void nes_gen_wr(uint16_t at, uint8_t v) {

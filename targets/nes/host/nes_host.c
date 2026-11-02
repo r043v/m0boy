@@ -22,7 +22,9 @@
 #ifdef NES_EMBEDDED
 #include "../src/nes_config.h"
 extern const uint8_t nes_prg[];
+#if !NES_CHR_RAM
 extern const uint8_t nes_chr[];
+#endif
 #endif
 
 #define AUDIO_RATE 11025u
@@ -31,8 +33,8 @@ extern const uint8_t nes_chr[];
 extern int nes_native;
 #endif
 #ifdef NES_COVERAGE
-extern uint32_t nes_coverage_hits[0x8000];
-extern uint8_t nes_coverage_dynamic[0x8000];
+extern uint32_t *nes_coverage_hits;
+extern uint8_t *nes_coverage_dynamic;
 extern uint32_t nes_coverage_locations; /* distinct addresses played: the explorer's novelty */
 #endif
 
@@ -208,8 +210,13 @@ int main(int argc, char **argv) {
     uint32_t prg_bytes, chr_bytes;
     if (!rom_path) {
 #ifdef NES_EMBEDDED
-        prg = (uint8_t *)nes_prg; chr = (uint8_t *)nes_chr;
-        prg_bytes = NES_PRG_SIZE; chr_bytes = NES_CHR_SIZE;
+        prg = (uint8_t *)nes_prg;
+        prg_bytes = NES_PRG_SIZE;
+#if NES_CHR_RAM
+        chr = 0; chr_bytes = 0; /* the machine's chr_ram carries it */
+#else
+        chr = (uint8_t *)nes_chr; chr_bytes = NES_CHR_SIZE;
+#endif
         header[6] = (uint8_t)(NES_VERTICAL_MIRROR ? 1 : 0);
 #else
         fprintf(stderr, "usage: nes_host rom.nes [--frames n] [--ppm f] [--wav f] [--input f] "
@@ -244,6 +251,9 @@ int main(int argc, char **argv) {
     }
 #endif
     (void)interp;
+#ifdef NES_COVERAGE
+    nes_coverage_init(prg_bytes / 16384u);
+#endif
     nes_init(prg, prg_bytes, chr, chr_bytes, header[6] & 1);
     machine.row = on_row;
     machine.ppu.panel = on_panel;
@@ -312,10 +322,20 @@ int main(int argc, char **argv) {
     if (coverage) {
         FILE *out = fopen(coverage, "w");
         if (!out) { fprintf(stderr, "cannot write %s\n", coverage); return 2; }
-        fprintf(out, "# m0boy NES coverage: address executions [d = reached by RTS/RTI/JMP (ind)/interrupt]\n");
-        for (unsigned i = 0; i < 0x8000; i++)
-            if (nes_coverage_hits[i])
-                fprintf(out, "%04X %u%s\n", 0x8000u + i, (unsigned)nes_coverage_hits[i], nes_coverage_dynamic[i] ? " d" : "");
+        fprintf(out, "# m0boy NES coverage: address[bank] executions [d = reached by RTS/RTI/JMP (ind)/interrupt]\n");
+        const unsigned banks = machine.cpu.banked ? machine.cpu.bank_count : 0;
+        for (unsigned slot = 0; slot <= banks; slot++)
+            for (unsigned i = 0; i < 0x8000; i++)
+                if (nes_coverage_hits[slot * 0x8000u + i]) {
+                    if (slot < banks)
+                        fprintf(out, "%04X:%02X %u%s\n", 0x8000u + i, slot,
+                                (unsigned)nes_coverage_hits[slot * 0x8000u + i],
+                                nes_coverage_dynamic[slot * 0x8000u + i] ? " d" : "");
+                    else
+                        fprintf(out, "%04X %u%s\n", 0x8000u + i,
+                                (unsigned)nes_coverage_hits[slot * 0x8000u + i],
+                                nes_coverage_dynamic[slot * 0x8000u + i] ? " d" : "");
+                }
         fclose(out);
     }
 #endif

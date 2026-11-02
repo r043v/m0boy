@@ -162,8 +162,11 @@ void nes_ppu_write(nes_ppu_t *ppu, unsigned reg, uint8_t value) {
         } else if (at >= 0x2000) {
             ppu->nametable[mirror(ppu, at)] = value;
             nt_writes++; /* the panel renderer's tile row is stale */
+        } else if (ppu->chr_writable) {
+            /* CHR-RAM: the game uploads its patterns through $2007 (ROM
+             * boards ignore the write) */
+            ((uint8_t *)ppu->chr)[at & 0x1FFF] = value;
         }
-        /* $0000-$1FFF is CHR ROM on NROM: writes are ignored */
         ppu->v = (uint16_t)(ppu->v + ((ppu->ctrl & CTRL_INC) ? 32 : 1));
         break;
     }

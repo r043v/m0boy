@@ -434,13 +434,167 @@ def pokitto(work):
     return f"firmware {len(fw)} bytes"
 
 
+def unrom_rom():
+    """A UxROM cartridge, 4 banks of 16 KiB and CHR-RAM: the fixed bank
+    (bank 3, at $C000-$FFFF) uploads its tile to the CHR-RAM through $2007,
+    calls a worker in the $8000 window under bank 1, then under bank 2 —
+    the same address, two instructions — and idles for its NMI.  Each
+    worker counts its own RAM cell and folds a read of its own bank's data
+    at $8100; bank 2's also calls a helper in the fixed window and returns
+    into banked code."""
+    fixed, labels = assemble("""
+reset:
+    sei
+    cld
+    ldx #$FF
+    txs
+    lda #$00
+    sta $2000
+    lda #$3F
+    sta $2006
+    lda #$00
+    sta $2006
+    lda #$21          ; the backdrop
+    sta $2007
+    lda #$16          ; colour 1: the tile's stripes
+    sta $2007
+    lda #$00
+    sta $2006
+    lda #$10
+    sta $2006         ; the CHR-RAM's tile 1 (pattern $0010), 16 bytes through $2007
+    ldx #$00
+chr:
+    lda tile,x
+    sta $2007
+    inx
+    cpx #$10
+    bne chr
+    lda #$20
+    sta $2006
+    lda #$00
+    sta $2006         ; the nametable's first entry: tile 1
+    lda #$01
+    sta $2007
+    lda #$1E
+    sta $2001         ; both layers on
+    lda #$00
+    sta $10
+    sta $11
+    sta $12
+    sta $13
+    sta $14
+    sta $15
+    lda #$80
+    sta $2000         ; NMI on
+main:
+    lda #$01
+    sta $FFF0         ; bank 1 into the $8000 window
+    jsr $8000
+    lda #$02
+    sta $FFF0         ; bank 2: the same address, another worker
+    jsr $8000
+    jmp main
+nmi:
+    pha
+    inc $12
+    pla
+    rti
+irq:
+    rti
+tile:
+    .byte $FF, $00, $FF, $00, $FF, $00, $FF, $00
+    .byte $01, $00, $01, $00, $01, $00, $01, $00
+""", origin=0xC000)
+    w1, l1 = assemble("""
+worker:
+    inc $10
+    lda $8100         ; bank 1's own data through the window
+    sta $13
+    rts
+    .byte $AA, $BB, $CC, $DD
+""")
+    w2, l2 = assemble("""
+worker:
+    inc $11
+    lda $8100         ; bank 2's data: the same fold, another bank
+    sta $14
+    jsr $C100         ; the fixed window's helper, and back
+    rts
+""")
+    helper, lh = assemble("""
+helper:
+    inc $15
+    rts
+""", origin=0xC100)
+
+    def bank(code, fill=b"\xEA"):
+        assert len(code) <= 16384
+        return code.ljust(16384, fill)
+
+    b1, b2, b3 = bank(w1), bank(w2), bytearray(bank(fixed))
+    b3[0x100:0x100 + len(helper)] = helper  # the helper at $C100, as bank 2 calls it
+    # each bank's own data at $8100, where its worker folds a read
+    b1 = bytearray(b1); b2 = bytearray(b2)
+    b1[0x100:0x104] = bytes([0x40, 0x41, 0x42, 0x43])
+    b2[0x100:0x104] = bytes([0x80, 0x81, 0x82, 0x83])
+    vectors = bytes([labels["nmi"] & 0xFF, labels["nmi"] >> 8,
+                     labels["reset"] & 0xFF, labels["reset"] >> 8,
+                     labels["irq"] & 0xFF, labels["irq"] >> 8])
+    b3 = bytes(b3[:-6]) + vectors
+    # bank 0 is a filler the game never maps; workers land in banks 1 and 2
+    return bytes([0x4E, 0x45, 0x53, 0x1A, 4, 0, 0x20, 0x00] + [0] * 8) + b"\xEA" * 16384 + b1 + b2 + b3
+
+
+def unrom(work):
+    """the banked cartridge: the picture, the banked coverage, and the
+    recompiled code under its bank contexts (static and profiled) equal
+    the interpreter"""
+    rom = work / "unrom.nes"
+    rom.write_bytes(unrom_rom())
+    frames = ("--frames", "120")
+    host = project(rom, work / "unrom-interp", "--nes-interp")
+    out = run(host, *frames)
+    panel_ok(out, 120 * 128)
+    reference = run_hash(out)
+    assert reference == run_hash(run(host, *frames)), "unstable run"
+    run(host, *frames, "--ppm", work / "unrom.ppm")
+    body = (work / "unrom.ppm").read_bytes().split(b"\n255\n", 1)[1]
+    px = body[(0 * 256 + 6) * 3:(0 * 256 + 6) * 3 + 3]
+    # the CHR-RAM tile's first row: colour 1 of palette 0 ($16, red)
+    assert px[0] > 150 and px[1] < 100, f"the CHR-RAM tile did not show: {tuple(px)}"
+    px = body[(1 * 256 + 6) * 3:(1 * 256 + 6) * 3 + 3]
+    # its second row is colour 0: the backdrop ($21, blue)
+    assert px[2] > 200 and px[0] < 100, f"the backdrop did not show: {tuple(px)}"
+
+    coverage = work / "unrom.cov"
+    run(host, *frames, "--coverage", coverage)
+    text = coverage.read_text()
+    for line in (":01 ", ":02 "):
+        assert line in text, f"no banked coverage line '{line}...' in the file"
+    assert " d" in text, "no dynamic entry in the coverage file"
+
+    host = project(rom, work / "unrom-precise", "--meta-precise")
+    native = run_hash(run(host, *frames))
+    assert native == reference, f"precise static walk {native} != interpreter {reference}"
+    host = project(rom, work / "unrom-profiled", "--meta-precise", "--coverage", coverage)
+    native = run_hash(run(host, *frames))
+    assert native == reference, f"precise with coverage {native} != interpreter {reference}"
+
+    state = work / "unrom.state"
+    run(host, "--frames", "60", "--save-state", state)
+    resumed = run(host, "--frames", "60", "--load-state", state)
+    assert run_hash(resumed) == native, "native UNROM state did not resume precisely"
+    return reference
+
+
 def main():
     work = Path(tempfile.mkdtemp(prefix="nes_e2e_"))
     h = picture(work)
     r = recompiler(work)
+    u = unrom(work)
     p = pokitto(work)
-    print("ok: NES e2e (picture stable", h + "; recompiled precise = interpreter", r + ", static and profiled; Pokitto",
-          p + ")")
+    print("ok: NES e2e (picture stable", h + "; recompiled precise = interpreter", r + ", static and profiled; UNROM",
+          u + "; Pokitto", p + ")")
 
 
 if __name__ == "__main__":

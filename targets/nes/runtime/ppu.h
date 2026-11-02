@@ -33,7 +33,9 @@ typedef struct {
     uint8_t *nametable;  /* 2 KiB, mirrored per the cartridge */
     uint8_t *palette;    /* 32 bytes */
     uint8_t *oam;        /* 256 bytes (the machine's, DMA'd) */
-    const uint8_t *chr;  /* 8 KiB CHR (ROM on NROM) */
+    const uint8_t *chr;  /* 8 KiB CHR (ROM on NROM, the machine's chr_ram
+                          * when the board has CHR-RAM) */
+    uint8_t chr_writable; /* CHR-RAM: $2007 writes under $2000 fill it */
     unsigned vertical_mirror;
     uint8_t oam_dirty;   /* OAM or the sprite size changed: the per-line
                           * sprite masks are rebuilt before the next use
