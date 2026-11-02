@@ -18,6 +18,11 @@
  *                         pixels, so skipping unchanged lines is exact.
  * GBL_PPU_PAL32           Convert background pixels four at a time with a
  *                         2 KiB table (gm0's pal32) instead of two at a time.
+ * GBL_ACCESS_BLOCK        CPU access blocking by PPU mode, as on the hardware:
+ *                         VRAM reads $FF / writes dropped in mode 3, OAM in
+ *                         modes 2-3 (SameBoy and Gambatte agree).  Costs the
+ *                         direct VRAM page; off by default (firmware speed),
+ *                         on for accuracy hosts (deepeel).
  * GBL_VRAM_HOOK           Route VRAM writes through gbl_vram_wr().  Forced on
  *                         by the two options above.
  * GBL_GEN_OPTIMIZE_SIZE   Compile generated code with -Os (it is a small part
@@ -282,6 +287,9 @@
 #endif
 #ifndef GBL_VRAM_HOOK
 #define GBL_VRAM_HOOK 0
+#endif
+#ifndef GBL_ACCESS_BLOCK
+#define GBL_ACCESS_BLOCK 0
 #endif
 #if GBL_LOOKUP_CACHE & (GBL_LOOKUP_CACHE - 1) || GBL_LOOKUP_CACHE > 256
 #error "GBL_LOOKUP_CACHE must be 0 or a power of two up to 256"

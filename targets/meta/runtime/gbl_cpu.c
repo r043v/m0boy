@@ -385,9 +385,17 @@ void gbl_interp_block(void) {
         gbl_rom_fetch = 0;
 #endif
         gbr.pc = (uint16_t)(pc + 1);
-        gbr.cyc += cyc_main[op];
         gbl_interp_instrs++;
-        uint32_t flags = exec_op(op, n8, n16, pc);
+        uint32_t flags;
+        if (gbl_acc_last[op]) {
+            /* single data access in the last M-cycle (gbl_cycles.h) */
+            gbr.cyc += cyc_main[op] - 4u;
+            flags = exec_op(op, n8, n16, pc);
+            gbr.cyc += 4u;
+        } else {
+            gbr.cyc += cyc_main[op];
+            flags = exec_op(op, n8, n16, pc);
+        }
         int jump = (int)(flags & 1u);
         if (flags & 2u) ei_delay = 1;
 #ifdef GBL_COVERAGE

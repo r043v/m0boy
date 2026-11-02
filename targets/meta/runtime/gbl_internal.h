@@ -32,7 +32,8 @@ void gbl_apu_reset(void);
 uint8_t gbl_apu_read(uint8_t n);
 void gbl_apu_write(uint8_t n, uint8_t v);
 
-uint8_t gbl_rd_slow(uint16_t a);         /* gbl_rd for unmapped pages */
+uint8_t gbl_rd_slow(uint16_t a);
+int gbl_ppu_blocked(int what);        /* GBL_ACCESS_BLOCK: 1 VRAM, 2 OAM */         /* gbl_rd for unmapped pages */
 void gbl_wr_slow(uint16_t a, uint8_t v); /* gbl_wr for unmapped pages */
 
 /* Interpreter state kept in RAM for gbl_interp_asm.S (gbl_core.c). */

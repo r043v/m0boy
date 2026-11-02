@@ -1198,7 +1198,11 @@ void Generator::detect_spin_loops() {
             int period = 0, read_ofs = 0;
             for (size_t j = 0; j < body.size(); j++) {
                 period += body[j]->cycles;
-                if (static_cast<int>(j) == timed) read_ofs = period;
+                if (static_cast<int>(j) == timed) {
+                    read_ofs = period;
+                    /* the access lands 4 cycles before the end (gbl_acc_last) */
+                    if (body[j]->cycles >= 8 && gbl_acc_last[body[j]->op]) read_ofs -= 4;
+                }
             }
             if (b.flow == Flow::JumpCond) period += b.extra;
             t->spin_head = true;
@@ -1480,7 +1484,11 @@ void Generator::emit_ins(std::ostringstream& o, Ins& in, const Ins* following,
         flush(o);
         if (!after_ei) o << "    SYNC(" << hex(in.addr, 4) << ");\n";
     }
-    pend_ += in.cycles;
+    /* precise (and a timed read): an opcode whose data access falls in its
+     * last M-cycle runs its body 4 cycles before the end, as the interpreter
+     * does (gbl_acc_last, gbl_cycles.h) */
+    const bool last_acc = (opt_.precise || in.spin_read) && !replacement && in.cycles >= 8 && gbl_acc_last[op];
+    pend_ += last_acc ? in.cycles - 4 : in.cycles;
     if (opt_.precise || in.spin_read) flush(o); /* a timed read sees the exact cycle */
 
     auto rd = [&](unsigned r) { return r == 6 ? std::string("gbl_rd(gbr.hl)") : std::string(kR8[r]); };
@@ -1709,6 +1717,7 @@ void Generator::emit_ins(std::ostringstream& o, Ins& in, const Ins* following,
     }
 
     /* Sequential continuation. */
+    if (last_acc) pend_ += 4;
     if (after_ei && !opt_.precise) sync_after = true;
     if (sync_after && !opt_.precise) {
         flush(o);

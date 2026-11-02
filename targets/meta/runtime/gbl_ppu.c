@@ -31,6 +31,7 @@
 #define LINE_CYCLES 456u
 #define MODE3_START 80u
 #define MODE0_START 252u
+#define LY153_CMP 8u /* line 153: LYC sees LY=0 from here (DMG, SameBoy reference) */
 #define FRAME_CYCLES 70224u
 
 uint8_t gbl_skip_render;
@@ -56,8 +57,9 @@ typedef struct {
     uint8_t spr_ly, spr_lo, spr_hi, spr_h; /* select_sprites window, valid for spr_ly */
     uint8_t evt_dirty;       /* dev_next must be recomputed */
     uint32_t dev_next;       /* earliest device event (gbl_update_evt) */
+    uint16_t m0_start;       /* C line state machine: this line's mode 0 offset */
 } gbl_ppu_state_t;
-gbl_ppu_state_t gbl_ppu_state = {.next_stage_off = 80u, .evt_dirty = 1};
+gbl_ppu_state_t gbl_ppu_state = {.next_stage_off = 80u, .evt_dirty = 1, .m0_start = 252u};
 #define P gbl_ppu_state
 
 #define GBL_CHECK_OFS(type, field, ofs) _Static_assert(offsetof(type, field) == ofs, #field)
@@ -182,14 +184,21 @@ static inline __attribute__((always_inline)) void stat_update(void) {
     stat_line = line;
 }
 
+/* LY as the CPU and the LYC comparator see it.  On the DMG, line 153 reads
+ * 153 only for its first cycles, then 0 for the rest of the line (SameBoy
+ * reference): stage 1 of line 153 (C line state machine) is that part. */
+static inline __attribute__((always_inline)) uint8_t ly_visible(void) {
+    return (uint8_t)(ly == 153 && stage ? 0 : ly);
+}
+
 static inline __attribute__((always_inline)) void stat_refresh(void) {
     uint8_t s = STAT;
     P.stat_modes = (uint8_t)((s >> 3) & 7u);
-    P.lyc_line = (uint8_t)((s & 0x40) && ly == LYC);
+    P.lyc_line = (uint8_t)((s & 0x40) && ly_visible() == LYC);
 }
 
 static inline __attribute__((always_inline)) void lyc_refresh(void) {
-    P.lyc_line = (uint8_t)((STAT & 0x40) && ly == LYC);
+    P.lyc_line = (uint8_t)((STAT & 0x40) && ly_visible() == LYC);
 }
 
 /* Tile data addressing without per-tile branches: in 0x8800 mode the signed
@@ -849,6 +858,56 @@ void gbl_ppu_advance_off(uint32_t now) {
     update_due();
 }
 
+
+#if !GBL_TIMING_ASM
+/* Mode 3 length of the current line (Pan Docs "Mode 3 length"; SameBoy and
+ * Gambatte agree): 172 dots + SCX%8 + 6 when the window starts on the line +
+ * per object 6 dots, plus (pixels of its leftmost pixel's tile strictly to
+ * the right of that pixel - 2, floored at 0) once per tile, 11 for X=0.
+ * Returns the line offset where mode 0 begins. */
+static uint16_t mode3_end(void) {
+    /* the SCX%8 discard shows on STAT in 2-dot steps (an odd SCX%8 ends mode
+     * 3 like the even value below it), and line 0 runs 2 dots longer; both
+     * measured over ~11k lines against SameBoy (which matches Gambatte) */
+    uint32_t pen = (SCX & 6u) + (ly == 0 ? 2u : 0u);
+    int win = (LCDC & 0x20) && WY <= ly && WX <= 166;
+    int wx0 = (int)WX - 7;
+    if (win) pen += 6;
+    if (LCDC & 0x02) {
+        uint8_t h = (LCDC & 0x04) ? 16 : 8;
+        uint8_t sel[10], n = 0;
+        for (uint8_t i = 0; i < 40 && n < 10; i++) {
+            int y = (int)gbl_oam[i * 4] - 16;
+            if ((int)ly >= y && (int)ly < y + h) sel[n++] = i;
+        }
+        /* leftmost first, ties by OAM index (selection order is by index) */
+        for (uint8_t a = 1; a < n; a++) {
+            uint8_t v = sel[a], b = a;
+            while (b && gbl_oam[sel[b - 1] * 4 + 1] > gbl_oam[v * 4 + 1]) { sel[b] = sel[b - 1]; b--; }
+            sel[b] = v;
+        }
+        int seen_bg[24], seen_win[24], nb = 0, nw = 0;
+        for (uint8_t k = 0; k < n; k++) {
+            int ox = gbl_oam[sel[k] * 4 + 1];
+            if (ox >= 168) continue; /* off the right edge: never reached by the pixel output */
+            if (ox == 0) { pen += 11; continue; }
+            int sx = ox - 8; /* screen column of The Pixel */
+            int inwin = win && sx >= wx0;
+            int px = inwin ? sx - wx0 : sx + (SCX & 7); /* column in the fetched tile grid */
+            int tile = px >> 3, right = 7 - (px & 7);
+            int *seen = inwin ? seen_win : seen_bg, *ns = inwin ? &nw : &nb, dup = 0;
+            for (int q = 0; q < *ns; q++) if (seen[q] == tile) dup = 1;
+            if (!dup) {
+                seen[(*ns)++] = tile;
+                if (right - 2 > 0) pen += (uint32_t)(right - 2);
+            }
+            pen += 6;
+        }
+    }
+    return (uint16_t)(MODE0_START + pen);
+}
+#endif
+
 #if !GBL_TIMING_ASM /* else gbl_timing_asm.S */
 void gbl_ppu_advance(uint32_t now) {
     if (!lcd_on) {
@@ -864,10 +923,11 @@ void gbl_ppu_advance(uint32_t now) {
                 P.evt_dirty = 1;
                 stage = 1;
                 mode = 3;
+                P.m0_start = mode3_end();
                 stat_update();
             }
             if (stage == 1) {
-                if (off < MODE0_START) break;
+                if (off < P.m0_start) break;
                 ppu_moved = 1;
                 P.evt_dirty = 1;
                 render_line();
@@ -875,6 +935,16 @@ void gbl_ppu_advance(uint32_t now) {
                 mode = 0;
                 stat_update();
             }
+        } else if (ly == 153 && stage == 0) {
+            /* line 153: LY reads 0 after LY153_ZERO cycles; the LYC
+             * comparator sees 0 two cycles later (an LYC=0 match fires here,
+             * a line before line 0) */
+            if (off < LY153_CMP) break;
+            ppu_moved = 1;
+            P.evt_dirty = 1;
+            stage = 1;
+            lyc_refresh();
+            stat_update();
         }
         if (off < LINE_CYCLES) break;
         ppu_moved = 1;
@@ -900,7 +970,8 @@ void gbl_ppu_advance(uint32_t now) {
             stat_update();
         }
     }
-    next_stage_off = ly >= 144 || stage == 2 ? LINE_CYCLES : stage == 0 ? MODE3_START : MODE0_START;
+    next_stage_off = ly == 153 ? (stage ? LINE_CYCLES : LY153_CMP)
+                   : ly >= 144 || stage == 2 ? LINE_CYCLES : stage == 0 ? MODE3_START : P.m0_start;
     update_due();
 }
 #endif
@@ -913,14 +984,26 @@ uint32_t gbl_ppu_stable_until(void) {
 static inline uint32_t ppu_next_event(void) {
     if (!lcd_on) return off_start + FRAME_CYCLES;
     uint8_t s = STAT;
+#if GBL_TIMING_ASM
     if (ly < 144 && stage < 2 && (s & 0x08)) return line_start + MODE0_START;
+#else
+    if (ly < 144 && stage == 0 && (s & 0x08)) return line_start + MODE3_START; /* mode 0 offset known at mode 3 */
+    if (ly < 144 && stage == 1 && (s & 0x08)) return line_start + P.m0_start;
+#endif
+    if (ly == 153 && !stage) return line_start + LY153_CMP;
     if (GBL_PPU_BATCH == 1 || (s & 0x20)) return line_start + LINE_CYCLES;
     /* Nothing observable happens inside a batch: the next line start that
      * matters is the batch end, VBlank, the LYC line, or the next frame. */
     uint32_t target = ly < 144 ? ((uint32_t)ly | (GBL_PPU_BATCH - 1u)) + 1u : 154u;
     if (ly < 144 && target > 144) target = 144;
     if ((s & 0x40) && LYC > ly && LYC < target) target = LYC;
-    return line_start + (target - ly) * LINE_CYCLES;
+    uint32_t t = line_start + (target - ly) * LINE_CYCLES;
+    /* an LYC=0 match fires inside line 153 (see LY153_CMP) */
+    if ((s & 0x40) && LYC == 0 && (ly < 153 || !stage)) {
+        uint32_t t153 = line_start + (153u - ly) * LINE_CYCLES + LY153_CMP;
+        if ((int32_t)(t153 - t) < 0) t = t153;
+    }
+    return t;
 }
 
 void gbl_evt_invalidate(void) { P.evt_dirty = 1; }
@@ -949,13 +1032,25 @@ void gbl_update_evt(void) {
 }
 #endif
 
+#if GBL_ACCESS_BLOCK
+/* CPU access blocking by mode (GBL_ACCESS_BLOCK): 1 = VRAM, 2 = OAM. */
+int gbl_ppu_blocked(int what) {
+    ppu_moved = 0;
+    gbl_ppu_sync(gbr.cyc);
+    if (ppu_moved) gbl_update_evt();
+    if (!lcd_on) return 0;
+    return what == 1 ? mode == 3 : (mode == 2 || mode == 3);
+}
+#endif
+
+
 uint8_t gbl_ppu_read(uint8_t n) {
     if (n == 0x41 || n == 0x44) {
         ppu_moved = 0;
         gbl_ppu_sync(gbr.cyc);
         if (ppu_moved) gbl_update_evt();
-        if (n == 0x44) return lcd_on ? ly : 0;
-        return (uint8_t)(0x80 | (STAT & 0x78) | ((lcd_on && ly == LYC) ? 4 : 0) | (lcd_on ? mode : 0));
+        if (n == 0x44) return lcd_on ? ly_visible() : 0;
+        return (uint8_t)(0x80 | (STAT & 0x78) | ((lcd_on && ly_visible() == LYC) ? 4 : 0) | (lcd_on ? mode : 0));
     }
     return gbl_io[n];
 }
@@ -970,13 +1065,25 @@ void gbl_ppu_write(uint8_t n, uint8_t v) {
     case 0x40:
         if ((v & 0x80) && !lcd_on) {
             lcd_on = 1;
-            line_start = gbr.cyc;
+            /* The frame restarted by an enable runs 2 cycles ahead of the
+             * write (SameBoy and Gambatte: the first VBlank after enable is
+             * requested 65662 cycles after the write's bus cycle). */
+            line_start = gbr.cyc - 2u;
             ly = 0;
             stage = 0;
             next_stage_off = MODE3_START;
             mode = 2;
             win_line = 0;
             stat_line = 0;
+            /* LY=0 at enable: a LYC=0 match with the LYC source armed
+             * raises the STAT line at once (SameBoy reference: the IRQ is
+             * taken right after enable, not at the first mode-3 edge).  The
+             * mode sources stay quiet: the first line after enable starts
+             * without a mode-2 OAM search. */
+            LCDC = v;
+            lyc_refresh();
+            if (P.lyc_line) IF |= 0x02;
+            stat_line = P.lyc_line;
         } else if (!(v & 0x80) && lcd_on) {
             lcd_on = 0;
             ly = 0;

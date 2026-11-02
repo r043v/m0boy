@@ -1013,6 +1013,10 @@ typedef struct {
     uint8_t serial_busy;
     uint8_t core_has_next, core_dirty; /* gbl_core_next_event cache */
     uint32_t core_next;
+    /* C timing path: a TIMA overflow requests its interrupt one M-cycle
+     * later (SameBoy reference); the request waits here until then */
+    uint32_t tima_irq_at;
+    uint8_t tima_irq_pending;
 } gbl_timer_state_t;
 gbl_timer_state_t gbl_timer_state = {.core_dirty = 1};
 _Static_assert(offsetof(gbl_timer_state_t, div_base) == GBL_T_DIV_BASE, "div_base");
@@ -1043,16 +1047,34 @@ void gbl_timer_sync(uint32_t now);
 static
 #endif
 void timer_sync(uint32_t now) {
+#if !GBL_TIMING_ASM
+    if (gbl_timer_state.tima_irq_pending && (int32_t)(now - gbl_timer_state.tima_irq_at) >= 0) {
+        gbl_timer_state.tima_irq_pending = 0;
+        IF |= 0x04;
+        core_invalidate();
+    }
+#endif
     if (TAC & 4) {
         uint32_t s = tac_shift[TAC & 3];
-        uint32_t ticks = ((now - div_base) >> s) - ((tima_sync - div_base) >> s);
+        uint32_t done = (tima_sync - div_base) >> s;
+        uint32_t ticks = ((now - div_base) >> s) - done;
         while (ticks) {
             uint32_t room = 256u - TIMA;
             if (ticks < room) { TIMA = (uint8_t)(TIMA + ticks); break; }
             ticks -= room;
+            done += room;
             TIMA = TMA;
             core_invalidate(); /* without a reload the next overflow stays put */
+#if !GBL_TIMING_ASM
+            uint32_t at = div_base + (done << s) + 4u;
+            if ((int32_t)(now - at) >= 0) IF |= 0x04;
+            else {
+                gbl_timer_state.tima_irq_at = at;
+                gbl_timer_state.tima_irq_pending = 1;
+            }
+#else
             IF |= 0x04;
+#endif
         }
     }
     tima_sync = now;
@@ -1061,7 +1083,12 @@ void timer_sync(uint32_t now) {
 static uint32_t timer_next_event(void) {
     uint32_t s = tac_shift[TAC & 3];
     uint32_t done = (tima_sync - div_base) >> s;
-    return div_base + ((done + (256u - TIMA)) << s);
+    uint32_t t = div_base + ((done + (256u - TIMA)) << s);
+#if !GBL_TIMING_ASM
+    if (gbl_timer_state.tima_irq_pending && (int32_t)(gbl_timer_state.tima_irq_at - t) < 0)
+        t = gbl_timer_state.tima_irq_at;
+#endif
+    return t;
 }
 
 /* ---- serial: internal-clock transfers complete with no partner ---------- */
@@ -1088,6 +1115,9 @@ uint32_t gbl_core_next_event(uint32_t best) {
         uint32_t t = 0;
         uint8_t has = 0;
         if (TAC & 4) { t = timer_next_event(); has = 1; }
+#if !GBL_TIMING_ASM
+        else if (gbl_timer_state.tima_irq_pending) { t = gbl_timer_state.tima_irq_at; has = 1; }
+#endif
         if (serial_busy && (!has || (int32_t)(serial_done - t) < 0)) { t = serial_done; has = 1; }
         core_next = t;
         core_has_next = has;
@@ -1347,7 +1377,12 @@ uint8_t gbl_rd_slow(uint16_t a) {
 #endif
     if (a >= 0xFF80) return a == 0xFFFF ? gbl_ie : gbl_hram[a - 0xFF80];
     if (a >= 0xFF00) return gbl_io_rd((uint8_t)a);
+#if GBL_ACCESS_BLOCK
+    if (a >= 0xFE00) return a < 0xFEA0 && !gbl_ppu_blocked(2) ? gbl_oam[a - 0xFE00] : 0xFF;
+    if (a >= 0x8000 && a < 0xA000) return gbl_ppu_blocked(1) ? 0xFF : gbl_vram[a - 0x8000];
+#else
     if (a >= 0xFE00) return a < 0xFEA0 ? gbl_oam[a - 0xFE00] : 0xFF;
+#endif
     if (a >= 0xE000) return gbl_wram[a - 0xE000];
 #if GBL_MBC == 2
     if (a >= 0xA000 && a < 0xC000 && mbc.ram_enable)
@@ -1422,6 +1457,9 @@ void gbl_wr_slow(uint16_t a, uint8_t v) {
     }
     if (a >= 0xFF00) { gbl_io_wr((uint8_t)a, v); return; }
     if (a >= 0xFE00) {
+#if GBL_ACCESS_BLOCK
+        if (a < 0xFEA0 && gbl_ppu_blocked(2)) return;
+#endif
         if (a < 0xFEA0 && gbl_oam[a - 0xFE00] != v) {
             gbl_ppu_sync(gbr.cyc);
             gbl_oam[a - 0xFE00] = v;
@@ -1430,7 +1468,13 @@ void gbl_wr_slow(uint16_t a, uint8_t v) {
         }
         return;
     }
-    if (a >= 0x8000 && a < 0xA000) { gbl_vram_wr((uint16_t)(a - 0x8000), v); return; }
+    if (a >= 0x8000 && a < 0xA000) {
+#if GBL_ACCESS_BLOCK
+        if (gbl_ppu_blocked(1)) return;
+#endif
+        gbl_vram_wr((uint16_t)(a - 0x8000), v);
+        return;
+    }
     if (a >= 0xE000) {
 #if GBL_DEBUG_RESTART && GBL_ERAM_ON_SD
         gbl_dbg_tables.echo_writes++;
@@ -1604,12 +1648,33 @@ int gbl_event(uint16_t resume_pc) {
  * set.  Returns nonzero when control did not come back to resume_pc. */
 void gbl_halt_wait(void) {
     gbl_sync();
+    uint32_t h0 = gbr.cyc;
+    int slept = 0;
     while (!(gbl_ie & IF & 0x1F)) {
+        slept = 1;
         /* next_evt is bounded to one frame and the PPU keeps a virtual frame
          * clock while the LCD is off, so this always makes progress. */
         gbr.cyc = gbr.next_evt;
         gbl_sync();
     }
+    /* DMG HALT exit (SameBoy model, Gambatte agrees on every traced case):
+     * HALT ends at h (on the M-cycle grid: every CPU time is a multiple of
+     * 4 from power-on).  Interrupts are sampled at h, then at h+6, h+10, ...
+     * and the CPU resumes 2 cycles after the sample that sees the request:
+     * already pending at h -> h+4; request at t > h -> max(h+8, (t+5)&~3). */
+    uint32_t t = gbr.cyc;
+    if (h0 & 3u) {
+        /* resumed off the grid after a host cut (deepeel's frame hook ran
+         * inside the wait): only bring the CPU back onto the grid */
+        gbr.cyc = (t & ~3u) + 4u;
+    } else if (!slept) {
+        gbr.cyc = h0 + 4u;
+    } else {
+        uint32_t w = (t + 5u) & ~3u;
+        if ((int32_t)(w - (h0 + 8u)) < 0) w = h0 + 8u;
+        gbr.cyc = w;
+    }
+    gbl_sync();
 }
 
 int gbl_halt(uint16_t resume_pc) {
@@ -1742,6 +1807,13 @@ void gbl_run(void) {
      * otherwise it returns without progress and this loop never ends. */
     int room = (uintptr_t)&probe >= gbl_stack_limit + GBL_EXEC_HEADROOM;
     gbl_exec_bounded = 0;
+    /* A host that cut the run from a device hook inside a wait (HALT jumps
+     * straight to the next event) resumes here off the M-cycle grid; the CPU
+     * would have resumed on the next boundary (see gbl_halt_wait). */
+    if (gbr.cyc & 3u) {
+        gbr.cyc = (gbr.cyc & ~3u) + 4u;
+        gbl_sync();
+    }
     for (;;) {
         gbl_fn fn = (gbl_interp_only || !room) ? 0 : gbl_lookup(gbr.pc);
         if (fn) fn(); else gbl_interp_block();
@@ -1756,8 +1828,10 @@ static void map_pages(void) {
     for (int i = 0; i < 4; i++) gbl_rmap[i] = gbl_rom;
     mapped_bank = 0xFFFF;
     map_rom_bank();
+#if !GBL_ACCESS_BLOCK
     gbl_rmap[0x8] = gbl_rmap[0x9] = BIAS(gbl_vram, 0x8000u);
-#if !GBL_VRAM_HOOK
+#endif
+#if !GBL_VRAM_HOOK && !GBL_ACCESS_BLOCK
     gbl_wmap[0x8] = gbl_wmap[0x9] = BIAS(gbl_vram, 0x8000u);
 #endif
     gbl_rmap[0xC] = gbl_rmap[0xD] = BIAS(gbl_wram, 0xC000u);
