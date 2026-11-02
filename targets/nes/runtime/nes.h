@@ -70,6 +70,9 @@ void nes_reset(void);
 /* one frame (262 lines): emulation, the panel rows as their lines are
  * done.  Call once per frame. */
 void nes_frame(void);
+/* the current frame's remaining lines (an observer stopped the frame
+ * mid-way: machine.line holds the next un-run line). */
+void nes_frame_rest(void);
 /* the frame's sound: n samples of unsigned PCM at rate Hz */
 void nes_audio(uint8_t *dst, unsigned n, unsigned rate);
 /* the consoles' drivers' entry points (the rate set, 11025 Hz until then) */

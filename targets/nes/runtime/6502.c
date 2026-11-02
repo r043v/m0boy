@@ -8,6 +8,10 @@
 #endif
 #include "6502.h"
 #include "nes_native.h"
+#ifdef NES_TRACE
+#include "nes_trace.h"
+NesTrace nes_trace;
+#endif
 #ifdef NES_COVERAGE
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,12 +23,26 @@
  * cost a third of the interpreter's cycles).  The opcode table and the
  * helpers below are macros over those locals; they exist only inside the
  * run loop's reach, which nes6502_reset steps around with nes_rd. */
+#ifndef NES_TRACE
 #define rd(cpu, at) (__extension__({ (void)(cpu); uint16_t a_ = (at); \
     a_ < 0x2000u ? ram_[a_ & 0x7FFu] \
     : a_ >= 0x8000u ? prg_[(a_ & 0x3FFFu) + (a_ >= 0xC000u ? fixed_base_ : cpu->bank_base)] \
     : nes_bus_read(a_); }))
 #define wr(cpu, at, v) do { (void)(cpu); uint16_t a_ = (at); \
     if (a_ < 0x2000u) ram_[a_ & 0x7FFu] = (v); else nes_bus_write(a_, (v)); } while (0)
+#else
+/* the traced variants: every data read and write goes through the hook
+ * (the fetch and the stack stay out), and a stop ends the slice at the
+ * next instruction boundary with only the cycles actually consumed */
+#define NES_T_RD(cpu, a_) do { if (nes_trace.rd) nes_trace.rd(nes_trace.user, (a_)); } while (0)
+#define NES_T_WR(cpu, a_, v) do { if (nes_trace.wr) nes_trace.wr(nes_trace.user, (a_), (v)); } while (0)
+#define rd(cpu, at) (__extension__({ (void)(cpu); uint16_t a_ = (at); NES_T_RD(cpu, a_); \
+    a_ < 0x2000u ? ram_[a_ & 0x7FFu] \
+    : a_ >= 0x8000u ? prg_[(a_ & 0x3FFFu) + (a_ >= 0xC000u ? fixed_base_ : cpu->bank_base)] \
+    : nes_bus_read(a_); }))
+#define wr(cpu, at, v) do { (void)(cpu); uint16_t a_ = (at); NES_T_WR(cpu, a_, (v)); \
+    if (a_ < 0x2000u) ram_[a_ & 0x7FFu] = (v); else nes_bus_write(a_, (v)); } while (0)
+#endif
 #define push(cpu, v) do { (void)(cpu); ram_[0x100u | s_] = (v); s_--; } while (0)
 #define pop(cpu) ram_[0x100u | ++s_]
 #define set_zn(cpu, v) nes_zn(cpu, v)
@@ -67,6 +85,16 @@
     } \
 } while (0)
 /* NMI, IRQ and BRK share the sequence */
+#ifdef NES_TRACE
+#define INTERRUPT(cpu, vector, brk) do { \
+    if (nes_trace.interrupt) nes_trace.interrupt(nes_trace.user, (vector)); \
+    push(cpu, (uint8_t)(pc_ >> 8)); \
+    push(cpu, (uint8_t)pc_); \
+    push(cpu, (uint8_t)(P | NES_P_U | ((brk) ? NES_P_B : 0))); \
+    P |= NES_P_I; \
+    pc_ = (uint16_t)(rd(cpu, (vector)) | (rd(cpu, (uint16_t)((vector) + 1)) << 8)); \
+} while (0)
+#else
 #define INTERRUPT(cpu, vector, brk) do { \
     push(cpu, (uint8_t)(pc_ >> 8)); \
     push(cpu, (uint8_t)pc_); \
@@ -74,6 +102,7 @@
     P |= NES_P_I; \
     pc_ = (uint16_t)(rd(cpu, (vector)) | (rd(cpu, (uint16_t)((vector) + 1)) << 8)); \
 } while (0)
+#endif
 
 void nes6502_reset(nes6502_t *cpu) {
     cpu->stall_pending = 0;
@@ -146,6 +175,9 @@ NES_INTERP_FN(nes6502_t *cpu, uint32_t until) {
             cpu->stall_pending = 0;
             if (budget <= 0) break;
         }
+#ifdef NES_TRACE
+        if (nes_trace.stop) { cpu->cycles = until - budget; goto done; }
+#endif
         if (cpu->nmi_edge) {
             cpu->nmi_edge = 0;
             INTERRUPT(cpu, 0xFFFA, 0);
@@ -161,7 +193,22 @@ NES_INTERP_FN(nes6502_t *cpu, uint32_t until) {
         }
         {
             COVER(pc_);
+#ifdef NES_TRACE
+            const uint8_t op = (__extension__({ uint16_t a_ = (uint16_t)pc_; \
+                a_ < 0x2000u ? ram_[a_ & 0x7FFu] \
+                : prg_[(a_ & 0x3FFFu) + (a_ >= 0xC000u ? fixed_base_ : cpu->bank_base)]; }));
+            if (nes_trace.step) {
+                /* the loop keeps pc, s and cycles in locals: sync them so a
+                 * hook (and any snapshot it takes) sees the exact state */
+                cpu->pc = pc_;
+                cpu->s = s_;
+                cpu->cycles = until - budget;
+                nes_trace.step(nes_trace.user, pc_, op);
+            }
+            if (nes_trace.stop) { cpu->cycles = until - budget; goto done; }
+#else
             const uint8_t op = rd(cpu, pc_);
+#endif
             left = 2;
             switch (op) {
         /* loads */
@@ -397,6 +444,9 @@ NES_INTERP_FN(nes6502_t *cpu, uint32_t until) {
         }
         budget -= left;
     }
+#ifdef NES_TRACE
+done:
+#endif
     cpu->pc = pc_;
     cpu->s = s_;
     cpu->cycles = until - budget;

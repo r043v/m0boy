@@ -1,4 +1,7 @@
 #include "nes.h"
+#ifdef NES_TRACE
+#include "nes_trace.h"
+#endif
 
 nes_t machine; /* the CPU's bus lands here (one machine per firmware, as
                 * the Z80 runtime's own machine) */
@@ -189,17 +192,32 @@ void nes_frame(void) {
     nes->frames++;
     /* the strobe takes the pads' state once, at the frame's start */
     if (nes->strobe) { nes->shift[0] = nes->input; }
-    for (unsigned line = 0; line < 262; line++) {
+    nes->line = 0;
+    nes_frame_rest();
+}
+
+/* The current frame's remaining lines: nes_frame runs the whole 262, an
+ * observer cut mid-frame (deepeel's explorer stops the CPU slice through
+ * nes_trace.stop) resumes through this — machine.line holds the next
+ * un-run line, the frame's dots carry over. */
+void nes_frame_rest(void) {
+    nes_t *nes = &machine;
+    for (; nes->line < 262; nes->line++) {
         /* 341 PPU dots = 113 CPU cycles and two thirds: the thirds add up
          * across lines, as they do on the machine (341 = 113*3 + 2, no
          * division: ARMv6-M would call __aeabi_uidiv) */
-        nes->line = line;
+        const unsigned line = nes->line;
         uint32_t step = 113u;
         nes->dots += 2u;
         if (nes->dots >= 3u) { nes->dots -= 3u; step++; }
         const uint32_t cpu_until = nes->cpu.cycles + step;
         nes6502_run(&nes->cpu, cpu_until);
         if (nes_ppu_line(&nes->ppu, line)) nes->cpu.nmi_edge = 1;
+#ifdef NES_TRACE
+        if (nes_trace.stop) { nes->line++; break; } /* the observer froze the
+            * CPU mid-frame: this line's PPU step is skipped, the observer's
+            * snapshot keeps machine.line past it */
+#endif
     }
 }
 
