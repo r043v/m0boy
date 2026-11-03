@@ -217,9 +217,9 @@ const std::vector<OpInfo>& table() {
             set(code, op, Shape::imp, Mode::imp, 3, 1, true);
         set(0x53, Op::tam, Shape::tam, Mode::imm, 5, 2, true);
         set(0x43, Op::tma, Shape::tma, Mode::imm, 4, 2);
-        set(0x03, Op::st0, Shape::stv, Mode::imp, 4, 1, true);
-        set(0x13, Op::st1, Shape::stv, Mode::imp, 4, 1, true);
-        set(0x23, Op::st2, Shape::stv, Mode::imp, 4, 1, true);
+        set(0x03, Op::st0, Shape::stv, Mode::imm, 4, 2, true);
+        set(0x13, Op::st1, Shape::stv, Mode::imm, 4, 2, true);
+        set(0x23, Op::st2, Shape::stv, Mode::imm, 4, 2, true);
         /* the block moves: seven bytes, 17 cycles of fixed part */
         for (auto [code, op] : std::initializer_list<std::pair<unsigned, Op>>{
                  {0x73, Op::tii}, {0xC3, Op::tdd}, {0xD3, Op::tin}, {0xE3, Op::tia}, {0xF3, Op::tai}})
@@ -944,7 +944,8 @@ bool Emitter::emit_ins(std::ostream& o, const Ins& in, bool t_zero, bool tail) {
         break;
     case Shape::stv: {
         const char* port = op == Op::st0 ? "0x0000" : op == Op::st1 ? "0x0002" : "0x0003";
-        body = std::string("pce_bus_write(") + port + ", a_);";
+        /* ST0/ST1/ST2 #imm write the immediate, not A (mednafen) */
+        body = std::string("pce_bus_write(") + port + ", " + hex(in.o[0], 2) + ");";
         break;
     }
     case Shape::block: {

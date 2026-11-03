@@ -580,10 +580,11 @@ PCE_INTERP_FN(huc6280_t *cpu, uint32_t until) {
         case 0x43: { const uint8_t m_ = rd(cpu, (uint16_t)(pc_ + 1)); pc_ += 2; left = 4;
             for (unsigned i = 0; i < 8; i++) if (m_ & (1u << i)) a_ = cpu->mpr[i];
             break; }
-        /* the VDC's ports, straight to the registers */
-        case 0x03: pce_bus_write(0x0000, a_); left = 4; break; /* ST0 */
-        case 0x13: pce_bus_write(0x0002, a_); left = 4; break; /* ST1 */
-        case 0x23: pce_bus_write(0x0003, a_); left = 4; break; /* ST2 */
+        /* the VDC's ports, straight to the registers: ST0/ST1/ST2 #imm are two
+         * bytes and write the immediate (mednafen ST0/ST1/ST2), not A */
+        case 0x03: pce_bus_write(0x0000, rd(cpu, (uint16_t)(pc_ + 1))); pc_ += 2; left = 4; break; /* ST0 #imm */
+        case 0x13: pce_bus_write(0x0002, rd(cpu, (uint16_t)(pc_ + 1))); pc_ += 2; left = 4; break; /* ST1 #imm */
+        case 0x23: pce_bus_write(0x0003, rd(cpu, (uint16_t)(pc_ + 1))); pc_ += 2; left = 4; break; /* ST2 #imm */
         /* the block moves: source, destination, length */
         case 0x73: BLOCK_MOVE(const uint8_t v_ = rd(cpu, src); wr(cpu, dst, v_); src++; dst++;); break;   /* TII */
         case 0xC3: BLOCK_MOVE(const uint8_t v_ = rd(cpu, src); wr(cpu, dst, v_); src--; dst--;); break;   /* TDD */

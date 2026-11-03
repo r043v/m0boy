@@ -571,3 +571,11 @@ scènes de sprites ni de tous les jeux.
   complets encore.
 - Le PSG complet (LFO, balance, polynôme de bruit) et l'entrée audio du
   harness comparée à la référence.
+
+## ST0/ST1/ST2 et MPR0
+
+ST0, ST1 et ST2 écrivent toujours sur le VDC (adresse physique
+$1FE000-$1FE003), quelle que soit la page projetée par MPR0. Auparavant,
+l'écriture passait par la fenêtre MPR0 courante et se perdait quand un jeu y
+projetait autre chose que $FF. L'interpréteur (`huc6280.c`) et l'émetteur
+(`emitter.cpp`) sont corrigés, et `pce_end_to_end` reste vert.
