@@ -255,9 +255,28 @@ static inline __attribute__((always_inline)) uint32_t exec_op(uint32_t op, uint8
     case 0x03: case 0x13: case 0x23: case 0x33: rr_set(op >> 4, (uint16_t)(rr_get(op >> 4) + 1)); break;
     case 0x0B: case 0x1B: case 0x2B: case 0x3B: rr_set(op >> 4, (uint16_t)(rr_get(op >> 4) - 1)); break;
     case 0x09: case 0x19: case 0x29: case 0x39: gbl_addhl(rr_get(op >> 4)); break;
-    case 0x04: case 0x0C: case 0x14: case 0x1C: case 0x24: case 0x2C: case 0x34: case 0x3C:
+#if defined(GBL_PPU_REF) && GBL_PPU_REF
+    case 0x34: case 0x35: {
+        /* INC/DEC (HL): the read is in the second M-cycle, the write in the
+         * third (the dispatcher left us at the start of the last one) */
+        gbr.cyc -= 4;
+        uint8_t hv = gbl_rd(gbr.hl);
+        gbr.cyc += 4;
+        gbl_wr(gbr.hl, op == 0x34 ? gbl_inc(hv) : gbl_dec(hv));
+        break;
+    }
+#endif
+    case 0x04: case 0x0C: case 0x14: case 0x1C: case 0x24: case 0x2C:
+#if !(defined(GBL_PPU_REF) && GBL_PPU_REF)
+    case 0x34:
+#endif
+    case 0x3C:
         set_r(op >> 3, gbl_inc(get_r(op >> 3))); break;
-    case 0x05: case 0x0D: case 0x15: case 0x1D: case 0x25: case 0x2D: case 0x35: case 0x3D:
+    case 0x05: case 0x0D: case 0x15: case 0x1D: case 0x25: case 0x2D:
+#if !(defined(GBL_PPU_REF) && GBL_PPU_REF)
+    case 0x35:
+#endif
+    case 0x3D:
         set_r(op >> 3, gbl_dec(get_r(op >> 3))); break;
     case 0x06: case 0x0E: case 0x16: case 0x1E: case 0x26: case 0x2E: case 0x36: case 0x3E:
         set_r(op >> 3, n8); gbr.pc++; break;
@@ -305,6 +324,21 @@ static inline __attribute__((always_inline)) uint32_t exec_op(uint32_t op, uint8
     case 0xCB: {
         uint32_t r = n8 & 7, grp = n8 >> 6, bit = (n8 >> 3) & 7;
         gbr.pc++;
+#if defined(GBL_PPU_REF) && GBL_PPU_REF
+        if (r == 6) {
+            /* (HL) operand: the read is in the third M-cycle, a write in the
+             * fourth (mem_timing 01 and 03) */
+            gbr.cyc += 4;
+            uint8_t hv = get_r(6);
+            if (grp == 1) { gbr.cyc += 4; gbr.zr = hv & (1u << bit); gbr.nf = 0; gbr.hf = 1; break; }
+            gbr.cyc += 4;
+            if (grp == 0) set_r(6, gbl_cbop((uint8_t)n8, hv));
+            else if (grp == 2) set_r(6, (uint8_t)(hv & ~(1u << bit)));
+            else set_r(6, (uint8_t)(hv | (1u << bit)));
+            gbr.cyc += 4;
+            break;
+        }
+#endif
         gbr.cyc += (r == 6) ? (grp == 1 ? 8 : 12) : 4;
         uint8_t v = get_r(r);
         if (grp == 0) set_r(r, gbl_cbop((uint8_t)n8, v));

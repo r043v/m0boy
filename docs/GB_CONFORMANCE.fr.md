@@ -784,3 +784,7 @@ En mode de référence (`GBL_PPU_REF`) et hors CGB, une source DMA OAM de $E0xx 
 ## Bug de HALT (DMG)
 
 En mode de référence (`GBL_PPU_REF`), l'interpréteur reproduit le bug de HALT : HALT avec IME=0 et une interruption déjà en attente ne s'arrête pas, et l'octet suivant est lu deux fois (PC n'avance pas ; les opérandes d'une instruction multi-octets sont alors l'opcode et l'octet suivant). `blargg/halt_bug.gb` affiche « Passed » (écran lu avec gbshot). Limite : seul l'interpréteur le reproduit, pas le code recompilé. Code mort dans le firmware (contrôle d'identité : 8× identique). Mooneye inchangé : 90 / 22 / 3, avec et sans `GBL_CGB`.
+
+## Timing des accès (HL) : BIT/RES/SET/rotations CB et INC/DEC (HL)
+
+En mode de référence (`GBL_PPU_REF`), l'interpréteur place la lecture d'un opérande (HL) des instructions CB à la 3ᵉ M-cycle (BIT) et l'écriture à la 4ᵉ (rotations, RES, SET), et lit/écrit INC/DEC (HL) aux 2ᵉ et 3ᵉ M-cycles. `blargg/mem_timing` (01-read, 02-write, 03-modify et la ROM combinée) passe (verdict série). Limite : seul l'interpréteur ; code mort dans le firmware (contrôle d'identité : 8× identique). Mooneye inchangé : 90 / 22 / 3.
