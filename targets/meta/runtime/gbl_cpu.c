@@ -252,8 +252,13 @@ static inline __attribute__((always_inline)) uint32_t exec_op(uint32_t op, uint8
     case 0x1A: gbr.a = gbl_rd(gbr.de); break;
     case 0x2A: gbr.a = gbl_rd(gbr.hl); gbr.hl++; break;
     case 0x3A: gbr.a = gbl_rd(gbr.hl); gbr.hl--; break;
-    case 0x03: case 0x13: case 0x23: case 0x33: rr_set(op >> 4, (uint16_t)(rr_get(op >> 4) + 1)); break;
-    case 0x0B: case 0x1B: case 0x2B: case 0x3B: rr_set(op >> 4, (uint16_t)(rr_get(op >> 4) - 1)); break;
+#if defined(GBL_PPU_REF) && GBL_PPU_REF
+#define OAMBUG_IDU() do { if ((rr_get(op >> 4) >> 8) == 0xFE) gbl_oam_bug(0); } while (0)
+#else
+#define OAMBUG_IDU() ((void)0)
+#endif
+    case 0x03: case 0x13: case 0x23: case 0x33: OAMBUG_IDU(); rr_set(op >> 4, (uint16_t)(rr_get(op >> 4) + 1)); break;
+    case 0x0B: case 0x1B: case 0x2B: case 0x3B: OAMBUG_IDU(); rr_set(op >> 4, (uint16_t)(rr_get(op >> 4) - 1)); break;
     case 0x09: case 0x19: case 0x29: case 0x39: gbl_addhl(rr_get(op >> 4)); break;
 #if defined(GBL_PPU_REF) && GBL_PPU_REF
     case 0x34: case 0x35: {

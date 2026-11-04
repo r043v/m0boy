@@ -1219,6 +1219,32 @@ int gbl_ppu_blocked(int what) {
 
 static uint8_t off_cmp;
 
+#ifndef GBL_OAMBUG_SHIFT
+#define GBL_OAMBUG_SHIFT 0
+#endif
+#if defined(GBL_PPU_REF) && GBL_PPU_REF
+/* DMG OAM corruption bug: an access (or an INC/DEC of a register pointing)
+ * into $FE00-$FEFF during mode 2 corrupts the row the PPU is scanning.
+ * kind 0 = write, 1 = read.  Row 0 is never corrupted. */
+void gbl_oam_bug(int kind) {
+    ppu_moved = 0;
+    gbl_ppu_sync(gbr.cyc);
+    if (ppu_moved) gbl_update_evt();
+    if (!lcd_on || ly >= 144) return;
+    int32_t off = (int32_t)(gbr.cyc - line_start) + GBL_OAMBUG_SHIFT;
+    if (off < 0 || off >= 80) return;
+    uint32_t row = (uint32_t)off / 4u;
+    if (row == 0 || row >= 20) return;
+    uint16_t *o = (uint16_t *)(void *)gbl_oam;
+    uint16_t *cur = o + row * 4, *prev = cur - 4;
+    uint16_t a = cur[0], b = prev[0], c = prev[2];
+    cur[0] = kind ? (uint16_t)(b | (a & c)) : (uint16_t)(((a ^ c) & (b ^ c)) ^ c);
+    cur[1] = prev[1]; cur[2] = prev[2]; cur[3] = prev[3];
+    gbl_oam_dirty = 1;
+    gbl_ppu_content_changed();
+}
+#endif
+
 uint8_t gbl_ppu_read(uint8_t n) {
     if (n == 0x41 || n == 0x44) {
         ppu_moved = 0;

@@ -1642,7 +1642,12 @@ uint8_t gbl_rd_slow(uint16_t a) {
     if (a >= 0xFF80) return a == 0xFFFF ? gbl_ie : gbl_hram[a - 0xFF80];
     if (a >= 0xFF00) return gbl_io_rd((uint8_t)a);
 #if GBL_ACCESS_BLOCK
-    if (a >= 0xFE00) return a < 0xFEA0 && !gbl_ppu_blocked(2) ? gbl_oam[a - 0xFE00] : 0xFF;
+    if (a >= 0xFE00) {
+#if defined(GBL_PPU_REF) && GBL_PPU_REF
+        gbl_oam_bug(1);
+#endif
+        return a < 0xFEA0 && !gbl_ppu_blocked(2) ? gbl_oam[a - 0xFE00] : 0xFF;
+    }
     if (a >= 0x8000 && a < 0xA000) return gbl_ppu_blocked(1) ? 0xFF : gbl_vram[VOFF(a - 0x8000)];
 #else
     if (a >= 0xFE00) return a < 0xFEA0 ? gbl_oam[a - 0xFE00] : 0xFF;
@@ -1728,6 +1733,9 @@ void gbl_wr_slow(uint16_t a, uint8_t v) {
     }
     if (a >= 0xFF00) { gbl_io_wr((uint8_t)a, v); return; }
     if (a >= 0xFE00) {
+#if defined(GBL_PPU_REF) && GBL_PPU_REF
+        gbl_oam_bug(0);
+#endif
 #if GBL_ACCESS_BLOCK
         if (a < 0xFEA0 && gbl_ppu_blocked(2)) return;
 #endif

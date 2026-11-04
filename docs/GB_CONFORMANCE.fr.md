@@ -788,3 +788,14 @@ En mode de référence (`GBL_PPU_REF`), l'interpréteur reproduit le bug de HALT
 ## Timing des accès (HL) : BIT/RES/SET/rotations CB et INC/DEC (HL)
 
 En mode de référence (`GBL_PPU_REF`), l'interpréteur place la lecture d'un opérande (HL) des instructions CB à la 3ᵉ M-cycle (BIT) et l'écriture à la 4ᵉ (rotations, RES, SET), et lit/écrit INC/DEC (HL) aux 2ᵉ et 3ᵉ M-cycles. `blargg/mem_timing` (01-read, 02-write, 03-modify et la ROM combinée) passe (verdict série). Limite : seul l'interpréteur ; code mort dans le firmware (contrôle d'identité : 8× identique). Mooneye inchangé : 90 / 22 / 3.
+
+## Bug de corruption de l'OAM (DMG), partiel
+
+Sous `GBL_PPU_REF` seulement (code mort dans le firmware), un accès à
+$FE00-$FEFF, ou un INC/DEC de 16 bits sur un registre pointant dans cette page,
+pendant le balayage de l'OAM corrompt la rangée courante (formules de lecture et
+d'écriture de la DMG, rangée 0 épargnée).  État mesuré : `oam_bug/4-scanline_timing`
+passe, `2-causes` avance jusqu'au test #9 (`PUSH BC`), mais `5-timing_bug`,
+`6-timing_no_bug`, `7-timing_effect` et `8-instr_effect` ne passent pas : le
+décalage exact de la fenêtre et les accès de pile/LD A,(HL+) ne sont pas modélisés.
+Mooneye (90/22/3) et Blargg hors son sont inchangés.
