@@ -1162,6 +1162,23 @@ static inline uint32_t ppu_next_event(void) {
     return t;
 }
 
+#ifndef GBL_VBL_DELAY
+/* reference mode: the CPU services a VBlank request 2 dots after the
+ * dispatcher would see it (mooneye di_timing-GS: DI wins by one NOP) */
+#if defined(GBL_HOST_REF) && GBL_HOST_REF
+#define GBL_VBL_DELAY 2
+#else
+#define GBL_VBL_DELAY 0
+#endif
+#endif
+static inline uint32_t ppu_next_event_d(void) {
+    uint32_t t = ppu_next_event();
+#if GBL_VBL_DELAY && !GBL_TIMING_ASM
+    if (lcd_on && ly < 144 && t == line_start + lines_span(ly, 144u)) t += GBL_VBL_DELAY;
+#endif
+    return t;
+}
+
 void gbl_evt_invalidate(void) { P.evt_dirty = 1; }
 
 /* Next cycle at which the generated code or the interpreter must poll
@@ -1170,7 +1187,7 @@ void gbl_evt_invalidate(void) { P.evt_dirty = 1; }
 #if !GBL_TIMING_ASM /* else gbl_timing_asm.S, ppu_next_event included */
 static inline __attribute__((always_inline)) void gbl_update_evt_dirty(void) {
     if (P.evt_dirty) {
-        P.dev_next = gbl_core_next_event(ppu_next_event());
+        P.dev_next = gbl_core_next_event(ppu_next_event_d());
         P.evt_dirty = 0;
     }
     uint32_t best = P.dev_next, now = gbr.cyc;
