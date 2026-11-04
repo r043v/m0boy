@@ -40,8 +40,20 @@ typedef struct {
 
 extern gbl_cpu_t gbr;
 
-extern uint8_t gbl_wram[0x2000];
-extern uint8_t gbl_vram[0x2000];
+#if defined(GBL_CGB) && GBL_CGB
+/* CGB: WRAM as 8 banks of 4 KiB (bank 0 first, bank 1 at +$1000: the DMG
+ * layout is the first 8 KiB), VRAM as 2 banks of 8 KiB. */
+#define GBL_WRAM_SIZE 0x8000
+#define GBL_VRAM_SIZE 0x4000
+extern uint8_t gbl_cgb;  /* 1 when the cartridge runs in colour mode */
+extern uint8_t gbl_vbk;  /* FF4F bit 0 */
+extern uint8_t gbl_svbk; /* FF70 bank, 1..7 */
+#else
+#define GBL_WRAM_SIZE 0x2000
+#define GBL_VRAM_SIZE 0x2000
+#endif
+extern uint8_t gbl_wram[GBL_WRAM_SIZE];
+extern uint8_t gbl_vram[GBL_VRAM_SIZE];
 extern uint8_t gbl_oam[0xA0];
 extern uint8_t gbl_hram[0x80];
 extern uint8_t gbl_io[0x80];

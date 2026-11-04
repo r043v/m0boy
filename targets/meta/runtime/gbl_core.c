@@ -11,8 +11,23 @@
 #include <string.h>
 
 gbl_cpu_t gbr;
-uint8_t gbl_wram[0x2000];
-uint8_t gbl_vram[0x2000];
+uint8_t gbl_wram[GBL_WRAM_SIZE];
+uint8_t gbl_vram[GBL_VRAM_SIZE];
+#if GBL_CGB
+uint8_t gbl_cgb, gbl_vbk, gbl_svbk = 1;
+/* Banked addresses: VRAM bank 1 sits at +$2000; WRAM bank n (1..7) at
+ * n * $1000, so D000 with SVBK=1 is the DMG layout. */
+#define VOFF(o) ((uint16_t)((o) + (gbl_vbk ? 0x2000u : 0u)))
+static inline uint16_t wram_echo(uint16_t a) {
+    return a < 0xF000 ? (uint16_t)(a - 0xE000) : (uint16_t)(a - 0xF000 + gbl_svbk * 0x1000u);
+}
+#define WRAM_FAST_END 0xCFFFu /* the stack fast path stops before the banked half */
+static void map_pages(void);
+#else
+#define VOFF(o) (o)
+#define wram_echo(a) ((a) - 0xE000)
+#define WRAM_FAST_END 0xDFFFu
+#endif
 uint8_t gbl_oam[0xA0] __attribute__((aligned(4))); /* word copies (OAM DMA) */
 uint8_t gbl_hram[0x80];
 uint8_t gbl_io[0x80];
@@ -1319,6 +1334,10 @@ uint8_t gbl_io_rd(uint8_t n) {
     case 0x05: timer_sync(gbr.cyc); return TIMA;
     case 0x07: return TAC | 0xF8;
     case 0x0F: gbl_sync(); return IF | 0xE0;
+#if GBL_CGB
+    case 0x4F: return gbl_cgb ? (uint8_t)(0xFE | gbl_vbk) : 0xFF;
+    case 0x70: return gbl_cgb ? (uint8_t)(0xF8 | gbl_svbk) : 0xFF;
+#endif
     default:
         if (n >= 0x10 && n < 0x40) return gbl_apu_read(n);
         if (n >= 0x40 && n < 0x4C) return gbl_ppu_read(n);
@@ -1416,6 +1435,22 @@ void gbl_io_wr(uint8_t n, uint8_t v) {
 #endif
         TAC = v & 7; core_invalidate(); gbl_update_evt(); return;
     case 0x0F: gbl_sync(); IF = v & 0x1F; gbl_update_evt(); return;
+#if GBL_CGB
+    case 0x4F:
+        if (gbl_cgb && gbl_vbk != (v & 1u)) {
+            gbl_ppu_sync(gbr.cyc);
+            gbl_vbk = v & 1u;
+            map_pages();
+        }
+        return;
+    case 0x70:
+        if (gbl_cgb) {
+            uint8_t b = v & 7u;
+            gbl_svbk = b ? b : 1u;
+            map_pages();
+        }
+        return;
+#endif
     case 0x46: {
         /* OAM DMA completes instantly; games wait it out in HRAM anyway. */
         uint16_t src = (uint16_t)(v << 8);
@@ -1520,11 +1555,11 @@ uint8_t gbl_rd_slow(uint16_t a) {
     if (a >= 0xFF00) return gbl_io_rd((uint8_t)a);
 #if GBL_ACCESS_BLOCK
     if (a >= 0xFE00) return a < 0xFEA0 && !gbl_ppu_blocked(2) ? gbl_oam[a - 0xFE00] : 0xFF;
-    if (a >= 0x8000 && a < 0xA000) return gbl_ppu_blocked(1) ? 0xFF : gbl_vram[a - 0x8000];
+    if (a >= 0x8000 && a < 0xA000) return gbl_ppu_blocked(1) ? 0xFF : gbl_vram[VOFF(a - 0x8000)];
 #else
     if (a >= 0xFE00) return a < 0xFEA0 ? gbl_oam[a - 0xFE00] : 0xFF;
 #endif
-    if (a >= 0xE000) return gbl_wram[a - 0xE000];
+    if (a >= 0xE000) return gbl_wram[wram_echo(a)];
 #if GBL_MBC == 2
     if (a >= 0xA000 && a < 0xC000 && mbc.ram_enable)
         return eram_load(eram_offset(a)) | 0xF0;
@@ -1558,6 +1593,7 @@ uint8_t gbl_rd(uint16_t a) {
 #endif
 
 void gbl_vram_wr(uint16_t off, uint8_t v) {
+    off = VOFF(off);
     if (gbl_vram[off] == v) return;
     /* Lines already past mode 3 must be drawn with the old contents. */
     gbl_ppu_sync(gbr.cyc);
@@ -1628,7 +1664,7 @@ void gbl_wr_slow(uint16_t a, uint8_t v) {
         gbl_dbg_tables.echo_last = (uint32_t)a << 16 | (uint32_t)v << 8;
         gbl_dbg_tables.echo_frame = gbl_frame;
 #endif
-        gbl_wram[a - 0xE000] = v;
+        gbl_wram[wram_echo(a)] = v;
         return;
     }
     if (a < 0x8000) { mbc_write(a, v); return; }
@@ -1648,7 +1684,7 @@ void gbl_wr_slow(uint16_t a, uint8_t v) {
 void gbl_push(uint16_t v) {
     gbr.sp = (uint16_t)(gbr.sp - 2);
     uint16_t s = gbr.sp;
-    if (s >= 0xC000 && s < 0xDFFF) {
+    if (s >= 0xC000 && s < WRAM_FAST_END) {
         gbl_wram[s - 0xC000] = (uint8_t)v;
         gbl_wram[s - 0xC000 + 1] = (uint8_t)(v >> 8);
         return;
@@ -1660,7 +1696,7 @@ void gbl_push(uint16_t v) {
 uint16_t gbl_pop(void) {
     uint16_t s = gbr.sp;
     gbr.sp = (uint16_t)(s + 2);
-    if (s >= 0xC000 && s < 0xDFFF)
+    if (s >= 0xC000 && s < WRAM_FAST_END)
         return (uint16_t)(gbl_wram[s - 0xC000] | (gbl_wram[s - 0xC000 + 1] << 8));
     uint8_t lo = gbl_rd(s);
 #if GBL_DEBUG_STACK
@@ -2035,8 +2071,16 @@ static void map_pages(void) {
 #if !GBL_VRAM_HOOK && !GBL_ACCESS_BLOCK
     gbl_wmap[0x8] = gbl_wmap[0x9] = BIAS(gbl_vram, 0x8000u);
 #endif
+#if GBL_CGB
+#if !GBL_ACCESS_BLOCK
+    gbl_rmap[0x8] = gbl_rmap[0x9] = BIAS(gbl_vram + (gbl_vbk ? 0x2000 : 0), 0x8000u);
+#endif
+    gbl_rmap[0xC] = gbl_wmap[0xC] = BIAS(gbl_wram, 0xC000u);
+    gbl_rmap[0xD] = gbl_wmap[0xD] = BIAS(gbl_wram + gbl_svbk * 0x1000, 0xD000u);
+#else
     gbl_rmap[0xC] = gbl_rmap[0xD] = BIAS(gbl_wram, 0xC000u);
     gbl_wmap[0xC] = gbl_wmap[0xD] = BIAS(gbl_wram, 0xC000u);
+#endif
     /* E000-EFFF echoes C000-CFFF (F000-FDFF shares a page with OAM, IO
      * and HRAM and stays on the slow path). */
     gbl_rmap[0xE] = gbl_wmap[0xE] = BIAS(gbl_wram, 0xE000u);
@@ -2049,6 +2093,9 @@ void gbl_reset(void) {
 #if GBL_OAM_DMA_BUS
     dma_n = dma_pend = 0;
     dma_in = 0;
+#endif
+#if GBL_CGB
+    gbl_cgb = 0; gbl_vbk = 0; gbl_svbk = 1;
 #endif
     memset(gbl_wram, 0, sizeof(gbl_wram));
     memset(gbl_vram, 0, sizeof(gbl_vram));
@@ -2086,6 +2133,14 @@ void gbl_reset(void) {
     core_invalidate();
 
     map_pages();
+#if GBL_CGB
+    /* a cartridge with $143 bit 7 boots in colour mode: A=$11 (CGB) */
+    if (gbl_rd(0x143) & 0x80) {
+        gbl_cgb = 1;
+        gbr.a = 0x11; gbr.zr = 1; gbr.nf = 0; gbr.hf = 0; gbr.cf = 0;
+        gbr.bc = 0x0000; gbr.de = 0xFF56; gbr.hl = 0x000D;
+    }
+#endif
 
     gbl_apu_reset();
     gbl_ppu_reset();
@@ -2108,6 +2163,11 @@ static void state_mem(gbl_state_fn io, void *ctx, int load) {
     io(&gbl_timer_state, sizeof(gbl_timer_state), ctx);
     io(&buttons, sizeof(buttons), ctx);
     io(&gbl_frame, sizeof(gbl_frame), ctx);
+#if GBL_CGB
+    io(&gbl_cgb, sizeof(gbl_cgb), ctx);
+    io(&gbl_vbk, sizeof(gbl_vbk), ctx);
+    io(&gbl_svbk, sizeof(gbl_svbk), ctx);
+#endif
 #if GBL_ERAM_SIZE > 0 && GBL_ERAM_ON_SD
     /* The cartridge RAM is the save file: copied through the sector cache's
      * first buffer, whose contents were written back first. */

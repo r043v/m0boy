@@ -2,6 +2,9 @@
  * Build options for the gbl runtime.  The value of each optimisation per
  * console is in gbl_profile.h; override any of them with -D.
  *
+ * GBL_CGB                Game Boy Color: VRAM and WRAM banks, VBK/SVBK, a CGB cartridge
+ *                         ($143 bit 7) boots in colour mode, a DMG one is untouched.
+ *                         0 (default) leaves the DMG code exactly as without.
  * GBL_PPU_BATCH           Scanlines per PPU event when no per-line STAT
  *                         interrupt (mode 0 / mode 2) is enabled; 1 restores
  *                         one event per line.  Batching needs GBL_VRAM_HOOK so
@@ -263,7 +266,12 @@
  * the host harness), the assembly interpreter has no coverage or trace
  * hooks, the assembly render_line needs the assembly PPU and line
  * signatures. ---------------------------------------------------------------- */
-#if !defined(__ARM_ARCH_6M__)
+#ifndef GBL_CGB
+#define GBL_CGB 0 /* Game Boy Color support: optional, off in every DMG firmware */
+#endif
+#if !defined(__ARM_ARCH_6M__) || GBL_CGB
+#undef GBL_CORE_ASM
+#define GBL_CORE_ASM 0
 #undef GBL_PPU_ASM
 #define GBL_PPU_ASM 0
 #undef GBL_TIMING_ASM
@@ -283,6 +291,10 @@
 #endif
 #if GBL_PPU_BATCH > 1 || GBL_FRAME_SIGNATURE || GBL_LINE_SIGNATURE
 #undef GBL_VRAM_HOOK
+#define GBL_VRAM_HOOK 1
+#endif
+#if GBL_CGB
+#undef GBL_VRAM_HOOK /* VBK: a VRAM write goes through gbl_vram_wr, which knows the bank */
 #define GBL_VRAM_HOOK 1
 #endif
 #ifndef GBL_VRAM_HOOK
