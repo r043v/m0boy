@@ -29,7 +29,7 @@
 #define IF gbl_io[0x0F]
 
 #define LINE_CYCLES 456u
-#define MODE3_START 80u
+#define MODE3_START (80u + GBL_PPU_REF) /* reference mode: mode 3 one dot later (mooneye intr_2_mode3) */
 #define MODE0_START 252u
 #define LY153_CMP 8u /* line 153: LYC sees LY=0 from here (DMG, SameBoy reference) */
 #define FRAME_CYCLES 70224u
