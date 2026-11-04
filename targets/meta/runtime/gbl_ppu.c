@@ -31,6 +31,20 @@
 #define LINE_CYCLES 456u
 #define MODE3_START (80u + GBL_PPU_REF) /* reference mode: mode 3 one dot later (mooneye intr_2_mode3) */
 #define MODE0_START 252u
+#if GBL_PPU_REF
+/* DMG reference: line 153 is 4 dots longer and line 0 4 dots shorter */
+static inline uint32_t line_len(uint8_t l) { return l == 153 ? LINE_CYCLES + 4u : l == 0 ? LINE_CYCLES - 4u : LINE_CYCLES; }
+/* cycles from the start of line `from` (current) to the start of line `to` (<= 154, 154 = next frame's line 0) */
+static inline uint32_t lines_span(uint8_t from, uint32_t to) {
+    uint32_t d = (to - from) * LINE_CYCLES;
+    if (to > 153 && from <= 153) d += 4u;
+    if (from == 0 && to > 0) d -= 4u;
+    return d;
+}
+#else
+static inline uint32_t line_len(uint8_t l) { (void)l; return LINE_CYCLES; }
+static inline uint32_t lines_span(uint8_t from, uint32_t to) { return (to - from) * LINE_CYCLES; }
+#endif
 #define LY153_CMP 8u /* line 153: LYC sees LY=0 from here (DMG, SameBoy reference) */
 #define FRAME_CYCLES 70224u
 
@@ -946,10 +960,13 @@ void gbl_ppu_advance(uint32_t now) {
             lyc_refresh();
             stat_update();
         }
-        if (off < LINE_CYCLES) break;
+        /* DMG reference: line 0 starts 4 dots late and is 4 dots shorter
+         * (frame length unchanged; mooneye intr_1_2_timing) */
+        uint32_t llen = line_len(ly);
+        if (off < llen) break;
         ppu_moved = 1;
         P.evt_dirty = 1;
-        line_start += LINE_CYCLES;
+        line_start += llen;
         stage = 0;
         if (++ly == 154) {
             ly = 0;
@@ -974,8 +991,8 @@ void gbl_ppu_advance(uint32_t now) {
             stat_update();
         }
     }
-    next_stage_off = ly == 153 ? (stage ? LINE_CYCLES : LY153_CMP)
-                   : ly >= 144 || stage == 2 ? LINE_CYCLES : stage == 0 ? MODE3_START : P.m0_start;
+    next_stage_off = ly == 153 ? (stage ? line_len(153) : LY153_CMP)
+                   : ly >= 144 || stage == 2 ? line_len(ly) : stage == 0 ? MODE3_START : P.m0_start;
     update_due();
 }
 #endif
@@ -995,16 +1012,16 @@ static inline uint32_t ppu_next_event(void) {
     if (ly < 144 && stage == 1 && (s & 0x08)) return line_start + P.m0_start;
 #endif
     if (ly == 153 && !stage) return line_start + LY153_CMP;
-    if (GBL_PPU_BATCH == 1 || (s & 0x20)) return line_start + LINE_CYCLES;
+    if (GBL_PPU_BATCH == 1 || (s & 0x20)) return line_start + line_len(ly);
     /* Nothing observable happens inside a batch: the next line start that
      * matters is the batch end, VBlank, the LYC line, or the next frame. */
     uint32_t target = ly < 144 ? ((uint32_t)ly | (GBL_PPU_BATCH - 1u)) + 1u : 154u;
     if (ly < 144 && target > 144) target = 144;
     if ((s & 0x40) && LYC > ly && LYC < target) target = LYC;
-    uint32_t t = line_start + (target - ly) * LINE_CYCLES;
+    uint32_t t = line_start + lines_span(ly, target);
     /* an LYC=0 match fires inside line 153 (see LY153_CMP) */
     if ((s & 0x40) && LYC == 0 && (ly < 153 || !stage)) {
-        uint32_t t153 = line_start + (153u - ly) * LINE_CYCLES + LY153_CMP;
+        uint32_t t153 = line_start + lines_span(ly, 153u) + LY153_CMP;
         if ((int32_t)(t153 - t) < 0) t = t153;
     }
     return t;

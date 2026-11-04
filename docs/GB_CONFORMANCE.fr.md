@@ -76,8 +76,8 @@ firmware n'a que (2) et le correctif d'`EI` : `targets/meta/VERSION` passe à 0.
 
 `GBL_PPU_REF` (hôte, ligne PPU en C) : le mode 2 de STAT se déclenche aussi au début de la ligne 144, et le
 mode 0 commence un point plus tard que dans le modèle de lecture de STAT. Gagnés : `ppu/vblank_stat_intr-GS`,
-`intr_2_0_timing`, `intr_2_mode0_timing`, `intr_2_oam_ok_timing`, `intr_2_mode3_timing` (mode 3 aussi un point plus tard) : 83 ROMs mooneye en tout, aucune régression,
-blargg inchangé. Restent : `intr_1_2`, `intr_2_mode0_timing_sprites`, `hblank_ly_scx`, `lcdon_*`,
+`intr_2_0_timing`, `intr_2_mode0_timing`, `intr_2_oam_ok_timing`, `intr_2_mode3_timing` (mode 3 aussi un point plus tard), `intr_1_2_timing-GS` (ligne 153 de 460 points, ligne 0 de 452) : 84 ROMs mooneye en tout, aucune régression,
+blargg : en plus `oam_bug/1-lcd_sync`. Restent : `intr_2_mode0_timing_sprites`, `hblank_ly_scx`, `lcdon_*`,
 `stat_lyc_onoff`.
 
 ## mooneye-test-suite
