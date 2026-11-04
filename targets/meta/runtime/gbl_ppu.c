@@ -1217,13 +1217,15 @@ int gbl_ppu_blocked(int what) {
 #endif
 
 
+static uint8_t off_cmp;
+
 uint8_t gbl_ppu_read(uint8_t n) {
     if (n == 0x41 || n == 0x44) {
         ppu_moved = 0;
         gbl_ppu_sync(gbr.cyc);
         if (ppu_moved) gbl_update_evt();
         if (n == 0x44) return lcd_on ? ly_visible() : 0;
-        return (uint8_t)(0x80 | (STAT & 0x78) | ((lcd_on && ly_visible() == LYC) ? 4 : 0) | (lcd_on ? mode : 0));
+        return (uint8_t)(0x80 | (STAT & 0x78) | ((lcd_on ? (ly_visible() == LYC) : GBL_PPU_REF ? off_cmp : 0) ? 4 : 0) | (lcd_on ? mode : 0));
     }
     return gbl_io[n];
 }
@@ -1255,9 +1257,10 @@ void gbl_ppu_write(uint8_t n, uint8_t v) {
              * without a mode-2 OAM search. */
             LCDC = v;
             lyc_refresh();
-            if (P.lyc_line) IF |= 0x02;
+            if (P.lyc_line && !(GBL_PPU_REF && off_cmp)) IF |= 0x02; /* the line was already high: no edge */
             stat_line = P.lyc_line;
         } else if (!(v & 0x80) && lcd_on) {
+            if (GBL_PPU_REF) off_cmp = (uint8_t)(ly_visible() == LYC); /* the LY=LYC bit is kept while the LCD is off */
             lcd_on = 0;
             ly = 0;
             mode = 0;

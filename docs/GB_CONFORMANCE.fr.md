@@ -772,3 +772,5 @@ automatique ; mooneye et blargg : mêmes résultats avec et sans `GBL_CGB`.
 - Registres non connectés (FF03, FF08-FF0E, FF4C-FF7F en DMG) : lecture à 0xFF (mooneye `unused_hwio-GS` passe, 85 mooneye). Change le firmware DMG (gbl_core seulement) : META 0.10.62.
 
 - Mode de référence hôte (`GBL_HOST_REF`) : l'événement VBlank du dispatcher est retardé de 2 cycles (`GBL_VBL_DELAY`, 1 et 2 passent, 3 échoue) : mooneye `di_timing-GS` et `halt_ime1_timing2-GS` passent (87/115). Firmware inchangé (identité DMG : 8× identique).
+
+- Mode de référence : STAT garde le bit LY=LYC quand le LCD est éteint, et l'activation ne lève pas d'interruption STAT si la ligne était déjà haute (mooneye `stat_lyc_onoff` passe, 88/115). Firmware inchangé (8× identique).
