@@ -1011,7 +1011,7 @@ static uint16_t mode3_end(void) {
     /* the SCX%8 discard shows on STAT in 2-dot steps (an odd SCX%8 ends mode
      * 3 like the even value below it), and line 0 runs 2 dots longer; both
      * measured over ~11k lines against SameBoy (which matches Gambatte) */
-    uint32_t pen = (SCX & 6u) + (ly == 0 ? 2u : 0u);
+    uint32_t pen = (GBL_PPU_REF ? ((SCX & 7u) + 3u) & 12u : SCX & 6u) + (ly == 0 ? 2u : 0u);
     int win = (LCDC & 0x20) && WY <= ly && WX <= 166;
     int wx0 = (int)WX - 7;
     if (win) pen += 6;

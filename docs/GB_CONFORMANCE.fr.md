@@ -774,3 +774,5 @@ automatique ; mooneye et blargg : mêmes résultats avec et sans `GBL_CGB`.
 - Mode de référence hôte (`GBL_HOST_REF`) : l'événement VBlank du dispatcher est retardé de 2 cycles (`GBL_VBL_DELAY`, 1 et 2 passent, 3 échoue) : mooneye `di_timing-GS` et `halt_ime1_timing2-GS` passent (87/115). Firmware inchangé (identité DMG : 8× identique).
 
 - Mode de référence : STAT garde le bit LY=LYC quand le LCD est éteint, et l'activation ne lève pas d'interruption STAT si la ligne était déjà haute (mooneye `stat_lyc_onoff` passe, 88/115). Firmware inchangé (8× identique).
+
+- Mode de référence : la longueur du mode 3 due à SCX%8 s'arrondit à 4 points (1-4 → 4, 5-7 → 8) : mooneye `hblank_ly_scx_timing-GS` passe (89/115). Firmware inchangé (8× identique).
