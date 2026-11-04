@@ -893,6 +893,7 @@ __attribute__((noinline)) void render_line(void) {
 static void update_due(void);
 /* KEY1 speed switch: the position inside the current line (or virtual frame)
  * is kept, only its unit changes. */
+int gbl_ppu_in_hblank(void) { return lcd_on && ly < 144 && mode == 0; }
 void gbl_ppu_set_speed(uint8_t d) {
     if (d == gbl_dshift) return;
     uint32_t now = gbr.cyc;
@@ -1074,6 +1075,9 @@ void gbl_ppu_advance(uint32_t now) {
                 render_line();
                 stage = 2;
                 mode = 0;
+#if GBL_CGB
+                if (gbl_hdma_active) gbl_hdma_pend = 1;
+#endif
                 stat_update();
             }
         } else if (ly == 153 && stage == 0) {
@@ -1132,6 +1136,10 @@ uint32_t gbl_ppu_stable_until(void) {
 static inline uint32_t ppu_next_event(void) {
     if (!lcd_on) return off_start + FRAME_CYCLES;
     uint8_t s = STAT;
+#if GBL_CGB
+    if (gbl_hdma_pend) return gbr.cyc;
+    if (gbl_hdma_active && ly < 144 && stage < 2) return line_start + (stage ? P.m0_start : MODE3_START);
+#endif
 #if GBL_TIMING_ASM
     if (ly < 144 && stage < 2 && (s & 0x08)) return line_start + MODE0_START;
 #else

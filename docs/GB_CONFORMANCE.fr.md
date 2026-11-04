@@ -766,3 +766,5 @@ automatique ; mooneye et blargg : mêmes résultats avec et sans `GBL_CGB`.
   mapper/taille à ouvrir côté m0boy.
 - Reproduire : `cmake --build build --target gbconform` puis `build/tests/gbconform 8000 <rom>...` (deepeel) ;
   `GBC_END=1` affiche l'état final, `GBC_MICRO=1` active le protocole gbmicrotest.
+
+- CGB, HDMA/GDMA (FF51-FF55) : GDMA immédiat, HDMA un bloc de 16 octets par HBlank (annulation par écriture bit 7 = 0, lecture de FF55). Implémenté, sans ROM de test dédiée : seule la non-régression est mesurée (mooneye 84, `cgb-acid2` 0 pixel, code DMG identique).

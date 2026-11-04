@@ -16,6 +16,8 @@ void gbl_ppu_advance(uint32_t now);
 extern uint8_t gbl_dshift; /* 1 in CGB double speed */
 void gbl_ppu_set_speed(uint8_t d);
 void gbl_speed_switch(void);
+extern uint8_t gbl_hdma_pend, gbl_hdma_active; /* an HBlank block is due (set by the PPU) */
+int gbl_ppu_in_hblank(void);
 extern uint8_t gbl_cgb_pal[2][64], gbl_cgb_ps[2];
 void gbl_cgb_pal_reset(void);
 uint8_t gbl_cgb_pal_rd(uint8_t n);

@@ -15,6 +15,11 @@ uint8_t gbl_wram[GBL_WRAM_SIZE];
 uint8_t gbl_vram[GBL_VRAM_SIZE];
 #if GBL_CGB
 uint8_t gbl_cgb, gbl_vbk, gbl_svbk = 1, gbl_key1;
+uint8_t gbl_hdma_pend, gbl_hdma_active;
+static uint16_t hdma_src, hdma_dst;
+static uint8_t hdma_len; /* FF55 low bits: blocks left - 1 */
+static void hdma_service(void);
+static void hdma_write(uint8_t n, uint8_t v);
 /* Banked addresses: VRAM bank 1 sits at +$2000; WRAM bank n (1..7) at
  * n * $1000, so D000 with SVBK=1 is the DMG layout. */
 #define VOFF(o) ((uint16_t)((o) + (gbl_vbk ? 0x2000u : 0u)))
@@ -1217,6 +1222,9 @@ void gbl_sync_serial(uint32_t now) {
 void gbl_sync(void) {
     uint32_t now = gbr.cyc;
     gbl_ppu_sync(now);
+#if GBL_CGB
+    if (gbl_hdma_pend) hdma_service();
+#endif
     timer_sync(now);
     gbl_sync_serial(now);
 }
@@ -1338,6 +1346,8 @@ uint8_t gbl_io_rd(uint8_t n) {
     case 0x4F: return gbl_cgb ? (uint8_t)(0xFE | gbl_vbk) : 0xFF;
     case 0x70: return gbl_cgb ? (uint8_t)(0xF8 | gbl_svbk) : 0xFF;
     case 0x68: case 0x69: case 0x6A: case 0x6B: return gbl_cgb ? gbl_cgb_pal_rd(n) : 0xFF;
+    case 0x55: return gbl_cgb ? (uint8_t)(gbl_hdma_active ? hdma_len : 0x80 | hdma_len) : 0xFF;
+    case 0x51: case 0x52: case 0x53: case 0x54: return 0xFF;
     case 0x4D: return gbl_cgb ? (uint8_t)(0x7E | gbl_dshift << 7 | (gbl_key1 & 1)) : 0xFF;
 #endif
     default:
@@ -1445,6 +1455,9 @@ void gbl_io_wr(uint8_t n, uint8_t v) {
             map_pages();
         }
         return;
+    case 0x51: case 0x52: case 0x53: case 0x54: case 0x55:
+        if (gbl_cgb) hdma_write(n, v);
+        return;
     case 0x68: case 0x69: case 0x6A: case 0x6B:
         if (gbl_cgb) gbl_cgb_pal_wr(n, v);
         return;
@@ -1482,6 +1495,46 @@ void gbl_io_wr(uint8_t n, uint8_t v) {
 #endif
 
 #if GBL_CGB
+/* One 16-byte block of a VRAM DMA (GDMA or HDMA). */
+static void hdma_block(void) {
+    for (unsigned i = 0; i < 16; i++) {
+        uint8_t v = gbl_rd((uint16_t)(hdma_src + i));
+        gbl_vram_wr((uint16_t)((hdma_dst + i) & 0x1FFFu), v);
+    }
+    hdma_src = (uint16_t)(hdma_src + 16u);
+    hdma_dst = (uint16_t)((hdma_dst + 16u) & 0x1FF0u);
+    gbr.cyc += 32u << gbl_dshift;
+}
+
+static void hdma_service(void) {
+    gbl_hdma_pend = 0;
+    if (!gbl_hdma_active || !gbl_ppu_in_hblank()) return;
+    hdma_block();
+    if (hdma_len-- == 0) { gbl_hdma_active = 0; hdma_len = 0x7F; }
+    gbl_update_evt();
+}
+
+static void hdma_write(uint8_t n, uint8_t v) {
+    switch (n) {
+    case 0x51: hdma_src = (uint16_t)(v << 8 | (hdma_src & 0xFF)); break;
+    case 0x52: hdma_src = (uint16_t)((hdma_src & 0xFF00) | (v & 0xF0)); break;
+    case 0x53: hdma_dst = (uint16_t)(((v & 0x1F) << 8) | (hdma_dst & 0xFF)); break;
+    case 0x54: hdma_dst = (uint16_t)((hdma_dst & 0x1F00) | (v & 0xF0)); break;
+    default:
+        if (gbl_hdma_active && !(v & 0x80)) { gbl_hdma_active = 0; gbl_hdma_pend = 0; gbl_update_evt(); return; }
+        hdma_len = v & 0x7F;
+        if (v & 0x80) {
+            gbl_hdma_active = 1;
+            gbl_ppu_sync(gbr.cyc);
+            if (gbl_ppu_in_hblank()) gbl_hdma_pend = 1;
+        } else {
+            for (unsigned b = 0; b <= hdma_len; b++) hdma_block();
+            hdma_len = 0x7F;
+        }
+        gbl_update_evt();
+    }
+}
+
 /* STOP with KEY1 armed: change speed (DIV restarts; the switch itself takes
  * about 2050 M-cycles). */
 void gbl_speed_switch(void) {
@@ -2116,6 +2169,7 @@ void gbl_reset(void) {
 #endif
 #if GBL_CGB
     gbl_cgb_pal_reset();
+    gbl_hdma_active = 0; gbl_hdma_pend = 0; hdma_len = 0x7F; hdma_src = hdma_dst = 0;
     gbl_cgb = 0; gbl_vbk = 0; gbl_svbk = 1; gbl_key1 = 0; gbl_dshift = 0;
 #endif
     memset(gbl_wram, 0, sizeof(gbl_wram));
@@ -2189,6 +2243,10 @@ static void state_mem(gbl_state_fn io, void *ctx, int load) {
     io(&gbl_vbk, sizeof(gbl_vbk), ctx);
     io(&gbl_svbk, sizeof(gbl_svbk), ctx);
     io(&gbl_key1, sizeof(gbl_key1), ctx);
+    io(&gbl_hdma_active, 1, ctx);
+    io(&hdma_src, sizeof(hdma_src), ctx);
+    io(&hdma_dst, sizeof(hdma_dst), ctx);
+    io(&hdma_len, 1, ctx);
     io(gbl_cgb_pal, sizeof(gbl_cgb_pal), ctx);
     io(gbl_cgb_ps, sizeof(gbl_cgb_ps), ctx);
     io(&gbl_dshift, sizeof(gbl_dshift), ctx);
