@@ -739,6 +739,26 @@ blargg : en plus `oam_bug/1-lcd_sync`. Restent : `intr_2_mode0_timing_sprites`, 
 | `vram_read_l1_b.gb` | ❌ échoue |
 | `wave_write_to_0xC003.gb` | ❔ sans verdict |
 
+## CGB (option `GBL_CGB`, hôte et ESP32 seulement)
+
+`GBL_CGB=1` ajoute le mode couleur ; la valeur par défaut (0) laisse le code
+DMG et le firmware META inchangés (désassemblage de `gbl_core`, `gbl_ppu`,
+`gbl_cpu`, `gbl_apu` comparé à des références, hôte et Thumb-1). Les chemins
+assembleur sont coupés avec `GBL_CGB=1`.
+
+Fait : banques VRAM/WRAM (FF4F, FF70), démarrage CGB selon `$143` bit 7,
+KEY1 et double vitesse (`STOP` armé), palettes BCPS/BCPD/OCPS/OCPD, attributs
+de tuile (palette, banque, retournements, priorité) et de sprite, priorité
+par index d'OAM, rendu RGB565 pixel par pixel (`draw_line_cgb`).
+Pas encore : HDMA/GDMA (FF51-FF55), registres de palette DMG-sur-CGB, accès
+VRAM/palette bloqués en mode 3, correction de couleur.
+
+Mesures (build deepeel `-DDP_GBL_CGB=1`, outil `gbshot`) :
+`cgb-acid2` = image de référence, 0 pixel de différence ; `cgb-acid-hell` :
+2 pixels de différence en (80, 68-69) ; Tetris DX (`roms/cgb/`) : copyright,
+titre, menus, saisie de nom et début de partie en couleur, sans verdict
+automatique ; mooneye et blargg : mêmes résultats avec et sans `GBL_CGB`.
+
 ## Reste
 - Comparaison de captures (dmg-acid2, mealybug, gambatte, scribbltests) : demande un hash d'écran de référence par ROM.
 - Les « sans verdict » de Blargg qui ne terminent pas (sons, `interrupt_time`, `halt_bug`) bloquent sur un comportement

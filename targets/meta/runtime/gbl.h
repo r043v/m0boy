@@ -40,6 +40,11 @@ typedef struct {
 
 extern gbl_cpu_t gbr;
 
+#if defined(__has_include)
+#if __has_include("gbl_config.h")
+#include "gbl_config.h" /* GBL_CGB decides the RAM sizes below */
+#endif
+#endif
 #if defined(GBL_CGB) && GBL_CGB
 /* CGB: WRAM as 8 banks of 4 KiB (bank 0 first, bank 1 at +$1000: the DMG
  * layout is the first 8 KiB), VRAM as 2 banks of 8 KiB. */

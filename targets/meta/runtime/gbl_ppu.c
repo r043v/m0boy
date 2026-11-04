@@ -33,8 +33,10 @@
  * dots, so every PPU duration doubles when counted in CPU cycles. */
 uint8_t gbl_dshift;
 #define PS(x) ((uint32_t)(x) << gbl_dshift)
+#define GBL_CGB_ON (gbl_cgb)
 #else
 #define PS(x) (x)
+#define GBL_CGB_ON 0
 #endif
 #define LINE_CYCLES PS(456u)
 #define MODE3_START (PS(80u) + GBL_PPU_REF) /* reference mode: mode 3 one dot later (mooneye intr_2_mode3) */
@@ -753,6 +755,96 @@ __attribute__((noinline)) void draw_line(uint16_t *out, uint8_t lcdc, int window
     }
 }
 
+#if GBL_CGB
+/* ---- CGB colour renderer ------------------------------------------------
+ * Used when the cartridge runs in colour mode (gbl_cgb): pixels are RGB565,
+ * straight from the palette RAM, one pixel at a time.  Host and ESP32
+ * targets only (no packed output, no line signature). */
+uint8_t gbl_cgb_pal[2][64]; /* BG then OBJ palette RAM */
+uint8_t gbl_cgb_ps[2];      /* BCPS, OCPS */
+
+static inline uint16_t cgb_rgb(const uint8_t *pal, uint32_t pn, uint32_t ci) {
+    uint32_t c = pal[pn * 8 + ci * 2] | (uint32_t)pal[pn * 8 + ci * 2 + 1] << 8;
+    uint32_t r = c & 31u, g = (c >> 5) & 31u, b = (c >> 10) & 31u;
+    return (uint16_t)(r << 11 | (g << 1 | g >> 4) << 5 | b);
+}
+
+void gbl_cgb_pal_reset(void) {
+    for (int i = 0; i < 128; i++) gbl_cgb_pal[i >> 6][i & 63] = (i & 1) ? 0x7F : 0xFF;
+    gbl_cgb_ps[0] = gbl_cgb_ps[1] = 0;
+}
+
+uint8_t gbl_cgb_pal_rd(uint8_t n) {
+    uint32_t k = (n >> 1) & 1u;
+    if (!(n & 1)) return (uint8_t)(0x40 | gbl_cgb_ps[k]);
+    return gbl_cgb_pal[k][gbl_cgb_ps[k] & 63u];
+}
+
+void gbl_cgb_pal_wr(uint8_t n, uint8_t v) {
+    uint32_t k = (n >> 1) & 1u;
+    if (!(n & 1)) { gbl_cgb_ps[k] = v & 0xBFu; return; }
+    gbl_ppu_sync(gbr.cyc); /* lines already due keep the old colours */
+    uint8_t ps = gbl_cgb_ps[k];
+    gbl_cgb_pal[k][ps & 63u] = v;
+    if (ps & 0x80) gbl_cgb_ps[k] = (uint8_t)(0x80 | ((ps + 1u) & 63u));
+    gbl_ppu_content_changed();
+}
+
+static void draw_line_cgb(uint16_t *out, uint8_t lcdc, int window, uint32_t h, const uint8_t *sel, int n) {
+    uint8_t bgci[160], bgpri[160];
+    const uint8_t *vram = gbl_vram;
+    uint32_t tdata = (lcdc & 0x10) ? 0u : 0x800u, txor = (lcdc & 0x10) ? 0u : 0x80u;
+    int wx0 = (int)WX - 7;
+    uint32_t y = (uint32_t)(uint8_t)(SCY + ly), wl = win_line;
+    for (int x = 0; x < 160; x++) {
+        uint32_t px, py, mbase;
+        if (window && x >= wx0) {
+            px = (uint32_t)(x - wx0); py = wl; mbase = (lcdc & 0x40) ? 0x1C00u : 0x1800u;
+        } else {
+            px = (uint32_t)(uint8_t)(SCX + x); py = y; mbase = (lcdc & 0x08) ? 0x1C00u : 0x1800u;
+        }
+        uint32_t mo = mbase + (py >> 3) * 32u + (px >> 3);
+        uint32_t idx = vram[mo], at = vram[0x2000u + mo];
+        uint32_t row = py & 7u, col = px & 7u;
+        if (at & 0x40) row = 7u - row;
+        if (at & 0x20) col = 7u - col;
+        const uint8_t *td = vram + ((at & 8u) ? 0x2000u : 0u) + tdata + ((idx ^ txor) << 4) + row * 2u;
+        uint32_t ci = ((td[0] >> (7u - col)) & 1u) | (((td[1] >> (7u - col)) & 1u) << 1);
+        bgci[x] = (uint8_t)ci;
+        bgpri[x] = (uint8_t)((at >> 7) & 1u);
+        out[x] = cgb_rgb(gbl_cgb_pal[0], at & 7u, ci);
+    }
+    if (window) win_line++;
+    if (!n) return;
+    /* OAM order is the priority (lower index wins) */
+    uint8_t s2[10];
+    for (int k = 0; k < n; k++) {
+        int j = k;
+        while (j > 0 && s2[j - 1] > sel[k]) { s2[j] = s2[j - 1]; j--; }
+        s2[j] = sel[k];
+    }
+    uint8_t taken[160];
+    memset(taken, 0, sizeof taken);
+    for (int k = 0; k < n; k++) {
+        const uint8_t *o = gbl_oam + s2[k] * 4;
+        uint32_t attr = o[3], row = (uint32_t)(ly + 16 - o[0]), tile = o[2];
+        if (attr & 0x40) row = h - 1 - row;
+        if (h == 16) tile &= 0xFEu;
+        const uint8_t *td = vram + ((attr & 8u) ? 0x2000u : 0u) + tile * 16u + row * 2u;
+        for (int i = 0; i < 8; i++) {
+            int x = (int)o[1] - 8 + i;
+            if (x < 0 || x >= 160 || taken[x]) continue;
+            uint32_t c = (attr & 0x20) ? (uint32_t)i : 7u - (uint32_t)i;
+            uint32_t ci = ((td[0] >> c) & 1u) | (((td[1] >> c) & 1u) << 1);
+            if (!ci) continue;
+            taken[x] = 1;
+            if ((lcdc & 1) && bgci[x] && ((attr & 0x80) || bgpri[x])) continue;
+            out[x] = cgb_rgb(gbl_cgb_pal[1], attr & 7u, ci);
+        }
+    }
+}
+#endif
+
 /* Most lines are skipped (unchanged signature, dropped row, skipped frame):
  * this light function decides, and only drawn lines pay for draw_line's
  * large frame (tile words, registers). */
@@ -765,7 +857,12 @@ static
 #if !GBL_RENDER_LINE_ASM /* else gbl_ppu_asm.S */
 __attribute__((noinline)) void render_line(void) {
     uint8_t lcdc = LCDC;
+#if GBL_CGB
+    uint8_t wmask = gbl_cgb ? 0x20u : 0x21u; /* CGB: LCDC bit 0 no longer gates the window */
+    int window = (lcdc & wmask) == wmask && ly >= WY && WX <= 166;
+#else
     int window = (lcdc & 0x21) == 0x21 && ly >= WY && WX <= 166;
+#endif
     uint32_t h = (lcdc & 0x04) ? 16u : 8u;
     uint8_t sel[10];
     int n = 0;
@@ -773,11 +870,14 @@ __attribute__((noinline)) void render_line(void) {
     if (!gbl_skip_render) {
         if (lcdc & 0x02) n = select_sprites(sel, h);
 #if GBL_LINE_SIGNATURE
-        if (gbl_platform_line_check(ly, line_signature(lcdc, window, sel, n, h)))
+        if (GBL_CGB_ON || gbl_platform_line_check(ly, line_signature(lcdc, window, sel, n, h)))
 #endif
         {
             uint16_t *out = gbl_platform_line_begin(ly);
             if (out) {
+#if GBL_CGB
+                if (gbl_cgb) draw_line_cgb(out, lcdc, window, h, sel, n); else
+#endif
                 draw_line(out, lcdc, window, h, sel, n); /* advances win_line */
                 gbl_platform_line_end(ly);
                 return;

@@ -16,6 +16,10 @@ void gbl_ppu_advance(uint32_t now);
 extern uint8_t gbl_dshift; /* 1 in CGB double speed */
 void gbl_ppu_set_speed(uint8_t d);
 void gbl_speed_switch(void);
+extern uint8_t gbl_cgb_pal[2][64], gbl_cgb_ps[2];
+void gbl_cgb_pal_reset(void);
+uint8_t gbl_cgb_pal_rd(uint8_t n);
+void gbl_cgb_pal_wr(uint8_t n, uint8_t v);
 extern uint8_t gbl_key1, gbl_cgb, gbl_vbk, gbl_svbk;
 #endif
 static inline void gbl_ppu_sync(uint32_t now) {

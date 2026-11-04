@@ -1337,6 +1337,7 @@ uint8_t gbl_io_rd(uint8_t n) {
 #if GBL_CGB
     case 0x4F: return gbl_cgb ? (uint8_t)(0xFE | gbl_vbk) : 0xFF;
     case 0x70: return gbl_cgb ? (uint8_t)(0xF8 | gbl_svbk) : 0xFF;
+    case 0x68: case 0x69: case 0x6A: case 0x6B: return gbl_cgb ? gbl_cgb_pal_rd(n) : 0xFF;
     case 0x4D: return gbl_cgb ? (uint8_t)(0x7E | gbl_dshift << 7 | (gbl_key1 & 1)) : 0xFF;
 #endif
     default:
@@ -1443,6 +1444,9 @@ void gbl_io_wr(uint8_t n, uint8_t v) {
             gbl_vbk = v & 1u;
             map_pages();
         }
+        return;
+    case 0x68: case 0x69: case 0x6A: case 0x6B:
+        if (gbl_cgb) gbl_cgb_pal_wr(n, v);
         return;
     case 0x4D:
         if (gbl_cgb) gbl_key1 = v & 1u;
@@ -2111,6 +2115,7 @@ void gbl_reset(void) {
     dma_in = 0;
 #endif
 #if GBL_CGB
+    gbl_cgb_pal_reset();
     gbl_cgb = 0; gbl_vbk = 0; gbl_svbk = 1; gbl_key1 = 0; gbl_dshift = 0;
 #endif
     memset(gbl_wram, 0, sizeof(gbl_wram));
@@ -2184,6 +2189,8 @@ static void state_mem(gbl_state_fn io, void *ctx, int load) {
     io(&gbl_vbk, sizeof(gbl_vbk), ctx);
     io(&gbl_svbk, sizeof(gbl_svbk), ctx);
     io(&gbl_key1, sizeof(gbl_key1), ctx);
+    io(gbl_cgb_pal, sizeof(gbl_cgb_pal), ctx);
+    io(gbl_cgb_ps, sizeof(gbl_cgb_ps), ctx);
     io(&gbl_dshift, sizeof(gbl_dshift), ctx);
 #endif
 #if GBL_ERAM_SIZE > 0 && GBL_ERAM_ON_SD
