@@ -65,6 +65,18 @@ typedef struct {
     const uint16_t *idx;
 } gbl_bank_table;
 extern const gbl_bank_table gbl_tables[];
+/* Executed RAM code (WRAM $C000-$DFFF, HRAM $FF80-$FFFE) compiled from a
+ * recorded variant (gbrecomp --ram-code).  The dispatch enters a variant's
+ * table only while the RAM still holds exactly `bytes`; any other content
+ * (rewritten, not yet copied) runs in the interpreter.  Absent from a
+ * project without variants: gbl_core.c defines empty weak defaults. */
+typedef struct {
+    uint16_t addr, len;
+    const uint8_t *bytes;
+    gbl_bank_table table;
+} gbl_ram_variant;
+extern const gbl_ram_variant gbl_ram_variants[];
+extern const uint16_t gbl_ram_variant_count;
 extern const uint16_t gbl_table_count;
 /* ESP8266's mapped flash only accepts aligned word loads. RAM keeps its
  * normal byte accesses; host and ARM builds compile to the original load. */

@@ -185,6 +185,8 @@ void print_usage(const char* program) {
     std::cout << "  --target odroid       ODROID-GO (ESP32, ILI9341 320x240, SD, 4 MiB PSRAM)\n";
     std::cout << "  --target aka          Gamebuino AKA (ESP32-S3, 320x240, SD, 8 MiB PSRAM)\n";
     std::cout << "  --coverage <file>     gbl coverage profile for --target meta (repeatable)\n";
+    std::cout << "  --ram-code <file>     deepeel's executed-RAM-code variants (Game Boy WRAM/HRAM): compiled\n"
+                 "                        and entered only while the RAM holds the recorded bytes\n";
     std::cout << "  --coverage-map <file> deepeel's memory map (.map): every code range seeds the\n"
                  "                        SG-1000/GG/SMS/MSX walk (computed dispatch into a\n"
                  "                        switched bank is compiled, not interpreted)\n";
@@ -1838,6 +1840,7 @@ static long g_meta_sync_cycles = -1; /* SG/GG fast mode; -1: the emitter's defau
 static int g_meta_stream = -1;                  /* --meta-stream auto|on|off */
 static std::vector<fs::path> g_rom_profiles;    /* --rom-profile FILE */
 static fs::path g_rom_plan;                     /* --rom-plan FILE (Game Boy too) */
+static std::vector<fs::path> g_ram_code;        /* --ram-code FILE (repeatable) */
 static size_t g_meta_resident = 0;              /* --meta-rom-resident-kib */
 static bool g_meta_pack = false;                /* --meta-pack */
 static std::string g_sd_name;                   /* --sd-name */
@@ -1891,6 +1894,7 @@ static int run_meta_target(const char* argv0, const std::string& rom_path,
                              ? fs::path(fs::path(rom_path).stem().string() + ("_" + std::string(m0boy::target_descriptor(target_id).name)))
                              : fs::path(output_dir);
     options.coverage_files = coverage_paths;
+    options.ram_code_files = g_ram_code;
     options.bytes_per_instruction = bytes_per_instruction;
     options.code_budget_bytes = g_meta_code_budget;
     options.stream = g_meta_stream;
@@ -2253,6 +2257,10 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--coverage-map") {
             if (i + 1 < argc) {
                 coverage_map = argv[++i];
+            }
+        } else if (arg == "--ram-code") {
+            if (i + 1 < argc) {
+                g_ram_code.emplace_back(argv[++i]);
             }
         } else if (arg == "--ram-image") {
             if (i + 1 < argc) {
@@ -2895,8 +2903,8 @@ int main(int argc, char* argv[]) {
                                coverage_paths, meta_precise, meta_static, meta_bpi, emit_comments,
                                *m0boy::parse_target(target), meta_thumb, meta_compiler, meta_sweep);
     }
-    if (!coverage_paths.empty() || !coverage_map.empty() || !ram_image.empty() || meta_compiler != "gcc" || meta_thumb || meta_precise || meta_static || meta_sweep || !meta_dir.empty()) {
-        std::cerr << "Error: --coverage, --coverage-map, --ram-image, --meta-compiler, --meta-thumb, --meta-precise, --meta-static, --meta-sweep and --meta-dir require a console target (meta, pokitto, espboy, pc, odroid, aka)\n";
+    if (!coverage_paths.empty() || !coverage_map.empty() || !ram_image.empty() || !g_ram_code.empty() || meta_compiler != "gcc" || meta_thumb || meta_precise || meta_static || meta_sweep || !meta_dir.empty()) {
+        std::cerr << "Error: --coverage, --coverage-map, --ram-image, --ram-code, --meta-compiler, --meta-thumb, --meta-precise, --meta-static, --meta-sweep and --meta-dir require a console target (meta, pokitto, espboy, pc, odroid, aka)\n";
         return 1;
     }
     if (!emit_android_project && (!android_package.empty() || !android_app_name.empty())) {

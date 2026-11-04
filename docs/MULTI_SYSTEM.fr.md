@@ -222,6 +222,28 @@ cmake -G Ninja -S output/jeu-pokitto -B output/jeu-pokitto/build -DCMAKE_TOOLCHA
 ninja -C output/jeu-pokitto/build
 ```
 
+### Code Game Boy en RAM (--ram-code)
+
+`--ram-code FICHIER` (cible GB, `--target meta|pc`) compile le code que le jeu
+copie ou construit en WRAM `C000-DFFF` / HRAM `FF80-FFFE`. Le fichier est
+produit par `deepeel explore ROM --ram-code FICHIER` : une ligne
+`ram ADDR OCTETS DEPARTS` par variante (octets contigus connus, départs
+d'instruction en hexadécimal relatifs à `ADDR`, `e` = entrée non séquentielle).
+Seul le code atteint par un chemin *naturel* est exporté ; le code que seule une
+fourche forcée a atteint (saut dans de la RAM à zéro) est écarté
+(`--ram-code-forced` côté deepeel pour le garder).
+
+Le générateur émet `gbl_ram_variants[]` ; `gbl_lookup` n'entre dans une variante
+que si la RAM contient exactement ses octets (comparaison à chaque entrée, pas de
+cache). Sinon le repli interpréteur reste le comportement sûr. Limites connues :
+une écriture dans la variante pendant qu'elle s'exécute n'est pas détectée
+avant la prochaine entrée ; chemin asm ARM non touché ni testé.
+
+Vérifié sur la fixture deepeel `wramexec` (routine de 6 octets copiée ROM→WRAM) :
+`run_hash`, `wram_hash` et `state_hash` identiques avec et sans `--ram-code`,
+instructions interprétées 5 → 2. Sur *Super Mario Land*, l'outil n'observe aucun
+code RAM naturel : aucune variante.
+
 Le mode `auto` reconnaît `.sg` et `.gb/.gbc/.sgb`, sans distinction de casse.
 Les extensions inconnues et les dossiers conservent le choix Game Boy
 historique. Pour un fichier `.bin` SG-1000, il faut donc indiquer `--system

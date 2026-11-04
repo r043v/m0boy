@@ -39,6 +39,13 @@ struct MetaTargetOptions {
     /// the ESP32 family shares its core (targets/common/consoles/esp32)
     bool esp32_console() const { return odroid || aka; }
     std::vector<std::filesystem::path> coverage_files; ///< gbl coverage v1 files
+    /* deepeel's executed-RAM-code variants ("gbl ram code v1": `ram ADDR
+     * HEXBYTES OFFSETS`, WRAM $C000-$DFFF and HRAM $FF80-$FFFE).  Each
+     * variant is compiled like a code bank of its own; at run time the
+     * dispatch compares the RAM with the variant's bytes and only then
+     * enters the compiled code, so code that was rewritten never runs a
+     * stale translation (it falls back to the interpreter). */
+    std::vector<std::filesystem::path> ram_code_files;
     bool emit_comments = true;
     std::string compiler = "gcc"; ///< firmware C/C++ compiler: gcc or clang
     bool thumb = false;        ///< experimental register-IR / Thumb-1 lowering
@@ -82,6 +89,9 @@ struct MetaTargetStats {
     size_t speculative = 0;      ///< static-analysis instructions offered
     size_t speculative_kept = 0; ///< ... and compiled within the budget
     size_t data_skipped = 0;     ///< cov lines flagged data (8) and not executed
+    size_t ram_variants = 0;     ///< RAM code variants compiled (--ram-code)
+    size_t ram_instructions = 0; ///< ... and the instructions they hold
+    size_t ram_skipped = 0;      ///< variants refused (outside WRAM/HRAM, or malformed)
     size_t budget_instructions = 0;
     bool stream = false;         ///< ROM streamed from the SD card
     std::string stream_file;     ///< its 8.3 name on the card

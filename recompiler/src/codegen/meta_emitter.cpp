@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <cstdio>
 #include <fstream>
 #include <map>
@@ -196,16 +197,31 @@ std::string cond_expr(uint8_t op) {
     }
 }
 
-bool decode(const ROM& rom, uint16_t bank, uint16_t addr, Ins& in) {
-    const uint32_t limit = addr < 0x4000 ? 0x4000u : 0x8000u;
+/* One executed-RAM-code variant (--ram-code): the bytes at ram_addr and the
+ * instruction starts that ran.  It is compiled as a pseudo bank numbered
+ * ROM banks + its index, so every table keyed by (bank, addr) holds it. */
+struct RamVariant {
+    uint16_t addr = 0;
+    std::vector<uint8_t> bytes;
+    std::map<uint16_t, bool> starts; /* absolute address -> entered non-sequentially */
+    uint16_t end() const { return static_cast<uint16_t>(addr + bytes.size()); }
+};
+
+bool decode(const ROM& rom, const RamVariant* ram, uint16_t bank, uint16_t addr, Ins& in) {
+    const uint32_t limit = ram ? static_cast<uint32_t>(ram->addr) + ram->bytes.size()
+                         : addr < 0x4000 ? 0x4000u : 0x8000u;
+    auto at = [&](uint16_t a) -> uint8_t {
+        return ram ? ram->bytes[a - ram->addr] : rom.read_banked(bank, a);
+    };
     in.bank = bank;
     in.addr = addr;
-    in.op = rom.read_banked(bank, addr);
+    if (ram && (addr < ram->addr || addr >= limit)) return false;
+    in.op = at(addr);
     in.len = op_length(in.op);
     if (static_cast<uint32_t>(addr) + in.len > limit) return false;
-    in.n8 = in.len > 1 ? rom.read_banked(bank, static_cast<uint16_t>(addr + 1)) : 0;
+    in.n8 = in.len > 1 ? at(static_cast<uint16_t>(addr + 1)) : 0;
     in.n16 = static_cast<uint16_t>(
-        in.n8 | (in.len > 2 ? rom.read_banked(bank, static_cast<uint16_t>(addr + 2)) << 8 : 0));
+        in.n8 | (in.len > 2 ? at(static_cast<uint16_t>(addr + 2)) << 8 : 0));
     in.cycles = kCycles[in.op];
     const uint8_t op = in.op;
 
@@ -351,6 +367,7 @@ public:
     std::string emit_rom_full() const;
 
     bool load_coverage(MetaTargetStats& stats, std::string& error);
+    bool load_ram_code(MetaTargetStats& stats, std::string& error);
     void build();
     std::string emit_code();
     std::string emit_rom() const;
@@ -397,6 +414,12 @@ private:
 
     const ROM& rom_;
     const MetaTargetOptions& opt_;
+    std::vector<RamVariant> ram_;
+    bool is_ram_bank(uint16_t bank) const { return bank >= rom_.bank_count(); }
+    const RamVariant* ram_of(uint16_t bank) const {
+        return is_ram_bank(bank) && bank - rom_.bank_count() < ram_.size()
+                   ? &ram_[bank - rom_.bank_count()] : nullptr;
+    }
     std::vector<Ins> ins_;
     std::unordered_map<uint32_t, size_t> index_;
     std::vector<std::vector<size_t>> regions_;
@@ -427,6 +450,16 @@ private:
     std::vector<int> resident_index_;    /* per chunk: slot in flash, -1 on the card */
 
 public:
+    /* variants that reached the tables, and the instructions they hold */
+    void ram_stats(MetaTargetStats& stats) const {
+        std::set<uint16_t> banks;
+        for (const Ins& in : ins_)
+            if (is_ram_bank(in.bank)) {
+                stats.ram_instructions++;
+                banks.insert(in.bank);
+            }
+        stats.ram_variants = banks.size();
+    }
     size_t spin_loops() const { return spin_loops_; }
     size_t counted_loops() const { return counted_loops_; }
 };
@@ -471,6 +504,18 @@ bool Generator::load_coverage(MetaTargetStats& stats, std::string& error) {
         }
     }
     stats.covered = cov.size();
+    if (!load_ram_code(stats, error)) return false;
+    for (size_t v = 0; v < ram_.size(); v++) {
+        const uint16_t bank = static_cast<uint16_t>(rom_.bank_count() + v);
+        bool first = true;
+        for (const auto& [a, entered] : ram_[v].starts) {
+            const uint32_t k = key(bank, a);
+            cov[k] |= static_cast<uint8_t>(1 | ((entered || first) ? 2 : 0));
+            played.insert(k);
+            hits[k] += 1;
+            first = false;
+        }
+    }
 
     /* --meta-sweep: every bank's CALL ($CD) and JP abs ($C3) offers its
      * target as an entry, the callers behind a bank table included.  A
@@ -508,7 +553,8 @@ bool Generator::load_coverage(MetaTargetStats& stats, std::string& error) {
             continue;
         }
         Ins in;
-        if (!decode(rom_, static_cast<uint16_t>(k >> 16), static_cast<uint16_t>(k), in)) {
+        if (!decode(rom_, ram_of(static_cast<uint16_t>(k >> 16)), static_cast<uint16_t>(k >> 16),
+                    static_cast<uint16_t>(k), in)) {
             dropped_++;
             continue;
         }
@@ -571,7 +617,7 @@ bool Generator::load_coverage(MetaTargetStats& stats, std::string& error) {
          * ROM: that counts as reads of its chunk (about len bytes each). */
         for (size_t i = 0; i < all.size(); i++) {
             const Ins& in = all[i];
-            if (keep[i] || in.addr < 0x4000) continue;
+            if (keep[i] || in.addr < 0x4000 || in.addr >= 0x8000) continue;
             auto it = hits.find(key(in.bank, in.addr));
             if (it == hits.end()) continue;
             const size_t c = (static_cast<size_t>(in.bank) * 0x4000u + (in.addr - 0x4000u)) >> 12;
@@ -583,18 +629,89 @@ bool Generator::load_coverage(MetaTargetStats& stats, std::string& error) {
         if (!keep[i]) continue;
         Ins& in = all[i];
         if (!played.count(key(in.bank, in.addr))) stats.speculative_kept++;
-        if (opt_.emit_comments) in.text = dec.decode(in.addr, in.bank).disassemble();
+        if (opt_.emit_comments && !is_ram_bank(in.bank)) in.text = dec.decode(in.addr, in.bank).disassemble();
         index_[key(in.bank, in.addr)] = ins_.size();
         ins_.push_back(std::move(in));
     }
     return true;
 }
 
+/* --ram-code: "gbl ram code v1" lines `ram ADDR HEXBYTES OFFSETS`.  OFFSETS
+ * are comma-separated hex instruction starts relative to ADDR, a trailing
+ * `e` marking one entered non-sequentially.  Only WRAM ($C000-$DFFF) and
+ * HRAM ($FF80-$FFFE) are accepted: those are the RAM the dispatch can compare
+ * with the variant's bytes.  A malformed or out-of-range line is counted in
+ * stats.ram_skipped, never silently compiled. */
+bool Generator::load_ram_code(MetaTargetStats& stats, std::string& error) {
+    for (const fs::path& path : opt_.ram_code_files) {
+        std::ifstream f(path);
+        if (!f) {
+            error = "cannot read RAM code file " + path.string();
+            return false;
+        }
+        std::string line;
+        while (std::getline(f, line)) {
+            if (line.empty() || line[0] == '#') continue;
+            char kind[8] = {}, hexb[4100] = {}, offs[4100] = {};
+            unsigned addr = 0;
+            if (std::sscanf(line.c_str(), "%7s %x %4099s %4099s", kind, &addr, hexb, offs) < 4 ||
+                std::string(kind) != "ram") {
+                stats.ram_skipped++;
+                continue;
+            }
+            const size_t hex_len = std::strlen(hexb);
+            const size_t n = hex_len / 2;
+            const bool wram = addr >= 0xC000u && addr + n <= 0xE000u;
+            const bool hram = addr >= 0xFF80u && addr + n <= 0xFFFFu;
+            if (hex_len % 2 || !n || !(wram || hram)) {
+                stats.ram_skipped++;
+                continue;
+            }
+            std::vector<uint8_t> bytes(n);
+            bool ok = true;
+            for (size_t i = 0; i < n && ok; i++) {
+                unsigned v = 0;
+                ok = std::sscanf(std::string(hexb + 2 * i, 2).c_str(), "%x", &v) == 1;
+                bytes[i] = static_cast<uint8_t>(v);
+            }
+            std::map<uint16_t, bool> starts;
+            std::istringstream os(offs);
+            std::string tok;
+            while (ok && std::getline(os, tok, ',')) {
+                const bool entered = !tok.empty() && tok.back() == 'e';
+                if (entered) tok.pop_back();
+                unsigned off = 0;
+                if (tok.empty() || std::sscanf(tok.c_str(), "%x", &off) != 1 || off >= n) ok = false;
+                else starts[static_cast<uint16_t>(addr + off)] |= entered;
+            }
+            if (!ok || starts.empty()) {
+                stats.ram_skipped++;
+                continue;
+            }
+            /* the same bytes at the same address merge their starts */
+            RamVariant* same = nullptr;
+            for (RamVariant& v : ram_)
+                if (v.addr == addr && v.bytes == bytes) same = &v;
+            if (!same) {
+                ram_.emplace_back();
+                same = &ram_.back();
+                same->addr = static_cast<uint16_t>(addr);
+                same->bytes = std::move(bytes);
+            }
+            for (const auto& [a, entered] : starts) same->starts[a] |= entered;
+        }
+    }
+    return true;
+}
+
 Ins* Generator::resolve(const Ins& from, uint16_t target, int& bank_check) {
     bank_check = -1;
+    if (is_ram_bank(from.bank) && target >= 0x8000) return find(from.bank, target);
     if (target < 0x4000) return find(0, target);
     if (target >= 0x8000) return nullptr;
-    if (from.bank != 0) {
+    /* RAM code calling the switchable window reaches it like bank 0 does:
+     * through whichever bank holds compiled code there. */
+    if (from.bank != 0 && !is_ram_bank(from.bank)) {
         Ins* t = find(from.bank, target);
         if (t) bank_check = from.bank;
         return t;
@@ -1836,33 +1953,37 @@ std::string Generator::emit_code() {
 
     /* Dispatch tables: every switch entry, sorted per bank. */
     const unsigned banks = rom_.bank_count();
-    std::vector<std::vector<const Ins*>> per_bank(banks);
+    std::vector<std::vector<const Ins*>> per_bank(banks + ram_.size());
     for (const Ins& in : ins_)
         if (in.sw_case) per_bank[in.bank].push_back(&in);
     o << "\n";
     if (ins_.empty()) o << "/* No coverage profile: every instruction runs in the interpreter. */\n";
-    for (unsigned b = 0; b < banks; b++) {
-        if (per_bank[b].empty()) continue;
-        o << "static const uint16_t t" << b << "_addr[] GBL_TABLE = {";
-        for (size_t i = 0; i < per_bank[b].size(); i++)
-            o << (i % 12 ? " " : "\n    ") << hex(per_bank[b][i]->addr, 4) << ",";
-        o << "\n};\nstatic const gbl_fn t" << b << "_fn[] GBL_TABLE = {";
-        for (size_t i = 0; i < per_bank[b].size(); i++)
-            o << (i % 6 ? " " : "\n    ") << region_name(per_bank[b][i]->region) << ",";
-        /* gbl_lookup's index (gbl.h): first entry of each 1 KiB block, then
-         * a bit per 128-byte page that holds an entry. */
+    /* One bank's (or RAM variant's) table: first entry of each 1 KiB block,
+     * then a bit per 128-byte page that holds an entry (gbl_lookup's index,
+     * gbl.h).  `n` names the arrays. */
+    auto table = [&](const std::string& n, const std::vector<const Ins*>& list) {
+        o << "static const uint16_t " << n << "_addr[] GBL_TABLE = {";
+        for (size_t i = 0; i < list.size(); i++)
+            o << (i % 12 ? " " : "\n    ") << hex(list[i]->addr, 4) << ",";
+        o << "\n};\nstatic const gbl_fn " << n << "_fn[] GBL_TABLE = {";
+        for (size_t i = 0; i < list.size(); i++)
+            o << (i % 6 ? " " : "\n    ") << region_name(list[i]->region) << ",";
         uint16_t idx[17 + 8] = {};
         for (unsigned k = 0, i = 0; k <= 16; k++) {
-            while (i < per_bank[b].size() && (per_bank[b][i]->addr & 0x3FFFu) < k * 0x400u) i++;
-            idx[k] = static_cast<uint16_t>(k == 16 ? per_bank[b].size() : i);
+            while (i < list.size() && (list[i]->addr & 0x3FFFu) < k * 0x400u) i++;
+            idx[k] = static_cast<uint16_t>(k == 16 ? list.size() : i);
         }
-        for (const Ins* in : per_bank[b]) {
+        for (const Ins* in : list) {
             const unsigned page = (in->addr & 0x3FFFu) >> 7;
             idx[17 + page / 16] = static_cast<uint16_t>(idx[17 + page / 16] | (1u << (page % 16)));
         }
-        o << "\n};\nstatic const uint16_t t" << b << "_idx[] GBL_TABLE = {";
+        o << "\n};\nstatic const uint16_t " << n << "_idx[] GBL_TABLE = {";
         for (unsigned k = 0; k < 17 + 8; k++) o << (k % 12 ? " " : "\n    ") << hex(idx[k], 4) << ",";
         o << "\n};\n";
+    };
+    for (unsigned b = 0; b < banks; b++) {
+        if (per_bank[b].empty()) continue;
+        table("t" + std::to_string(b), per_bank[b]);
     }
     o << "const gbl_bank_table gbl_tables[" << banks << "] = {\n";
     for (unsigned b = 0; b < banks; b++) {
@@ -1871,6 +1992,27 @@ std::string Generator::emit_code() {
             o << "    {" << per_bank[b].size() << ", t" << b << "_addr, t" << b << "_fn, t" << b << "_idx},\n";
     }
     o << "};\nconst uint16_t gbl_table_count = " << banks << ";\n";
+    /* RAM code variants (--ram-code): the bytes the dispatch compares with the
+     * RAM before it enters the compiled code, then the variant's own table. */
+    std::vector<size_t> live;
+    for (size_t v = 0; v < ram_.size(); v++)
+        if (!per_bank[banks + v].empty()) live.push_back(v);
+    if (!live.empty()) {
+        o << "\n";
+        for (size_t v : live) {
+            o << "static const uint8_t v" << v << "_bytes[] GBL_TABLE = {";
+            for (size_t i = 0; i < ram_[v].bytes.size(); i++)
+                o << (i % 16 ? " " : "\n    ") << hex(ram_[v].bytes[i], 2) << ",";
+            o << "\n};\n";
+            table("v" + std::to_string(v), per_bank[banks + v]);
+        }
+        o << "const gbl_ram_variant gbl_ram_variants[" << live.size() << "] = {\n";
+        for (size_t v : live)
+            o << "    {" << hex(ram_[v].addr, 4) << ", " << ram_[v].bytes.size() << ", v" << v
+              << "_bytes, {" << per_bank[banks + v].size() << ", v" << v << "_addr, v" << v << "_fn, v"
+              << v << "_idx}},\n";
+        o << "};\nconst uint16_t gbl_ram_variant_count = " << live.size() << ";\n";
+    }
     return o.str();
 }
 
@@ -2343,6 +2485,7 @@ bool generate_meta_project(const ROM& rom, const MetaTargetOptions& options,
             (options.sd_name.empty() ? stream_name(options.name) : options.sd_name) + ".GB";
     }
     gen.build();
+    gen.ram_stats(stats);
 
     const std::string config = gen.emit_config(error);
     if (config.empty()) return false;

@@ -1747,6 +1747,31 @@ static gbl_fn lookup_table(const gbl_bank_table *t, uint16_t pc) {
     return 0;
 }
 
+/* RAM code: a recorded variant is entered only while the RAM still holds
+ * its bytes (see gbl_ram_variant).  Never cached: the bytes can change
+ * between two lookups.  Empty weak defaults serve projects without variants
+ * (the generated code defines the strong ones). */
+__attribute__((weak)) const uint16_t gbl_ram_variant_count = 0;
+__attribute__((weak)) const gbl_ram_variant gbl_ram_variants[1] = {{0, 0, 0, {0, 0, 0, 0}}};
+
+static gbl_fn ram_lookup(uint16_t pc) {
+    for (uint16_t i = 0; i < gbl_ram_variant_count; i++) {
+        const gbl_ram_variant *v = &gbl_ram_variants[i];
+        if ((uint16_t)(pc - v->addr) >= v->len) continue;
+        const gbl_bank_table *t = &v->table;
+        uint32_t page = (pc & 0x3FFFu) >> 7;
+        if (!(GBL_TBL16(&t->idx[17 + (page >> 4)]) >> (page & 15) & 1)) continue;
+        const uint8_t *ram = v->addr >= 0xFF80u ? gbl_hram + (v->addr - 0xFF80u)
+                                                : gbl_wram + (v->addr - 0xC000u);
+        uint16_t n = 0;
+        while (n < v->len && ram[n] == gbl_load_u8(&v->bytes[n])) n++;
+        if (n != v->len) continue;
+        gbl_fn fn = lookup_table(t, pc);
+        if (fn) return fn;
+    }
+    return 0;
+}
+
 #if GBL_TIMING_ASM && GBL_LOOKUP_CACHE
 gbl_fn gbl_lookup_miss(uint16_t pc);
 #define gbl_lookup gbl_lookup_miss
@@ -1754,6 +1779,7 @@ gbl_fn gbl_lookup_miss(uint16_t pc);
 gbl_fn gbl_lookup(uint16_t pc) {
     /* Pages with nothing compiled are answered here and never cached: the
      * interpreter's transfers inside uncompiled code would evict entries. */
+    if (pc >= 0x8000u) return gbl_ram_variant_count ? ram_lookup(pc) : 0;
     const gbl_bank_table *t = lookup_page(pc);
     if (!t) return 0;
 #if GBL_LOOKUP_CACHE
