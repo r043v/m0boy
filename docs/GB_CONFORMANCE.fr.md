@@ -780,3 +780,7 @@ automatique ; mooneye et blargg : mêmes résultats avec et sans `GBL_CGB`.
 ## Source DMA OAM $E0-$FF (DMG)
 
 En mode de référence (`GBL_PPU_REF`) et hors CGB, une source DMA OAM de $E0xx à $FFxx lit l'écho de la WRAM ($C000-$DFFF), comme sur la DMG : `oam_dma/sources-GS` passe. Code mort dans le firmware (contrôle d'identité : 8× identique). Mooneye : 90 réussies / 22 échouées / 3 indécidées avec `GBL_CGB`.
+
+## Bug de HALT (DMG)
+
+En mode de référence (`GBL_PPU_REF`), l'interpréteur reproduit le bug de HALT : HALT avec IME=0 et une interruption déjà en attente ne s'arrête pas, et l'octet suivant est lu deux fois (PC n'avance pas ; les opérandes d'une instruction multi-octets sont alors l'opcode et l'octet suivant). `blargg/halt_bug.gb` affiche « Passed » (écran lu avec gbshot). Limite : seul l'interpréteur le reproduit, pas le code recompilé. Code mort dans le firmware (contrôle d'identité : 8× identique). Mooneye inchangé : 90 / 22 / 3, avec et sans `GBL_CGB`.

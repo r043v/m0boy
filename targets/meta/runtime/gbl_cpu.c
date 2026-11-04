@@ -444,6 +444,16 @@ void gbl_interp_block(void) {
         gbl_rom_fetch = 0;
 #endif
         gbr.pc = (uint16_t)(pc + 1);
+#if defined(GBL_PPU_REF) && GBL_PPU_REF
+        if (gbl_halt_bug) {
+            /* halt bug: PC did not advance past the opcode, so the operand
+             * bytes are the opcode itself and the byte after it */
+            gbl_halt_bug = 0;
+            gbr.pc = pc;
+            n16 = (uint16_t)(op | (n8 << 8));
+            n8 = (uint8_t)op;
+        }
+#endif
         gbl_interp_instrs++;
         uint32_t flags;
         if (gbl_acc_last[op]) {

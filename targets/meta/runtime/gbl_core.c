@@ -1945,9 +1945,15 @@ int gbl_event(uint16_t resume_pc) {
 
 /* Wait in HALT until an interrupt is pending, then service it when IME is
  * set.  Returns nonzero when control did not come back to resume_pc. */
+uint8_t gbl_halt_bug; /* reference modes only: the next fetch leaves PC where it is */
 void gbl_halt_wait(void) {
     gbl_sync();
     uint32_t h0 = gbr.cyc;
+#if defined(GBL_PPU_REF) && GBL_PPU_REF
+    /* HALT with IME=0 and an interrupt already pending does not halt: the
+     * byte after it is fetched twice (halt bug). */
+    if (!gbr.ime && (gbl_ie & IF & 0x1F)) gbl_halt_bug = 1;
+#endif
     int slept = 0;
     while (!(gbl_ie & IF & 0x1F)) {
         slept = 1;

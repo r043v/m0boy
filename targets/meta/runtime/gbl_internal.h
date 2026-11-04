@@ -62,6 +62,7 @@ void gbl_apu_state_io(gbl_state_fn io, void *ctx, int load);
 
 int gbl_irq_enter(void);     /* push PC and vector if IME and pending */
 void gbl_halt_wait(void);    /* advance time until an interrupt is pending */
+extern uint8_t gbl_halt_bug;
 
 #if GBL_ERAM_SIZE > 0 && !GBL_ERAM_ON_SD
 extern uint8_t gbl_eram[GBL_ERAM_SIZE];
