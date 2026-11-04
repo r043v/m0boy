@@ -302,7 +302,8 @@
  * turns on the sub-instruction models the test ROMs observe but games do not
  * need, each also switchable alone.
  *   GBL_OAM_DMA_BUS   OAM DMA as a timed transfer with bus conflicts (gbl_core.c)
- *   GBL_STACK_TIMING  PUSH/CALL/RST stack writes in their own M-cycles (gbl_cpu.c) */
+ *   GBL_STACK_TIMING  PUSH/CALL/RST stack writes in their own M-cycles (gbl_cpu.c)
+ *   GBL_TIMER_EDGE    DIV/TAC writes clock TIMA on the falling edge (gbl_core.c) */
 #ifndef GBL_HOST_REF
 #define GBL_HOST_REF 0
 #endif
@@ -311,6 +312,9 @@
 #endif
 #ifndef GBL_STACK_TIMING
 #define GBL_STACK_TIMING GBL_HOST_REF
+#endif
+#ifndef GBL_TIMER_EDGE
+#define GBL_TIMER_EDGE (GBL_HOST_REF && !GBL_TIMING_ASM)
 #endif
 
 #endif

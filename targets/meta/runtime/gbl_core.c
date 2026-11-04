@@ -1058,6 +1058,9 @@ const uint8_t gbl_tac_shift[4] = {10, 4, 6, 8};
 
 static void core_invalidate(void);
 
+#if GBL_TIMER_EDGE
+static uint32_t tima_reload_at; /* cycle of the last TIMA reload from TMA */
+#endif
 /* Also the slow path of the assembly gbl_sync (a TIMA overflow). */
 #if GBL_TIMING_ASM
 void gbl_timer_sync(uint32_t now);
@@ -1070,6 +1073,9 @@ void timer_sync(uint32_t now) {
     if (gbl_timer_state.tima_irq_pending && (int32_t)(now - gbl_timer_state.tima_irq_at) >= 0) {
         gbl_timer_state.tima_irq_pending = 0;
         IF |= 0x04;
+#if GBL_TIMER_EDGE
+        TIMA = TMA;
+#endif
         core_invalidate();
     }
 #endif
@@ -1086,6 +1092,10 @@ void timer_sync(uint32_t now) {
             core_invalidate(); /* without a reload the next overflow stays put */
 #if !GBL_TIMING_ASM
             uint32_t at = div_base + (done << s) + 4u;
+#if GBL_TIMER_EDGE
+            tima_reload_at = at;
+            if ((int32_t)(now - at) < 0) TIMA = 0; /* reads 0 until the reload M-cycle */
+#endif
             if ((int32_t)(now - at) >= 0) IF |= 0x04;
             else {
                 gbl_timer_state.tima_irq_at = at;
@@ -1098,6 +1108,14 @@ void timer_sync(uint32_t now) {
     }
     tima_sync = now;
 }
+
+#if GBL_TIMER_EDGE
+/* A clock edge forced by a DIV or TAC write: TIMA advances by one. */
+static void tima_edge_tick(void) {
+    if (TIMA == 0xFF) { TIMA = TMA; IF |= 0x04; }
+    else TIMA++;
+}
+#endif
 
 static uint32_t timer_next_event(void) {
     uint32_t s = tac_shift[TAC & 3];
@@ -1352,14 +1370,35 @@ void gbl_io_wr(uint8_t n, uint8_t v) {
         return;
     case 0x04:
         timer_sync(gbr.cyc);
+#if GBL_TIMER_EDGE
+        if ((TAC & 4) && (((gbr.cyc - div_base) >> (tac_shift[TAC & 3] - 1)) & 1)) tima_edge_tick();
+#endif
         div_base = gbr.cyc;
         core_invalidate();
         tima_sync = gbr.cyc;
         gbl_update_evt();
         return;
-    case 0x05: timer_sync(gbr.cyc); TIMA = v; core_invalidate(); gbl_update_evt(); return;
-    case 0x06: timer_sync(gbr.cyc); TMA = v; return;
-    case 0x07: timer_sync(gbr.cyc); TAC = v & 7; core_invalidate(); gbl_update_evt(); return;
+    case 0x05: timer_sync(gbr.cyc);
+#if GBL_TIMER_EDGE
+        if ((uint32_t)(gbr.cyc - tima_reload_at) < 4u) return; /* the reload M-cycle wins */
+        gbl_timer_state.tima_irq_pending = 0; /* a write before the reload cancels it */
+#endif
+        TIMA = v; core_invalidate(); gbl_update_evt(); return;
+    case 0x06: timer_sync(gbr.cyc); TMA = v;
+#if GBL_TIMER_EDGE
+        if ((uint32_t)(gbr.cyc - tima_reload_at) < 4u) { TIMA = v; core_invalidate(); gbl_update_evt(); }
+#endif
+        return;
+    case 0x07: timer_sync(gbr.cyc);
+#if GBL_TIMER_EDGE
+        {
+            uint32_t c = gbr.cyc - div_base;
+            int o = (TAC & 4) && ((c >> (tac_shift[TAC & 3] - 1)) & 1);
+            int n = (v & 4) && ((c >> (tac_shift[v & 3] - 1)) & 1);
+            if (o && !n) tima_edge_tick();
+        }
+#endif
+        TAC = v & 7; core_invalidate(); gbl_update_evt(); return;
     case 0x0F: gbl_sync(); IF = v & 0x1F; gbl_update_evt(); return;
     case 0x46: {
         /* OAM DMA completes instantly; games wait it out in HRAM anyway. */
