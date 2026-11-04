@@ -28,9 +28,17 @@
 #define WX gbl_io[0x4B]
 #define IF gbl_io[0x0F]
 
-#define LINE_CYCLES 456u
-#define MODE3_START (80u + GBL_PPU_REF) /* reference mode: mode 3 one dot later (mooneye intr_2_mode3) */
-#define MODE0_START 252u
+#if GBL_CGB
+/* Double speed: the CPU clock (the cycle counter) runs twice as fast as the
+ * dots, so every PPU duration doubles when counted in CPU cycles. */
+uint8_t gbl_dshift;
+#define PS(x) ((uint32_t)(x) << gbl_dshift)
+#else
+#define PS(x) (x)
+#endif
+#define LINE_CYCLES PS(456u)
+#define MODE3_START (PS(80u) + GBL_PPU_REF) /* reference mode: mode 3 one dot later (mooneye intr_2_mode3) */
+#define MODE0_START PS(252u)
 #if GBL_PPU_REF
 /* DMG reference: line 153 is 4 dots longer and line 0 4 dots shorter */
 static inline uint32_t line_len(uint8_t l) { return l == 153 ? LINE_CYCLES + 4u : l == 0 ? LINE_CYCLES - 4u : LINE_CYCLES; }
@@ -45,8 +53,8 @@ static inline uint32_t lines_span(uint8_t from, uint32_t to) {
 static inline uint32_t line_len(uint8_t l) { (void)l; return LINE_CYCLES; }
 static inline uint32_t lines_span(uint8_t from, uint32_t to) { return (to - from) * LINE_CYCLES; }
 #endif
-#define LY153_CMP 8u /* line 153: LYC sees LY=0 from here (DMG, SameBoy reference) */
-#define FRAME_CYCLES 70224u
+#define LY153_CMP PS(8u) /* line 153: LYC sees LY=0 from here (DMG, SameBoy reference) */
+#define FRAME_CYCLES PS(70224u)
 
 uint8_t gbl_skip_render;
 uint16_t gbl_lcd_palette[4] = {0, 1, 2, 3};
@@ -781,6 +789,25 @@ __attribute__((noinline)) void render_line(void) {
 #endif
 
 
+#if GBL_CGB
+static void update_due(void);
+/* KEY1 speed switch: the position inside the current line (or virtual frame)
+ * is kept, only its unit changes. */
+void gbl_ppu_set_speed(uint8_t d) {
+    if (d == gbl_dshift) return;
+    uint32_t now = gbr.cyc;
+    gbl_ppu_sync(now);
+    uint32_t *start = lcd_on ? &line_start : &off_start;
+    uint32_t off = now - *start;
+    *start = now - (d ? off << 1 : off >> 1);
+    next_stage_off = d ? next_stage_off << 1 : next_stage_off >> 1;
+    P.m0_start = (uint16_t)(d ? P.m0_start << 1 : P.m0_start >> 1);
+    gbl_dshift = d;
+    update_due();
+    P.evt_dirty = 1;
+}
+#endif
+
 void gbl_ppu_vram_changed(uint16_t off) {
 #if GBL_LINE_SIGNATURE
     vram_version_bump(off);
@@ -918,7 +945,7 @@ static uint16_t mode3_end(void) {
             pen += 6;
         }
     }
-    return (uint16_t)(MODE0_START + pen);
+    return (uint16_t)(MODE0_START + PS(pen));
 }
 #endif
 

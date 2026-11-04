@@ -14,7 +14,7 @@ gbl_cpu_t gbr;
 uint8_t gbl_wram[GBL_WRAM_SIZE];
 uint8_t gbl_vram[GBL_VRAM_SIZE];
 #if GBL_CGB
-uint8_t gbl_cgb, gbl_vbk, gbl_svbk = 1;
+uint8_t gbl_cgb, gbl_vbk, gbl_svbk = 1, gbl_key1;
 /* Banked addresses: VRAM bank 1 sits at +$2000; WRAM bank n (1..7) at
  * n * $1000, so D000 with SVBK=1 is the DMG layout. */
 #define VOFF(o) ((uint16_t)((o) + (gbl_vbk ? 0x2000u : 0u)))
@@ -1337,6 +1337,7 @@ uint8_t gbl_io_rd(uint8_t n) {
 #if GBL_CGB
     case 0x4F: return gbl_cgb ? (uint8_t)(0xFE | gbl_vbk) : 0xFF;
     case 0x70: return gbl_cgb ? (uint8_t)(0xF8 | gbl_svbk) : 0xFF;
+    case 0x4D: return gbl_cgb ? (uint8_t)(0x7E | gbl_dshift << 7 | (gbl_key1 & 1)) : 0xFF;
 #endif
     default:
         if (n >= 0x10 && n < 0x40) return gbl_apu_read(n);
@@ -1443,6 +1444,9 @@ void gbl_io_wr(uint8_t n, uint8_t v) {
             map_pages();
         }
         return;
+    case 0x4D:
+        if (gbl_cgb) gbl_key1 = v & 1u;
+        return;
     case 0x70:
         if (gbl_cgb) {
             uint8_t b = v & 7u;
@@ -1471,6 +1475,18 @@ void gbl_io_wr(uint8_t n, uint8_t v) {
 }
 #if GBL_TIMING_ASM
 #undef gbl_io_wr
+#endif
+
+#if GBL_CGB
+/* STOP with KEY1 armed: change speed (DIV restarts; the switch itself takes
+ * about 2050 M-cycles). */
+void gbl_speed_switch(void) {
+    gbl_key1 = 0;
+    gbl_io_wr(0x04, 0);
+    gbl_ppu_set_speed(gbl_dshift ^ 1u);
+    gbr.cyc += 8200u;
+    gbl_update_evt();
+}
 #endif
 
 /* ---- bus ---------------------------------------------------------------- */
@@ -2095,7 +2111,7 @@ void gbl_reset(void) {
     dma_in = 0;
 #endif
 #if GBL_CGB
-    gbl_cgb = 0; gbl_vbk = 0; gbl_svbk = 1;
+    gbl_cgb = 0; gbl_vbk = 0; gbl_svbk = 1; gbl_key1 = 0; gbl_dshift = 0;
 #endif
     memset(gbl_wram, 0, sizeof(gbl_wram));
     memset(gbl_vram, 0, sizeof(gbl_vram));
@@ -2167,6 +2183,8 @@ static void state_mem(gbl_state_fn io, void *ctx, int load) {
     io(&gbl_cgb, sizeof(gbl_cgb), ctx);
     io(&gbl_vbk, sizeof(gbl_vbk), ctx);
     io(&gbl_svbk, sizeof(gbl_svbk), ctx);
+    io(&gbl_key1, sizeof(gbl_key1), ctx);
+    io(&gbl_dshift, sizeof(gbl_dshift), ctx);
 #endif
 #if GBL_ERAM_SIZE > 0 && GBL_ERAM_ON_SD
     /* The cartridge RAM is the save file: copied through the sector cache's

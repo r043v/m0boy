@@ -317,7 +317,11 @@ static inline __attribute__((always_inline)) uint32_t exec_op(uint32_t op, uint8
     /* Always here (the assembly sends these to gbl_interp_op). */
     case 0x76: gbl_halt_wait(); jump = 1; break;
     case 0x08: gbl_wr(n16, (uint8_t)gbr.sp); gbl_wr((uint16_t)(n16 + 1), (uint8_t)(gbr.sp >> 8)); gbr.pc += 2; break;
-    case 0x10: gbr.pc++; break; /* STOP: treated as a two-byte NOP */
+    case 0x10:
+#if GBL_CGB
+        if (gbl_cgb && (gbl_key1 & 1)) gbl_speed_switch(); /* KEY1 armed: change speed */
+#endif
+        gbr.pc++; break; /* STOP: otherwise a two-byte NOP */
     case 0x20: case 0x28: case 0x30: case 0x38: /* the assembly: JR NZ,-3 only */
         gbr.pc++;
         if (cond(op)) {
