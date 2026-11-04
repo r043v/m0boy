@@ -776,3 +776,7 @@ automatique ; mooneye et blargg : mêmes résultats avec et sans `GBL_CGB`.
 - Mode de référence : STAT garde le bit LY=LYC quand le LCD est éteint, et l'activation ne lève pas d'interruption STAT si la ligne était déjà haute (mooneye `stat_lyc_onoff` passe, 88/115). Firmware inchangé (8× identique).
 
 - Mode de référence : la longueur du mode 3 due à SCX%8 s'arrondit à 4 points (1-4 → 4, 5-7 → 8) : mooneye `hblank_ly_scx_timing-GS` passe (89/115). Firmware inchangé (8× identique).
+
+## Source DMA OAM $E0-$FF (DMG)
+
+En mode de référence (`GBL_PPU_REF`) et hors CGB, une source DMA OAM de $E0xx à $FFxx lit l'écho de la WRAM ($C000-$DFFF), comme sur la DMG : `oam_dma/sources-GS` passe. Code mort dans le firmware (contrôle d'identité : 8× identique). Mooneye : 90 réussies / 22 échouées / 3 indécidées avec `GBL_CGB`.

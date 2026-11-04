@@ -1482,6 +1482,14 @@ void gbl_io_wr(uint8_t n, uint8_t v) {
     case 0x46: {
         /* OAM DMA completes instantly; games wait it out in HRAM anyway. */
         uint16_t src = (uint16_t)(v << 8);
+#if defined(GBL_PPU_REF) && GBL_PPU_REF
+#if GBL_CGB
+#define GBL_CGB_ON gbl_cgb
+#else
+#define GBL_CGB_ON 0
+#endif
+        if (v >= 0xE0 && !GBL_CGB_ON) src = (uint16_t)(src - 0x2000u); /* DMG: $E0-$FF sources read the WRAM echo */
+#endif
 #if GBL_OAM_DMA_BUS
         dma_start(src); /* the copy itself happens when the transfer begins */
 #else
