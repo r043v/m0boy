@@ -225,10 +225,26 @@ static uint16_t mapped_bank = 0xFFFF;
  * selects bank 0x00/0x20/0x40/0x60.  Compiled only for that case, so small
  * DMG targets keep the fixed window and pay nothing. */
 uint16_t gbl_rom0_bank;
-#if GBL_MBC == 1 && !GBL_ROM_STREAM && GBL_ROM_BANKS > 32
+/* A host tool that runs any cartridge on one build (deepeel, memscan) defines
+ * GBL_ROM_BANKS_VAR: the bank count is then this variable, set per ROM. */
+#ifdef GBL_ROM_BANKS_VAR
+uint32_t gbl_rom_banks = GBL_ROM_BANKS;
+/* MBC1M multicart wiring (BANK2 shifted by 4, BANK1 on 4 bits): set by the tool. */
+uint8_t gbl_mbc1m;
+#define MBC1_HI_SHIFT (gbl_mbc1m ? 4 : 5)
+#define MBC1_LO_MASK (gbl_mbc1m ? 0x0F : 0x1F)
+#define ROM_BANKS gbl_rom_banks
+#define ROM_BANKS_BIG 1
+#else
+#define MBC1_HI_SHIFT 5
+#define MBC1_LO_MASK 0x1F
+#define ROM_BANKS GBL_ROM_BANKS
+#define ROM_BANKS_BIG (GBL_ROM_BANKS > 32)
+#endif
+#if GBL_MBC == 1 && !GBL_ROM_STREAM && ROM_BANKS_BIG
 static void map_rom0(void) {
-    uint32_t b = mbc.mode ? ((uint32_t)(mbc.hi & 3) << 5) : 0u;
-    b &= (uint32_t)(GBL_ROM_BANKS - 1);
+    uint32_t b = mbc.mode ? ((uint32_t)(mbc.hi & 3) << MBC1_HI_SHIFT) : 0u;
+    b &= (uint32_t)(ROM_BANKS - 1);
     gbl_rom0_bank = (uint16_t)b;
     const uint8_t *base = gbl_rom + b * 0x4000u;
     for (int i = 0; i < 4; i++) gbl_rmap[i] = BIAS(base, 0) + 0;
@@ -244,7 +260,7 @@ static void map_rom_bank(void) {
 #if GBL_MBC == 1
     bank = (uint32_t)(mbc.lo & 0x1F);
     if (bank == 0) bank = 1;
-    bank |= (uint32_t)(mbc.hi & 3) << 5;
+    bank = (bank & MBC1_LO_MASK) | ((uint32_t)(mbc.hi & 3) << MBC1_HI_SHIFT);
 #elif GBL_MBC == 2
     bank = mbc.lo & 0x0F;
     if (bank == 0) bank = 1;
@@ -256,7 +272,7 @@ static void map_rom_bank(void) {
 #else
     bank = 1;
 #endif
-    bank &= (uint32_t)(GBL_ROM_BANKS - 1);
+    bank &= (uint32_t)(ROM_BANKS - 1);
     gbr.rom_bank = (uint16_t)bank;
     if (bank == mapped_bank) return;
     mapped_bank = (uint16_t)bank;
@@ -2041,6 +2057,9 @@ void gbl_reset(void) {
     memset(gbl_hram, 0, sizeof(gbl_hram));
     memset(gbl_io, 0, sizeof(gbl_io));
     memset(&mbc, 0, sizeof(mbc));
+#if GBL_MBC == 5
+    mbc.lo = 1; /* ROMB0 powers up on bank 1 */
+#endif
 #if GBL_ERAM_SIZE > 0
     eram_reset();
 #endif

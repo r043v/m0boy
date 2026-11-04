@@ -67,6 +67,13 @@ régression ; gagnées : `add_sp_e_timing`, `call_*timing*`, `jp_*timing`, `ld_h
 pas du matériel. Drapeau éteint (valeur par défaut), l'objet `gbl_core.c` pour Cortex-M0+ garde la même taille
 (une instruction diffère par l'allocation d'un registre) ; je n'ai pas comparé de `firmware.bin` complet.
 
+Tests `emulator-only` (MBC1/2/5) : ils passent tous (78 ROMs mooneye en tout, aucune régression, blargg inchangé).
+Il fallait (1) le repli des banques à la taille réelle de la ROM : le harnais hôte définit `GBL_ROM_BANKS_VAR`
+(`gbl_rom_banks`, par ROM), le firmware garde la constante ; (2) le registre ROMB0 du MBC5 démarre à 1 (il
+démarrait à 0 : `$4000` lisait la banque 0) ; (3) le câblage multicart MBC1M (`gbl_mbc1m`, décalage 4, posé par
+l'outil hôte d'après le logo dans les banques 0x10/0x20/0x30) ; (4) le RAM 32 Kio du MBC1 côté harnais. Le
+firmware n'a que (2) et le correctif d'`EI` : `targets/meta/VERSION` passe à 0.10.61.
+
 ## mooneye-test-suite
 
 | ROM | Verdict | Trames |
