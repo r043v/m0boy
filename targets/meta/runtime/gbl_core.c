@@ -1353,6 +1353,13 @@ uint8_t gbl_io_rd(uint8_t n) {
     default:
         if (n >= 0x10 && n < 0x40) return gbl_apu_read(n);
         if (n >= 0x40 && n < 0x4C) return gbl_ppu_read(n);
+        /* unconnected registers read 1s on the DMG (mooneye unused_hwio) */
+        if (n == 0x03 || (n >= 0x08 && n < 0x0F)) return 0xFF;
+#if GBL_CGB
+        if (n >= 0x4C && n < 0x80 && !gbl_cgb) return 0xFF;
+#else
+        if (n >= 0x4C && n < 0x80) return 0xFF;
+#endif
         return gbl_io[n];
     }
 }
