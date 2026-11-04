@@ -1245,7 +1245,7 @@ void gbl_ppu_write(uint8_t n, uint8_t v) {
             ly = 0;
             stage = 0;
             next_stage_off = MODE3_START;
-            mode = 2;
+            mode = GBL_PPU_REF ? 0 : 2; /* reference: line 0 reads mode 0 until mode 3 (no OAM search) */
             win_line = 0;
             stat_line = 0;
             /* LY=0 at enable: a LYC=0 match with the LYC source armed
