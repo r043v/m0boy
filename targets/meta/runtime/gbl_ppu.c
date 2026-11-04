@@ -923,7 +923,7 @@ void gbl_ppu_advance(uint32_t now) {
                 P.evt_dirty = 1;
                 stage = 1;
                 mode = 3;
-                P.m0_start = mode3_end();
+                P.m0_start = mode3_end() + GBL_PPU_REF; /* DMG: mode 0 starts one dot later than the STAT-read model (mooneye intr_2_*) */
                 stat_update();
             }
             if (stage == 1) {
@@ -960,6 +960,10 @@ void gbl_ppu_advance(uint32_t now) {
         }
         lyc_refresh();
         if (ly == 144) {
+#if GBL_PPU_REF
+            /* DMG: the mode 2 source also fires when line 144 starts */
+            if ((P.stat_modes & 4u) && !stat_line) IF |= 0x02;
+#endif
             mode = 1;
             IF |= 0x01;
             stat_update();
