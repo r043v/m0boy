@@ -1749,6 +1749,34 @@ int gbl_irq_enter(void) {
     }
     uint8_t pending = gbl_ie & IF & 0x1F;
     if (!gbr.ime || !pending) return 0;
+#if GBL_STACK_TIMING
+    {
+        /* Reference mode: two idle M-cycles, the high byte, the low byte, and
+         * the vector chosen after the high byte is written, so a write to IE
+         * there can cancel the dispatch (PC = $0000, IF untouched). */
+        uint32_t base = gbr.cyc;
+        uint16_t pc0 = gbr.pc;
+        gbr.ime = 0;
+        gbr.cyc = base + 8u;
+        gbr.sp = (uint16_t)(gbr.sp - 1u);
+        gbl_wr(gbr.sp, (uint8_t)(pc0 >> 8));
+        gbl_sync();
+        pending = gbl_ie & IF & 0x1F;
+        gbr.cyc = base + 12u;
+        gbr.sp = (uint16_t)(gbr.sp - 1u);
+        gbl_wr(gbr.sp, (uint8_t)pc0);
+        gbr.cyc = base + 20u;
+        if (!pending) gbr.pc = 0;
+        else {
+            int b = 0;
+            while (!(pending & (1u << b))) b++;
+            IF &= (uint8_t)~(1u << b);
+            gbr.pc = (uint16_t)(0x40 + b * 8);
+        }
+        gbl_update_evt();
+        return 1;
+    }
+#endif
     int bit = 0;
     while (!(pending & (1u << bit))) bit++;
     IF &= (uint8_t)~(1u << bit);

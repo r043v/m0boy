@@ -55,12 +55,15 @@ de test observent et que les jeux n'exigent pas ; chacun se règle seul :
 - `GBL_TIMER_EDGE` (hôte, sans `GBL_TIMING_ASM`) : une écriture de DIV, ou de TAC qui éteint le signal, fait
   avancer TIMA sur le front descendant ; après un dépassement TIMA vaut 0 pendant un M-cycle avant le rechargement
   depuis TMA (écriture de TIMA avant : annule ; pendant : ignorée ; écriture de TMA pendant : TIMA la prend aussi).
+- Entrée d'interruption (avec `GBL_STACK_TIMING`) : deux M-cycles à vide, octet haut, puis le vecteur est choisi
+  d'après IE&IF, puis octet bas ; une écriture de IE pendant le push haut peut annuler (PC = $0000). Hors drapeau,
+  l'interpréteur ne retarde plus l'IRQ d'un `EI` exécuté alors que IME vaut déjà 1 (`ei_sequence`).
 
 Mesure (outil gbconform, 600 trames, cœur DMG sans boot ROM) : mooneye-test-suite 31 → 48 ROMs qui passent, aucune
 régression ; gagnées : `add_sp_e_timing`, `call_*timing*`, `jp_*timing`, `ld_hl_sp_e_timing`, `oam_dma_restart/start/timing`,
 `pop/push/ret*/reti/rst_timing`. Restent en échec parmi les timings : `di_timing-GS`, `halt_ime1_timing2-GS`
 (synchronisation fine de l'IRQ). Avec `GBL_TIMER_EDGE`, 8 ROMs de plus (`timer/rapid_toggle`, `tim*_div_trigger`, `tima_reload`,
-`tima_write_reloading`, `tma_write_reloading`) : 56 en tout, aucune régression. Blargg `cpu_instrs` et `instr_timing` passent toujours. Observations de l'outil,
+`tima_write_reloading`, `tma_write_reloading`) : 56 en tout, aucune régression ; `ei_sequence` et `interrupts/ie_push` portent le total à 58. Blargg `cpu_instrs` et `instr_timing` passent toujours. Observations de l'outil,
 pas du matériel. Drapeau éteint (valeur par défaut), l'objet `gbl_core.c` pour Cortex-M0+ garde la même taille
 (une instruction diffère par l'allocation d'un registre) ; je n'ai pas comparé de `firmware.bin` complet.
 

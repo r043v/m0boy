@@ -357,7 +357,8 @@ static inline __attribute__((always_inline)) uint32_t exec_op(uint32_t op, uint8
     case 0xF5: PUSHV((uint16_t)((gbr.a << 8) | gbl_getf())); break;
     case 0xE8: gbr.sp = gbl_spofs(n8); gbr.pc++; break;
     case 0xF8: gbr.hl = gbl_spofs(n8); gbr.pc++; break;
-    case 0xFB: gbr.ime = 1; gbl_update_evt(); ei = 1; break;
+    case 0xFB: ei = !gbr.ime; /* an EI with IME already set delays nothing */
+        gbr.ime = 1; gbl_update_evt(); break;
     default:
         /* Undefined opcode: the DMG locks up.  Spin in place so the
          * frontend keeps running. */
