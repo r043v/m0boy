@@ -390,6 +390,7 @@ void gbl_platform_safe_point(void); /* weak default: nothing */
 /* ---- diagnostics -------------------------------------------------------- */
 extern uint8_t gbl_interp_only;     /* ignore compiled code (reference mode) */
 extern uint32_t gbl_frame;
+extern uint16_t gbl_rom0_bank; /* bank in the $0000-$3FFF window (MBC1 mode 1 only) */
 extern uint32_t gbl_interp_instrs;
 extern uintptr_t gbl_stack_limit;   /* lowest C stack address gbl_exec may use */
 #ifdef GBL_TRACE

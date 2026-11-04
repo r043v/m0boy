@@ -220,8 +220,27 @@ hit:
  * call).  gbl_reset voids it. */
 static uint16_t mapped_bank = 0xFFFF;
 
+/* Bank shown by the lower window ($0000-$3FFF).  Fixed on bank 0 except on
+ * a large MBC1 (1 MiB and up) in banking mode 1, where the upper register
+ * selects bank 0x00/0x20/0x40/0x60.  Compiled only for that case, so small
+ * DMG targets keep the fixed window and pay nothing. */
+uint16_t gbl_rom0_bank;
+#if GBL_MBC == 1 && !GBL_ROM_STREAM && GBL_ROM_BANKS > 32
+static void map_rom0(void) {
+    uint32_t b = mbc.mode ? ((uint32_t)(mbc.hi & 3) << 5) : 0u;
+    b &= (uint32_t)(GBL_ROM_BANKS - 1);
+    gbl_rom0_bank = (uint16_t)b;
+    const uint8_t *base = gbl_rom + b * 0x4000u;
+    for (int i = 0; i < 4; i++) gbl_rmap[i] = BIAS(base, 0) + 0;
+}
+#define MAP_ROM0() map_rom0()
+#else
+#define MAP_ROM0() ((void)0)
+#endif
+
 static void map_rom_bank(void) {
     uint32_t bank;
+    MAP_ROM0();
 #if GBL_MBC == 1
     bank = (uint32_t)(mbc.lo & 0x1F);
     if (bank == 0) bank = 1;
@@ -970,7 +989,7 @@ void mbc_write(uint16_t a, uint8_t v) {
     case 0: set_ram_enable(v); map_eram(); break;
     case 1: mbc.lo = v; map_rom_bank(); break;
     case 2: mbc.hi = v & 3; map_rom_bank(); map_eram(); break;
-    case 3: mbc.mode = v & 1; map_eram(); break;
+    case 3: mbc.mode = v & 1; MAP_ROM0(); map_eram(); break;
     }
 #elif GBL_MBC == 2
     if (a < 0x4000) {
