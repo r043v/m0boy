@@ -298,4 +298,19 @@
 #error "GBL_PPU_BATCH must be a power of two"
 #endif
 
+/* Host/reference conformance mode (never set on a device build): GBL_HOST_REF=1
+ * turns on the sub-instruction models the test ROMs observe but games do not
+ * need, each also switchable alone.
+ *   GBL_OAM_DMA_BUS   OAM DMA as a timed transfer with bus conflicts (gbl_core.c)
+ *   GBL_STACK_TIMING  PUSH/CALL/RST stack writes in their own M-cycles (gbl_cpu.c) */
+#ifndef GBL_HOST_REF
+#define GBL_HOST_REF 0
+#endif
+#ifndef GBL_OAM_DMA_BUS
+#define GBL_OAM_DMA_BUS GBL_HOST_REF
+#endif
+#ifndef GBL_STACK_TIMING
+#define GBL_STACK_TIMING GBL_HOST_REF
+#endif
+
 #endif

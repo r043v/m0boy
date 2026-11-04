@@ -180,6 +180,46 @@ static inline void alu(uint32_t op, uint8_t v) {
     }
 }
 
+#if GBL_STACK_TIMING && !GBL_INTERP_ASM
+#define STACK_T 1
+/* Reference/host mode (the device's asm push/pop ignore it): the two stack
+ * writes of PUSH/CALL/RST land in the last two M-cycles (+8/+12 of 16 for
+ * PUSH and RST, +16/+20 of 24 for CALL), as on the DMG.  The caller has
+ * charged the instruction up to the first write; 8 cycles remain. */
+static void push_timed(uint16_t v) {
+    gbr.sp = (uint16_t)(gbr.sp - 1);
+    gbl_wr(gbr.sp, (uint8_t)(v >> 8));
+    gbr.cyc += 4;
+    gbr.sp = (uint16_t)(gbr.sp - 1);
+    gbl_wr(gbr.sp, (uint8_t)v);
+    gbr.cyc += 4;
+}
+static const uint8_t push_class[256] = {
+    [0xC5]=1,[0xD5]=1,[0xE5]=1,[0xF5]=1,[0xCD]=1,
+    [0xC7]=1,[0xCF]=1,[0xD7]=1,[0xDF]=1,[0xE7]=1,[0xEF]=1,[0xF7]=1,[0xFF]=1,
+};
+/* Stack reads likewise: lo at the first, hi at the second M-cycle of the
+ * access; `after` is what is left to charge once both are done. */
+static uint16_t pop_timed(uint32_t after) {
+    uint16_t lo = gbl_rd(gbr.sp);
+    gbr.sp = (uint16_t)(gbr.sp + 1);
+    gbr.cyc += 4;
+    uint16_t hi = gbl_rd(gbr.sp);
+    gbr.sp = (uint16_t)(gbr.sp + 1);
+    gbr.cyc += 4 + after;
+    return (uint16_t)(lo | (hi << 8));
+}
+static const uint8_t pop_class[256] = {
+    [0xC1]=1,[0xD1]=1,[0xE1]=1,[0xF1]=1,[0xC9]=1,[0xD9]=1,
+};
+#define PUSHV(v) push_timed(v)
+#define POPV(after) pop_timed(after)
+#else
+#define STACK_T 0
+#define PUSHV(v) gbl_push(v)
+#define POPV(after) gbl_pop()
+#endif
+
 /* One instruction whose opcode and operands were fetched and whose base
  * cycles were counted (gbr.pc is past the opcode).  Returns bit 0 when
  * control was transferred, bit 1 after EI.  The assembly interpreter
@@ -230,15 +270,15 @@ static inline __attribute__((always_inline)) uint32_t exec_op(uint32_t op, uint8
     case 0x37: gbr.cf = 1; gbr.nf = 0; gbr.hf = 0; break;
     case 0x3F: gbr.cf ^= 1; gbr.nf = 0; gbr.hf = 0; break;
     case 0xC0: case 0xC8: case 0xD0: case 0xD8:
-        if (cond(op)) { gbr.pc = gbl_pop(); gbr.cyc += 12; jump = 1; }
+        if (cond(op)) { gbr.pc = POPV(4); if (!STACK_T) gbr.cyc += 12; jump = 1; }
         break;
-    case 0xC9: gbr.pc = gbl_pop(); jump = 1; break;
-    case 0xC1: gbr.bc = gbl_pop(); break;
-    case 0xD1: gbr.de = gbl_pop(); break;
-    case 0xE1: gbr.hl = gbl_pop(); break;
-    case 0xC5: gbl_push(gbr.bc); break;
-    case 0xD5: gbl_push(gbr.de); break;
-    case 0xE5: gbl_push(gbr.hl); break;
+    case 0xC9: gbr.pc = POPV(4); jump = 1; break;
+    case 0xC1: gbr.bc = POPV(0); break;
+    case 0xD1: gbr.de = POPV(0); break;
+    case 0xE1: gbr.hl = POPV(0); break;
+    case 0xC5: PUSHV(gbr.bc); break;
+    case 0xD5: PUSHV(gbr.de); break;
+    case 0xE5: PUSHV(gbr.hl); break;
     case 0xC2: case 0xCA: case 0xD2: case 0xDA:
         gbr.pc += 2;
         if (cond(op)) { gbr.pc = n16; gbr.cyc += 4; jump = 1; }
@@ -247,11 +287,11 @@ static inline __attribute__((always_inline)) uint32_t exec_op(uint32_t op, uint8
     case 0xE9: gbr.pc = gbr.hl; jump = 1; break;
     case 0xC4: case 0xCC: case 0xD4: case 0xDC:
         gbr.pc += 2;
-        if (cond(op)) { gbl_push(gbr.pc); gbr.pc = n16; gbr.cyc += 12; jump = 1; }
+        if (cond(op)) { gbr.cyc += STACK_T ? 4 : 12; PUSHV(gbr.pc); gbr.pc = n16; jump = 1; }
         break;
-    case 0xCD: gbr.pc += 2; gbl_push(gbr.pc); gbr.pc = n16; jump = 1; break;
+    case 0xCD: gbr.pc += 2; PUSHV(gbr.pc); gbr.pc = n16; jump = 1; break;
     case 0xC7: case 0xCF: case 0xD7: case 0xDF: case 0xE7: case 0xEF: case 0xF7: case 0xFF:
-        gbl_push(gbr.pc); gbr.pc = (uint16_t)(op & 0x38); jump = 1; break;
+        PUSHV(gbr.pc); gbr.pc = (uint16_t)(op & 0x38); jump = 1; break;
     case 0xC6: case 0xCE: case 0xD6: case 0xDE: case 0xE6: case 0xEE: case 0xF6: case 0xFE:
         alu(op >> 3, n8); gbr.pc++; break;
     case 0xE0: gbl_wr((uint16_t)(0xFF00 | n8), gbr.a); gbr.pc++; break;
@@ -305,7 +345,7 @@ static inline __attribute__((always_inline)) uint32_t exec_op(uint32_t op, uint8
         break;
     case 0x27: gbl_daa(); break;
     case 0xD9:
-        gbr.pc = gbl_pop();
+        gbr.pc = POPV(4);
 #if GBL_DEBUG_RESTART
         gbl_dbg_reti();
 #endif
@@ -313,8 +353,8 @@ static inline __attribute__((always_inline)) uint32_t exec_op(uint32_t op, uint8
         gbl_update_evt();
         jump = 1;
         break;
-    case 0xF1: { uint16_t v = gbl_pop(); gbr.a = (uint8_t)(v >> 8); gbl_setf((uint8_t)v); break; }
-    case 0xF5: gbl_push((uint16_t)((gbr.a << 8) | gbl_getf())); break;
+    case 0xF1: { uint16_t v = POPV(0); gbr.a = (uint8_t)(v >> 8); gbl_setf((uint8_t)v); break; }
+    case 0xF5: PUSHV((uint16_t)((gbr.a << 8) | gbl_getf())); break;
     case 0xE8: gbr.sp = gbl_spofs(n8); gbr.pc++; break;
     case 0xF8: gbr.hl = gbl_spofs(n8); gbr.pc++; break;
     case 0xFB: gbr.ime = 1; gbl_update_evt(); ei = 1; break;
@@ -371,6 +411,12 @@ void gbl_interp_block(void) {
         uint8_t n8;
         uint16_t n16;
         const uint8_t *page = gbl_rmap[pc >> 12];
+#if GBL_OAM_DMA_BUS
+        /* Reference mode: every fetch goes through gbl_rd, each byte at its
+         * own M-cycle (opcode +0, first operand +4, second +8), so that OAM
+         * DMA bus conflicts hit the byte they hit on the DMG. */
+        page = 0;
+#endif
         if (page && (pc & 0xFFFu) < 0xFFEu) {
             /* Opcode and operands in one mapped page: read them directly. */
             op = gbl_load_u8(page + pc);
@@ -378,8 +424,16 @@ void gbl_interp_block(void) {
             n16 = (uint16_t)(n8 | (gbl_load_u8(page + pc + 2u) << 8));
         } else {
             op = gbl_rd(pc);
+#if GBL_OAM_DMA_BUS
+            gbr.cyc += 4;
+            n8 = gbl_rd((uint16_t)(pc + 1));
+            gbr.cyc += 4;
+            n16 = (uint16_t)(n8 | (gbl_rd((uint16_t)(pc + 2)) << 8));
+            gbr.cyc -= 8;
+#else
             n8 = gbl_rd((uint16_t)(pc + 1));
             n16 = (uint16_t)(n8 | (gbl_rd((uint16_t)(pc + 2)) << 8));
+#endif
         }
 #ifdef GBL_ROM_TRACE
         gbl_rom_fetch = 0;
@@ -392,7 +446,18 @@ void gbl_interp_block(void) {
             gbr.cyc += cyc_main[op] - 4u;
             flags = exec_op(op, n8, n16, pc);
             gbr.cyc += 4u;
-        } else {
+        }
+#if GBL_STACK_TIMING && !GBL_INTERP_ASM
+        else if (pop_class[op]) {
+            gbr.cyc += 4u;
+            flags = exec_op(op, n8, n16, pc);
+        }
+        else if (push_class[op]) {
+            gbr.cyc += cyc_main[op] - 8u;
+            flags = exec_op(op, n8, n16, pc);
+        }
+#endif
+        else {
             gbr.cyc += cyc_main[op];
             flags = exec_op(op, n8, n16, pc);
         }

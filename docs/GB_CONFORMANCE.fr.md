@@ -42,6 +42,24 @@ dmg-acid2, cgb-acid2, cgb-acid-hell. Elles demandent une comparaison de capture 
 voir « Reste ».
 
 
+## Mode de référence `GBL_HOST_REF` (2026-11-04)
+
+`-DGBL_HOST_REF=1` (hôte seulement, jamais sur firmware ; `gbl_options.h`) active deux modèles que les ROMs
+de test observent et que les jeux n'exigent pas ; chacun se règle seul :
+
+- `GBL_OAM_DMA_BUS` : le DMA OAM démarre deux M-cycles après l'écriture de `$FF46` (le précédent court jusque-là),
+  dure 160 M-cycles ; pendant ce temps le CPU voit l'octet transféré sur le bus du DMA, ne peut pas y écrire, et
+  trouve l'OAM fermée ; la copie vers l'OAM se fait au début effectif du transfert.
+- `GBL_STACK_TIMING` : PUSH/CALL/RST écrivent, POP/RET/RETI lisent la pile dans leurs propres M-cycles, et les
+  opérandes d'instruction sont lus à leur M-cycle (opcode +0, premier opérande +4, second +8).
+
+Mesure (outil gbconform, 600 trames, cœur DMG sans boot ROM) : mooneye-test-suite 31 → 48 ROMs qui passent, aucune
+régression ; gagnées : `add_sp_e_timing`, `call_*timing*`, `jp_*timing`, `ld_hl_sp_e_timing`, `oam_dma_restart/start/timing`,
+`pop/push/ret*/reti/rst_timing`. Restent en échec parmi les timings : `di_timing-GS`, `halt_ime1_timing2-GS`
+(synchronisation fine de l'IRQ). Blargg `cpu_instrs` et `instr_timing` passent toujours. Observations de l'outil,
+pas du matériel. Drapeau éteint (valeur par défaut), l'objet `gbl_core.c` pour Cortex-M0+ garde la même taille
+(une instruction diffère par l'allocation d'un registre) ; je n'ai pas comparé de `firmware.bin` complet.
+
 ## mooneye-test-suite
 
 | ROM | Verdict | Trames |

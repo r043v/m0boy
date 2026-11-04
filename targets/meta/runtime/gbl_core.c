@@ -1295,6 +1295,43 @@ uint8_t gbl_io_rd(uint8_t n) {
 #undef gbl_io_rd
 #endif
 
+#ifndef GBL_OAM_DMA_BUS
+#define GBL_OAM_DMA_BUS 0
+#endif
+#if GBL_OAM_DMA_BUS
+static void dma_start(uint16_t src);
+static int dma_in;
+#endif
+static inline __attribute__((always_inline)) void oam_dma_copy(uint16_t src) {
+    uint32_t changed = 0;
+    gbl_ppu_sync(gbr.cyc);
+    /* XX00-XX9F never leaves its 4 KiB page: a mapped page is copied
+     * straight, without a gbl_rd call per byte (about 30 cycles each
+     * on the M0+, 4,800 per DMA). */
+    const uint8_t *page = gbl_rmap[src >> 12];
+    if (page) {
+#if GBL_CORE_ASM && defined(__ARM_ARCH_6M__)
+        changed = gbl_oam_dma_asm(gbl_oam, page + src);
+#else
+        const uint8_t *p = page + src;
+        for (int i = 0; i < 0xA0; i++) {
+            uint8_t b = gbl_load_u8(p + i);
+            changed |= (uint32_t)(b ^ gbl_oam[i]);
+            gbl_oam[i] = b;
+        }
+#endif
+    } else {
+        for (int i = 0; i < 0xA0; i++) {
+            uint8_t b = gbl_rd((uint16_t)(src + i));
+            changed |= (uint32_t)(b ^ gbl_oam[i]);
+            gbl_oam[i] = b;
+        }
+    }
+    if (changed) {
+        gbl_oam_dirty = 1;
+        gbl_ppu_content_changed();
+    }
+}
 /* Scroll, palette and window writes are handled by the assembly gbl_io_wr
  * (gbl_timing_asm.S); it jumps here for the others. */
 #if GBL_TIMING_ASM
@@ -1327,34 +1364,11 @@ void gbl_io_wr(uint8_t n, uint8_t v) {
     case 0x46: {
         /* OAM DMA completes instantly; games wait it out in HRAM anyway. */
         uint16_t src = (uint16_t)(v << 8);
-        uint32_t changed = 0;
-        gbl_ppu_sync(gbr.cyc);
-        /* XX00-XX9F never leaves its 4 KiB page: a mapped page is copied
-         * straight, without a gbl_rd call per byte (about 30 cycles each
-         * on the M0+, 4,800 per DMA). */
-        const uint8_t *page = gbl_rmap[src >> 12];
-        if (page) {
-#if GBL_CORE_ASM && defined(__ARM_ARCH_6M__)
-            changed = gbl_oam_dma_asm(gbl_oam, page + src);
+#if GBL_OAM_DMA_BUS
+        dma_start(src); /* the copy itself happens when the transfer begins */
 #else
-            const uint8_t *p = page + src;
-            for (int i = 0; i < 0xA0; i++) {
-                uint8_t b = gbl_load_u8(p + i);
-                changed |= (uint32_t)(b ^ gbl_oam[i]);
-                gbl_oam[i] = b;
-            }
+        oam_dma_copy(src);
 #endif
-        } else {
-            for (int i = 0; i < 0xA0; i++) {
-                uint8_t b = gbl_rd((uint16_t)(src + i));
-                changed |= (uint32_t)(b ^ gbl_oam[i]);
-                gbl_oam[i] = b;
-            }
-        }
-        if (changed) {
-            gbl_oam_dirty = 1;
-            gbl_ppu_content_changed();
-        }
         gbl_io[0x46] = v;
         return;
     }
@@ -1385,6 +1399,59 @@ void gbl_eram_trace(uint32_t off, unsigned write);
 #define GBL_ERAM_TRACE(a, write) ((void)0)
 #endif
 
+
+#if GBL_OAM_DMA_BUS
+/* OAM DMA bus model (reference/host builds, off on the device): 160 M-cycles
+ * from two M-cycles after the $FF46 write.  While it runs the CPU sees the
+ * byte being transferred on the DMA's bus (external: ROM/SRAM/WRAM, or
+ * VRAM), cannot write there and finds OAM closed; HRAM and I/O are free.  A
+ * restart leaves the previous transfer running until the new one starts. */
+static uint32_t dma_s[2], dma_e[2];
+static uint16_t dma_src[2];
+static uint8_t dma_n, dma_pend;
+static uint16_t dma_psrc;
+static uint32_t dma_pat;
+static void dma_apply(int force) {
+    if (dma_pend && (force || (int32_t)(gbr.cyc - dma_pat) >= 0)) {
+        dma_pend = 0;
+        dma_in = 1;
+        oam_dma_copy(dma_psrc);
+        dma_in = 0;
+    }
+}
+static int dma_find(uint32_t now, uint32_t *idx) {
+    for (int i = 1; i >= 0; i--) {
+        if (i >= dma_n) continue;
+        if ((int32_t)(now - dma_s[i]) >= 0 && (int32_t)(now - dma_e[i]) < 0) { *idx = (now - dma_s[i]) >> 2; return i; }
+    }
+    return -1;
+}
+static inline int dma_vram(uint16_t src) { return src >= 0x8000 && src < 0xA000; }
+static int dma_conflict(uint16_t a, uint8_t *val) {
+    uint32_t idx;
+    int w;
+    if (dma_n == 0 || a >= 0xFF00 || dma_in) return 0;
+    dma_apply(0);
+    if ((w = dma_find(gbr.cyc, &idx)) < 0) return 0;
+    if (a >= 0xFE00) { *val = 0xFF; return 1; }
+    if (dma_vram(a) != dma_vram(dma_src[w])) return 0;
+    uint16_t sa = (uint16_t)(dma_src[w] + idx);
+    dma_in = 1;
+    *val = gbl_rd(sa >= 0xE000 ? (uint16_t)(sa & 0xDFFF) : sa);
+    dma_in = 0;
+    return 1;
+}
+static void dma_start(uint16_t src) {
+    uint32_t st = gbr.cyc + 8;
+    dma_apply(1);
+    dma_psrc = src; dma_pat = st; dma_pend = 1;
+    if (dma_n && (int32_t)(dma_e[dma_n - 1] - st) > 0) {
+        dma_e[dma_n - 1] = st; /* the old one stops when the new one begins */
+        if (dma_n == 2) { dma_s[0] = dma_s[1]; dma_e[0] = dma_e[1]; dma_src[0] = dma_src[1]; dma_n = 1; }
+    } else dma_n = 0;
+    dma_s[dma_n] = st; dma_e[dma_n] = st + 640; dma_src[dma_n] = src; dma_n++;
+}
+#endif
 /* Unmapped pages (IO, OAM, HRAM, MBC registers, streamed ROM...); also the
  * tail of the assembly gbl_rd. */
 uint8_t gbl_rd_slow(uint16_t a) {
@@ -1416,6 +1483,9 @@ uint8_t gbl_rd_slow(uint16_t a) {
 #if !(GBL_CORE_ASM && defined(__ARM_ARCH_6M__)) /* else gbl_core_asm.S */
 uint8_t gbl_rd(uint16_t a) {
     GBL_ERAM_TRACE(a, 0);
+#if GBL_OAM_DMA_BUS
+    { uint8_t dv; if (dma_conflict(a, &dv)) return dv; }
+#endif
     const uint8_t *p = gbl_rmap[a >> 12];
     if (p) return gbl_load_u8(p + a);
 #if GBL_ERAM_ON_SD
@@ -1443,6 +1513,9 @@ void gbl_vram_wr(uint16_t off, uint8_t v) {
 #if !(GBL_CORE_ASM && defined(__ARM_ARCH_6M__)) /* else gbl_core_asm.S */
 void gbl_wr(uint16_t a, uint8_t v) {
     GBL_ERAM_TRACE(a, eram_load(eram_offset(a)) != v);
+#if GBL_OAM_DMA_BUS
+    { uint8_t dv; if (dma_conflict(a, &dv)) return; }
+#endif
     uint8_t *p = gbl_wmap[a >> 12];
     if (p) { p[a] = v; return; }
 #if GBL_ERAM_ON_SD
@@ -1890,6 +1963,10 @@ static void map_pages(void) {
 void gbl_reset(void) {
     __asm__ volatile("" : : "r"(&gbl_input_probe));
     memset(&gbr, 0, sizeof(gbr));
+#if GBL_OAM_DMA_BUS
+    dma_n = dma_pend = 0;
+    dma_in = 0;
+#endif
     memset(gbl_wram, 0, sizeof(gbl_wram));
     memset(gbl_vram, 0, sizeof(gbl_vram));
     memset(gbl_oam, 0, sizeof(gbl_oam));
