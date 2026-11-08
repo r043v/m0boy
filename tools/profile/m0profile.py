@@ -469,7 +469,9 @@ def session_args(store, sid, system, rom):
     if kind == 'rand' and n:
         return [rom, '--frames', frames, '--start-frame', '30', '--random', n]
     if kind == 'explore' and n:
-        return [rom, '--explore', explore, '--random', n]
+        # the coverage-guided explorer is retired (deepeel explores): an
+        # explore session is a long seeded play
+        return [rom, '--frames', explore, '--random', n]
     return None
 
 

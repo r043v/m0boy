@@ -113,12 +113,11 @@
 #                 (coverage-demo) ; les parties au hasard appuient sur Start
 #                 et ne les voient jamais.
 #   REPLAY=1      rejouer les parties à la main enregistrées (profils à jour)
-#   EXPLORERS=n   (toutes plateformes, défaut 4) explorations guidées par la
-#                 couverture (--explore des harnais, targets/common/host/
-#                 m0_explore.h) : un joueur au hasard qui garde l'état des
-#                 parties où il a vu du code ou des données nouveaux et y
-#                 repart, pour atteindre ce qu'un joueur aveugle ne voit pas.
-#                 EXPLORE_FRAMES images chacune (défaut AUTO_SECONDS x 20000
+#   EXPLORERS=n   (toutes plateformes, défaut 4) explorations : des parties
+#                 semées longues (l'explorateur des harnais est retiré :
+#                 deepeel explore et le recompilateur consomme ses cartes),
+#                 un joueur au hasard d'un budget d'images plus long que les
+#                 parties rand.  EXPLORE_FRAMES images chacune (défaut AUTO_SECONDS x 20000
 #                 en GB, x 6000 en SG/GG/SMS) ; 0 = aucune.  Les profils
 #                 enregistrés sans exploration la reçoivent au lancement
 #                 suivant.  SG_EXPLORERS et SG_EXPLORE_FRAMES : anciens noms.
@@ -921,7 +920,7 @@ build_sg_game() { # SG-1000 and Game Gear own their generator, profiles and buil
   if [ "$AUTO" = 1 ] && { [ "$AUTO_REDO" = 1 ] || [ "$stale" = 1 ] || [ ! -f "$store/coverage-auto.cov" ]; }; then
     [ -x "$host" ] || { echo "[x] Construire $(basename "$host") avec CMake/Ninja."; return 1; }
     case "$auto_frames" in ''|*[!0-9]*|0) echo "[x] SG_AUTO_FRAMES doit être un entier positif."; return 1 ;; esac
-    # Explorations guidées par la couverture (--explore) : le profil est celui de toutes les images jouées.
+    # Explorations (parties semées longues : l'explorateur du harnais est retiré, deepeel explore) : le profil est celui de toutes les images jouées.
     local more=""
     [ "$explorers" -gt 0 ] && more=", $explorers explorations de $explore_frames images"
     echo "[i] Profil $label : $auto_frames images NTSC, bouton 1 pour démarrer et tirer, sans touche, $seeds parties aléatoires$more"
@@ -938,7 +937,7 @@ build_sg_game() { # SG-1000 and Game Gear own their generator, profiles and buil
       pids+=($!)
     done
     for ((seed = 1; seed <= explorers; seed++)); do
-      "$host" "$rom_path" --explore "$explore_frames" --random "$seed" \
+      "$host" "$rom_path" --frames "$explore_frames" --random "$seed" \
         --coverage "$store/coverage-explore$seed.tmp" > /dev/null 2>&1 &
       pids+=($!)
     done
@@ -1368,9 +1367,9 @@ build_game() { # $1 rom, $2 préfixe, $3 dossier du jeu (dernier composant), $4 
     save_sessions
   fi
 
-  # b2bis) Explorations guidées par la couverture (--explore, EXPLORERS) :
-  #     reprennent depuis des états sauvés là où du code ou des données de
-  #     ROM nouveaux sont apparus.  Pas de fichier d'entrées : la couverture
+  # b2bis) Explorations (EXPLORERS) : parties semées longues (l'explorateur
+  #     du harnais est retiré : deepeel explore et le recompilateur consomme
+  #     ses cartes).  Pas de fichier d'entrées : la couverture
   #     et le profil de lectures sont enregistrés directement.  Images
   #     comptées (même partie d'une machine à l'autre) ; AUTO_SECONDS x 15
   #     secondes au plus, garde-fou que les jeux lents n'atteignent pas.
@@ -1388,7 +1387,7 @@ build_game() { # $1 rom, $2 préfixe, $3 dossier du jeu (dernier composant), $4 
     "${lock[@]}" bash -c '
       prof=$1 dir=$2 secs=$3 frames=$4; shift 4
       for seed in "$@"; do
-        "$prof" --interp --explore "$frames" --random "$seed" --max-seconds $((secs * 15)) \
+        "$prof" --interp --frames "$frames" --random "$seed" --max-seconds $((secs * 15)) \
           --coverage "$dir/coverage-explore$seed.tmp" --rom-profile-out "$dir/romdata-explore$seed.prof" \
           > /dev/null 2>&1 && mv "$dir/coverage-explore$seed.tmp" "$dir/coverage-explore$seed.cov" &
       done

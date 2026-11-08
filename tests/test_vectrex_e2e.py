@@ -399,7 +399,7 @@ def main():
         explore_locations = None
         for _ in range(2):
             ecov = root / "explore.cov"
-            run(interp, "--bios", bios, "--explore", "900", "--random", "3", "--coverage", ecov)
+            run(interp, "--bios", bios, "--frames", "900", "--random", "3", "--coverage", ecov)
             found = [l for l in ecov.read_text().splitlines() if not l.startswith("#")]
             assert len(found) > 5, f"the explorer discovered almost nothing ({len(found)})"
             assert explore_locations in (None, len(found)), "unstable explore coverage"

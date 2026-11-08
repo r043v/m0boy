@@ -625,12 +625,13 @@ def recompiler(work):
     assert compiled(swept_text) > compiled(plain_text), \
         f"the sweep compiled nothing more ({compiled(swept_text)} vs {compiled(plain_text)})"
 
-    # the explorer: two seeded runs discover the same addresses, and the
-    # m0search plan (explore, then the idle session with no touch) merges
+    # the retired explorer (deepeel explores): two seeded play runs still
+    # discover the same addresses, and the m0search plan (explore, then the
+    # idle session with no touch) merges
     explore_locations = None
     for _ in range(2):
         cov = work / "explore.cov"
-        run(reference_host, "--explore", "900", "--random", "3", "--coverage", cov)
+        run(reference_host, "--frames", "900", "--random", "3", "--coverage", cov)
         found = [l for l in cov.read_text().splitlines() if not l.startswith("#")]
         assert len(found) > 10, f"the explorer discovered almost nothing ({len(found)})"
         assert explore_locations in (None, len(found)), "unstable explore coverage"

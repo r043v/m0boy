@@ -6,11 +6,10 @@ des sessions de jeu qui font découvrir du code, leur couverture collectée
 puis fusionnée en un profil prêt pour le générateur.  Deux moteurs selon
 le coeur :
 
-  - les coeurs à explorateur (tous ceux qui ont une couverture : Game
-    Boy, SG-1000, MSX, Game Gear, NES, Vectrex, Mega Drive, PC Engine)
-    délèguent à leur harnais : --explore FRAMES --random GRAINE joue par
-    segments depuis des instantanés (m0_explore.h et la colle partagée
-    m0_explore_host.h) et la couverture se écrit toute seule ;
+  - les coeurs à couverture (Game Boy, SG-1000, MSX, Game Gear, NES,
+    Vectrex, Mega Drive, PC Engine) : une longue partie semée (--random
+    GRAINE ; l'explorateur du harnais est retiré, deepeel explore) et
+    la couverture se écrit toute seule ;
   - PICO-8 reçoit des scripts d'entrées générés ici, même politique que
     m0_explore : une direction tenue 8 à 63 trames, les boutons tenus ou
     tapotés, START de temps en temps, dans le dialecte d'entrées du
@@ -311,8 +310,9 @@ def cmd_run(a):
     if sys_["rom_arg"] and not a.rom:
         raise SystemExit("m0search : --rom est requis pour %s" % a.system)
 
-    # le plan : un long explorateur sur les coeurs à --explore (il partage
-    # lui-même en segments), sinon N sessions scriptées, puis la session
+    # le plan : une longue partie semée sur les coeurs à couverture
+    # (l'explorateur du harnais est retiré : deepeel explore), sinon N
+    # sessions scriptées, puis la session
     # idle (aucune touche : les écrans titre et les modes démo), puis les
     # rejeux manuels ; (nom, fichier d'entrées ou None, budget de trames)
     total_frames = a.frames * a.sessions
@@ -339,8 +339,9 @@ def cmd_run(a):
         cov = outdir / (name + ".cov") if sys_["coverage"] else None
         argv = harness_argv(sys_, a, cov, inp)
         if sys_["explore"] and name == "explore":
-            argv += ["--explore", str(frames), "--random", str(a.seed),
-                     "--frames", str(frames)]
+            # the coverage-guided explorer is retired (deepeel explores):
+            # the explore session is a long seeded play
+            argv += ["--frames", str(frames), "--random", str(a.seed)]
         else:
             argv += ["--frames", str(frames)]
         row = {"name": name, "argv": [str(x) for x in argv], "frames": frames}

@@ -125,12 +125,12 @@ elif name=='nproc':print('4')
     run('roms/sg', 'output/sg card', TARGET='pokitto', AUTO='1', AUTO_SECONDS='2', FORCE='1', SG_SEEDS='2')
     calls=[json.loads(line) for line in (root/'calls.jsonl').read_text().splitlines()]
     hosts=[args for name,args in calls if name=='sg1000_host']
-    explorations=[args for args in hosts if '--explore' in args]
-    profiles=[args for args in hosts if '--explore' not in args]
+    explorations=[args for args in hosts if '--frames' in args and args[args.index('--frames')+1]=='12000']
+    profiles=[args for args in hosts if not ('--frames' in args and args[args.index('--frames')+1]=='12000')]
     # per cartridge: button 1 held, no input, then SG_SEEDS random games
     assert len(profiles)==8 and all(args[args.index('--frames')+1]=='120' for args in profiles)
-    # and EXPLORERS (4) coverage-guided explorations of AUTO_SECONDS x 6000 frames
-    assert len(explorations)==8 and all(args[args.index('--explore')+1]=='12000' for args in explorations)
+    # and EXPLORERS (4) long seeded plays of AUTO_SECONDS x 6000 frames
+    assert len(explorations)==8 and all('--random' in args for args in explorations)
     assert len(list((root/'profiles/sg').glob('*/coverage-explore*.cov')))==8
     assert sum('--random' in args for args in profiles)==4
     assert sum('--buttons' not in args and '--random' not in args for args in profiles)==2
@@ -164,13 +164,15 @@ elif name=='nproc':print('4')
     run('roms/sg', TARGET='pokitto', AUTO='1', AUTO_SECONDS='2', FORCE='1', SG_SEEDS='3', EXPLORERS='5')
     assert len(profile_calls())==20
     assert sum('--random' in a and a[a.index('--random')+1]=='3' for a in profile_calls())==4
-    assert sum('--explore' in a and a[a.index('--random')+1]=='5' for a in profile_calls())==2
+    assert sum('--frames' in a and a[a.index('--frames')+1]=='12000' and a[a.index('--random')+1]=='5' for a in profile_calls())==2
     (root/'calls.jsonl').write_text('')
     run('roms/sg', TARGET='pokitto', AUTO='1', AUTO_SECONDS='2', FORCE='1', SG_SEEDS='3', EXPLORERS='5',
         SG_AUTO_FRAMES='240', EXPLORE_FRAMES='24000')
     assert len(profile_calls())==20
-    assert all(a[a.index('--frames')+1]=='240' for a in profile_calls() if '--frames' in a)
-    assert all(a[a.index('--explore')+1]=='24000' for a in profile_calls() if '--explore' in a)
+    rand_calls=[a for a in profile_calls() if '--frames' in a and a[a.index('--frames')+1]=='240']
+    explore_calls=[a for a in profile_calls() if '--frames' in a and a[a.index('--frames')+1]=='24000']
+    assert len(rand_calls)==10 and len(explore_calls)==10  # per cartridge: auto+idle+3 rand at 240, 5 explore at 24000
+    assert all('--random' in a for a in explore_calls)
     # A failed refresh cannot certify an incomplete run as a current cache.
     failed=subprocess.run(['bash','./compile.sh','roms/sg'],cwd=root,
                           env=dict(env,TARGET='pokitto',AUTO='1',FORCE='1',SG_SEEDS='3',EXPLORERS='5',
@@ -189,7 +191,7 @@ elif name=='nproc':print('4')
     (root/'calls.jsonl').write_text('')
     run('roms/sg', TARGET='pokitto', AUTO='1', AUTO_SECONDS='2', FORCE='1', SG_SEEDS='3', EXPLORERS='5',
         SG_AUTO_FRAMES='240', EXPLORE_FRAMES='0')
-    assert len(profile_calls())==10 and all('--explore' not in a for a in profile_calls())
+    assert len(profile_calls())==10 and all(not ('--frames' in a and a[a.index('--frames')+1]=='24000') for a in profile_calls())
     # Old exploration files need not exist when exploration is disabled.
     for store in stores:
         for p in store.glob('coverage-explore*.cov'):p.unlink()

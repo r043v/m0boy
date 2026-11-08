@@ -151,8 +151,8 @@ def test_run_and_merge():
         check([s["name"] for s in sessions] == ["explore", "idle", "manual-01"],
               "le plan : l'explorateur, l'idle sans touches, le rejeu manuel")
         check(sessions[1]["frames"] == 6000, "idle : le budget par défaut")
-        check("--explore" in sessions[0]["argv"] and "--random" in sessions[0]["argv"],
-              "l'explorateur part de la graine")
+        check("--frames" in sessions[0]["argv"] and "--random" in sessions[0]["argv"],
+              "la longue partie semée part de la graine")
         check(sessions[0]["new"] == sessions[0]["locations"], "première session : tout est nouveau")
         check(report["union"] > 0 and report["merged"].endswith("coverage.merged"), "fusion annoncée")
 
@@ -172,7 +172,8 @@ def test_run_and_merge():
         report = json.loads((Path(out_nes) / "search.json").read_text())
         check([s["name"] for s in report["sessions"]] == ["explore", "idle"],
               "NES : l'explorateur puis l'idle sans touches")
-        check("--explore" in report["sessions"][0]["argv"], "NES : le harnais reçoit --explore")
+        check("--frames" in report["sessions"][0]["argv"] and "--random" in report["sessions"][0]["argv"],
+              "NES : le harnais reçoit la partie semée")
 
 
 def main():

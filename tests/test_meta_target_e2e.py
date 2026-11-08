@@ -401,7 +401,7 @@ def main() -> int:
         # Checkpointing discoveries at CPU safe points must be deterministic,
         # and the profile must count all played frames across restored states.
         explored = tmp / "explored.cov"
-        explore_args = [str(bb / "e2e_profile"), "--interp", "--explore", "1500",
+        explore_args = [str(bb / "e2e_profile"), "--interp", "--frames", "1500",
                         "--random", "3", "--coverage", str(explored)]
         first = parse(run(explore_args))
         first_cov = explored.read_bytes()
