@@ -114,6 +114,18 @@ Coverage is incremental. Run a compiled build with `--coverage` but without
 `--interp`: it records only the instructions that still fall back to the
 interpreter. Regenerate with every coverage file.
 
+`--coverage` also takes a deepeel coverage profile directly (`.cov`, the
+"gbl coverage v1" text: `bank addr flags(1=exec,2=entry,4=speculative,8=data)
+hits`, runs as data when flag 8 carries a fifth run-length column) — this is
+what a full deepeel campaign writes, so its map drives the compilation with
+no m0boy-side discovery:
+
+    deepeel explore game.gb --play --tas ... --cov game.cov
+    ./build/bin/gbrecomp game.gb --target meta --coverage game.cov --output output/game_meta
+
+Super Mario Land (World), cov of the deepeel TAS campaign (42 706 records):
+6 963 compiled instructions in 74 regions, interpreter-only 0.
+
 `--coverage` also takes a deepeel map PNG (`deepeel explore game.gb --play
 --map game.map.png`). Its `deepeel_cov` chunk is the coverage of the played
 sessions only (hit counts rank the flash budget; proven-data runs exclude
