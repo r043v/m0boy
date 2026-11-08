@@ -213,7 +213,7 @@ static void fetch_sprites(vdc_t *v) {
     active_sprites = 0;
     /* RCRCount has already advanced for this line, as in the mednafen
      * core's line fetch phase */
-    const int sprite_line = v->rcr_count;
+    const int sprite_line = v->rcr_count - 1;
     const uint16_t *sp = v->sat;
     uint64_t todo = ~(uint64_t)0;
     if (sprite_line >= 0 && sprite_line < SAT_LINES) {

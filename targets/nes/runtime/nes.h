@@ -43,6 +43,12 @@ typedef struct {
     nes_apu_t apu;
     uint8_t ram[2048];
     uint8_t oam[256];
+#ifndef NES_NO_PRG_RAM
+#define NES_NO_PRG_RAM 0
+#endif
+#if !NES_NO_PRG_RAM
+    uint8_t wram[8192];    /* cartridge PRG-RAM, $6000-$7FFF (MMC1/MMC3 boards) */
+#endif
     uint8_t chr_ram[8192]; /* CHR-RAM cartridges': the PPU writes it through
                             * $2007 (ROM cartridges leave the board's) */
     const uint8_t *prg;
@@ -51,6 +57,8 @@ typedef struct {
     uint8_t input;         /* the host writes it before each frame */
     uint8_t shift[2];      /* the controllers' serial shifters */
     uint8_t strobe;
+    uint8_t pad_reads;     /* $4016/$4017 reads since the latch: bit0 pad1, bit1 pad2,
+                            * 4-bit counters (the ninth read onward reports 1) */
     uint32_t dots;         /* PPU dots into the current line's CPU slice */
     uint32_t line;
     uint32_t frames;       /* completed nes_frame calls (the m0input probe) */

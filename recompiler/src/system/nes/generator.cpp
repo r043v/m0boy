@@ -158,6 +158,7 @@ bool generate(const fs::path& cartridge, const GenerateOptions& o, GenerateStats
                << "#define NES_CHR_SIZE 8192u\n"
                << "#define NES_CHR_RAM " << (chr_ram ? 1 : 0) << "\n"
                << "#define NES_VERTICAL_MIRROR " << (header[6] & 1) << "\n"
+               << "#define NES_NO_PRG_RAM " << ((header[6] & 0x02) ? 0 : 1) << "\n"
                << "/* the panel's byte order: the META's SPI takes the high byte first */\n"
                << "#define NES_PANEL_SWAP " << (o.target == TargetId::meta ? 1 : 0) << "\n";
         if (o.frame_hz)

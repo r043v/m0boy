@@ -34,12 +34,13 @@ NesTrace nes_trace;
 /* the traced variants: every data read and write goes through the hook
  * (the fetch and the stack stay out), and a stop ends the slice at the
  * next instruction boundary with only the cycles actually consumed */
-#define NES_T_RD(cpu, a_) do { if (nes_trace.rd) nes_trace.rd(nes_trace.user, (a_)); } while (0)
+#define NES_T_RD(cpu, a_, v_) do { if (nes_trace.rd) nes_trace.rd(nes_trace.user, (a_), (v_)); } while (0)
 #define NES_T_WR(cpu, a_, v) do { if (nes_trace.wr) nes_trace.wr(nes_trace.user, (a_), (v)); } while (0)
-#define rd(cpu, at) (__extension__({ (void)(cpu); uint16_t a_ = (at); NES_T_RD(cpu, a_); \
-    a_ < 0x2000u ? ram_[a_ & 0x7FFu] \
+#define rd(cpu, at) (__extension__({ (void)(cpu); uint16_t a_ = (at); \
+    uint8_t v_ = a_ < 0x2000u ? ram_[a_ & 0x7FFu] \
     : a_ >= 0x8000u ? prg_[(a_ & 0x3FFFu) + (a_ >= 0xC000u ? fixed_base_ : cpu->bank_base)] \
-    : nes_bus_read(a_); }))
+    : nes_bus_read(a_); \
+    NES_T_RD(cpu, a_, v_); v_; }))
 #define wr(cpu, at, v) do { (void)(cpu); uint16_t a_ = (at); NES_T_WR(cpu, a_, (v)); \
     if (a_ < 0x2000u) ram_[a_ & 0x7FFu] = (v); else nes_bus_write(a_, (v)); } while (0)
 #endif

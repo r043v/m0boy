@@ -22,13 +22,19 @@ uint8_t nes_bus_read(uint16_t at) {
     if (at == 0x4016 || at == 0x4017) {
         const unsigned pad = at & 1;
         if (nes->strobe) return (uint8_t)(nes->input & 1);
+        const unsigned nib = pad * 4;
+        /* on the official controllers the ninth read onward reports 1 (the
+         * shifter is empty, the inverter holds the line high) — the SMB
+         * title timers key on that signature */
+        if (((nes->pad_reads >> nib) & 0xF) >= 8) return 1;
+        nes->pad_reads += (uint8_t)(1u << nib);
         const uint8_t bit = (uint8_t)(nes->shift[pad] & 1);
         nes->shift[pad] >>= 1;
-        /* past the 8 buttons the pads read 0 (SMB keys its title timers
-         * on that signature) */
         return bit;
     }
+#if !NES_NO_PRG_RAM
     if (at >= 0x6000 && at < 0x8000) return nes->wram[at & 0x1FFF];
+#endif
     if (at >= 0x8000) {
         /* the cartridge's two windows: the bank at $8000-$BFFF, the fixed
          * one at $C000-$FFFF (NROM: the PRG fills $8000-$FFFF, a 16 KiB
@@ -41,7 +47,9 @@ uint8_t nes_bus_read(uint16_t at) {
 void nes_bus_write(uint16_t at, uint8_t value) {
     nes_t *nes = &machine;
     if (at < 0x2000) { nes->ram[at & 0x7FF] = value; return; }
+#if !NES_NO_PRG_RAM
     if (at >= 0x6000 && at < 0x8000) { nes->wram[at & 0x1FFF] = value; return; }
+#endif
     if (at >= 0x8000) {
         /* UxROM: the write's value is the bank the $8000 window maps (the
          * bus conflict is ignored: the games' write tables agree with the
@@ -65,6 +73,7 @@ void nes_bus_write(uint16_t at, uint8_t value) {
         if ((value & 1) && !nes->strobe) {
             nes->shift[0] = nes->input;
             nes->shift[1] = 0;
+            nes->pad_reads = 0;   /* the latch restarts the serial frame */
         }
         nes->strobe = value & 1;
         return;
@@ -84,7 +93,9 @@ void nes_init(const uint8_t *prg, uint32_t prg_bytes,
     nes_t *nes = &machine;
     for (unsigned i = 0; i < sizeof nes->ram; i++) nes->ram[i] = 0;
     for (unsigned i = 0; i < sizeof nes->oam; i++) nes->oam[i] = 0;
+#if !NES_NO_PRG_RAM
     for (unsigned i = 0; i < sizeof nes->wram; i++) nes->wram[i] = 0;
+#endif
     static uint8_t nametable[2048], palette[32];
     for (unsigned i = 0; i < sizeof nametable; i++) nametable[i] = 0;
     for (unsigned i = 0; i < sizeof palette; i++) palette[i] = 0;
@@ -134,6 +145,7 @@ void nes_reset(void) {
     nes_apu_reset(&nes->apu);
     nes->strobe = 0;
     nes->shift[0] = nes->shift[1] = 0;
+    nes->pad_reads = 0;
     nes->dots = 0;
     nes->line = 0;
 }

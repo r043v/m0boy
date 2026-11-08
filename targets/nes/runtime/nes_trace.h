@@ -14,8 +14,9 @@ typedef struct NesTrace {
     void *user;
     void (*step)(void *user, unsigned pc, unsigned op); /* before the
                         * instruction executes (opcode fetched, not counted) */
-    void (*rd)(void *user, unsigned addr); /* data reads: operands included,
-                        * the opcode fetch at pc excluded, stack excluded */
+    void (*rd)(void *user, unsigned addr, unsigned v); /* data reads: operands
+                        * included, the opcode fetch at pc excluded, stack excluded;
+                        * v is the byte the read returned (post-read, value-exact) */
     void (*wr)(void *user, unsigned addr, unsigned v); /* data writes,
                         * stack excluded */
     void (*interrupt)(void *user, unsigned vector); /* an NMI ($FFFA), IRQ
