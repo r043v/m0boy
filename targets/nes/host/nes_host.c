@@ -202,6 +202,12 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--skip") && i + 1 < argc) skip = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--rows") && i + 1 < argc) rows = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--interp")) interp = 1;
+        // axis 9: this host no longer discovers code on its own — deepeel
+        // explores and the recompiler consumes its maps
+        else if (!strcmp(argv[i], "--explore") && i + 1 < argc) {
+            fprintf(stderr, "nes_host: --explore is retired: deepeel explores and the recompiler consumes its maps; this host records coverage by playing (--input, --coverage).\n");
+            return 2;
+        }
         else if (m0xh_arg(&xh, argc, argv, &i)) { /* --explore, --random */ }
         else rom_path = argv[i];
     }

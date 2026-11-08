@@ -257,6 +257,12 @@ int main(int argc, char **argv) {
 #endif
         }
 #ifdef GG_ROM_TRACE
+        // axis 9: this host no longer discovers code on its own — deepeel
+        // explores and the recompiler consumes its maps
+        else if (!strcmp(argv[i], "--explore") && i + 1 < argc) {
+            fprintf(stderr, "gg_host: --explore is retired: deepeel explores and the recompiler consumes its maps; this host records coverage by playing (--input, --coverage).\n");
+            return 2;
+        }
         else if (m0xh_arg(&xh, argc, argv, &i)) { /* --explore frames */ }
 #endif
         else if (!strcmp(argv[i], "--save-state") && i + 1 < argc) save_state_file = argv[++i];

@@ -202,7 +202,16 @@ int main(int argc, char **argv) {
 #endif
         }
 #ifndef SG_GENERATED
-        else if (m0xh_arg(&xh, argc, argv, &i)) { /* --explore frames */ }
+        // axis 9: this host no longer discovers code on its own — deepeel
+        // explores and the recompiler consumes its maps; the coverage-guided
+        // player stays in targets/common for the cores that still explore
+        else if (!strcmp(argv[i], "--explore") && i + 1 < argc) {
+            fprintf(stderr, "sg_host: --explore is retired: deepeel explores "
+                            "(deepeel z80 explore sg ROM ...), this host records "
+                            "coverage by playing (--input, --coverage).\n");
+            return 2;
+        }
+        else if (m0xh_arg(&xh, argc, argv, &i)) { /* other shared options */ }
 #endif
         else if (argv[i][0] != '-' && !rom_path) rom_path = argv[i];
         else { fprintf(stderr, "Unknown or incomplete argument: %s\n", argv[i]); return 1; }

@@ -275,6 +275,12 @@ int main(int argc, char **argv) {
       interp = 1;
     else if (!strcmp(argv[i], "--coverage") && i + 1 < argc)
       coverage = argv[++i];
+    // axis 9: this host no longer discovers code on its own — deepeel
+        // explores and the recompiler consumes its maps
+    else if (!strcmp(argv[i], "--explore") && i + 1 < argc) {
+        fprintf(stderr, "vectrex_host: --explore is retired: deepeel explores and the recompiler consumes its maps; this host records coverage by playing (--input, --coverage).\n");
+        return 2;
+        }
     else if (m0xh_arg(&xh, argc, argv, &i)) { /* --explore, --random */ }
     else if (!strcmp(argv[i], "--save-state") && i + 1 < argc)
       save_state = argv[++i];
