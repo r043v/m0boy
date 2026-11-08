@@ -93,6 +93,9 @@ cmake -G Ninja -S output/game_meta/host -B output/game_meta/host/build
 ninja -C output/game_meta/host/build
 
 # 2a. Record coverage by playing (SDL2 window; Esc saves and quits)
+#     The coverage-guided player (--explore) is retired on this core: deepeel
+#     explores (deepeel explore ROM --play --cov game.cov) and the host
+#     consumes its maps. Playing with your own hands and recording stays.
 ./output/game_meta/host/build/game_play --interp \
   --coverage logs/game-1.cov --record-input logs/game-1.input
 

@@ -882,7 +882,17 @@ int main(int argc, char **argv) {
 #endif
         else if (!strcmp(argv[i], "--agent")) agent = 1;
 #ifdef GBL_COVERAGE
-        else if (!strcmp(argv[i], "--explore") && i + 1 < argc) explore_frames = (uint32_t)strtoul(argv[++i], 0, 0);
+        // axis 9: the host no longer discovers code on its own — deepeel's
+        // maps drive the compilation (--coverage game.cov / game.map.png);
+        // the coverage-guided player of m0_explore stays in targets/common
+        // for the cores that still explore, the meta core refuses it
+        else if (!strcmp(argv[i], "--explore") && i + 1 < argc) {
+            fprintf(stderr, "gbl_host: --explore is retired: deepeel explores "
+                            "(deepeel explore ROM --play --cov game.cov), this host "
+                            "consumes its maps (--coverage). Playing and recording "
+                            "coverage (--coverage with --input or at the window) stays.\n");
+            exit(2);
+        }
         else if (!strcmp(argv[i], "--random") && i + 1 < argc) explore_seed = (uint32_t)strtoul(argv[++i], 0, 0);
 #endif
         else if (!strcmp(argv[i], "--hash-every") && i + 1 < argc) hash_every = (uint32_t)atoi(argv[++i]);
