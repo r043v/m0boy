@@ -28,6 +28,7 @@ uint8_t nes_bus_read(uint16_t at) {
          * on that signature) */
         return bit;
     }
+    if (at >= 0x6000 && at < 0x8000) return nes->wram[at & 0x1FFF];
     if (at >= 0x8000) {
         /* the cartridge's two windows: the bank at $8000-$BFFF, the fixed
          * one at $C000-$FFFF (NROM: the PRG fills $8000-$FFFF, a 16 KiB
@@ -40,6 +41,7 @@ uint8_t nes_bus_read(uint16_t at) {
 void nes_bus_write(uint16_t at, uint8_t value) {
     nes_t *nes = &machine;
     if (at < 0x2000) { nes->ram[at & 0x7FF] = value; return; }
+    if (at >= 0x6000 && at < 0x8000) { nes->wram[at & 0x1FFF] = value; return; }
     if (at >= 0x8000) {
         /* UxROM: the write's value is the bank the $8000 window maps (the
          * bus conflict is ignored: the games' write tables agree with the
@@ -82,6 +84,7 @@ void nes_init(const uint8_t *prg, uint32_t prg_bytes,
     nes_t *nes = &machine;
     for (unsigned i = 0; i < sizeof nes->ram; i++) nes->ram[i] = 0;
     for (unsigned i = 0; i < sizeof nes->oam; i++) nes->oam[i] = 0;
+    for (unsigned i = 0; i < sizeof nes->wram; i++) nes->wram[i] = 0;
     static uint8_t nametable[2048], palette[32];
     for (unsigned i = 0; i < sizeof nametable; i++) nametable[i] = 0;
     for (unsigned i = 0; i < sizeof palette; i++) palette[i] = 0;
