@@ -51,6 +51,16 @@ static inline void gg_native_write(z80_t *c, uint16_t a, uint8_t v) { (void)c; g
 
 gg_t machine;
 
+/* bench watch: log every write to this work-RAM address (GG_WATCH_ADDR=hex) */
+int gg_watch_addr = -1;
+static void gg_watch_addr_init(void) {
+    const char *w = getenv("GG_WATCH_ADDR");
+    if (w) { gg_watch_addr = (int)strtoul(w, 0, 16); fprintf(stderr, "watch enabled: %04x\n", gg_watch_addr); }
+}
+int gg_watch_dump(unsigned a, uint8_t v, unsigned pc, uint32_t cyc, unsigned fr) {
+    return fprintf(stderr, "watch %04x <- %02x pc=%04x cyc=%u fr=%u\n", a, v, pc, cyc, fr);
+}
+
 /* Read by gm0 --record-input, which finds it by its tag in the firmware:
  * the frame counter and the buttons the game receives, so that a session
  * played in gm0 replays in the host harness (--input).  gg_reset
@@ -348,10 +358,13 @@ void gg_write_cart(uint16_t a, uint8_t v) {
 uint8_t gg_in(uint8_t port) {
     gg_t *m = &machine;
     static int in_trace = -1;
-    if (in_trace < 0) in_trace = getenv("GG_IN_TRACE") ? 1 : 0;
-    if (in_trace && ((port & 0xc0) == 0xc0 || port == 0xbf))   /* pad / vcounter / hcounter / VDP status reads */
-        fprintf(stderr, "gg_in %02x -> %02x (buttons=%02x ctl=%02x st=%02x) pc=%04x cyc=%u fr=%u\n",
-                port, port == 0xbf ? m->vdp_status : 0, m->buttons, m->io_ctl, m->vdp_status, m->cpu.pc, m->cyc, m->frames);
+    if (in_trace < 0) { in_trace = getenv("GG_IN_TRACE") ? 1 : 0; gg_watch_addr_init(); }
+    if (in_trace && ((port & 0xc0) == 0xc0 || port == 0xbf || (port & 0xfe) == 0x7e)) {
+        /* pad / vcounter / hcounter / VDP status reads; vcounter/hcounter print their value */
+        const uint8_t pv = (port & 0xfe) == 0x7e ? gg_in(port & 0xc1) : (port == 0xbf ? m->vdp_status : 0);
+        fprintf(stderr, "gg_in %02x -> %02x (buttons=%02x ctl=%02x st=%02x) pc=%04x cyc=%u fr=%u vc=%02x\n",
+                port, pv, m->buttons, m->io_ctl, m->vdp_status, m->cpu.pc, m->cyc, m->frames, gg_vcounter());
+    }
     if (port <= 6 && !GG_IS_SMS) { /* Game Gear registers: START, region, link port, stereo */
         if (!port) return (uint8_t)((m->buttons & GG_START ? 0 : 0x80) | 0x40); /* export, NTSC */
         if (port == 4) return 0xff;              /* serial receive: nothing */
@@ -496,7 +509,10 @@ void gg_reset(void) {
     for (unsigned i = 0; i < 32; i++) m->pal[i] = 0;
     m->cyc = m->frame_start = 0;
     m->render_line = 0;
-    m->render_at = GG_LINE_CYCLES;
+    /* line N renders at the start of line N, not of N+1: the sprite
+     * collision/overflow flags must be visible to a mid-line $BF poll
+     * (Castle reads $BF on line 159 and acts on the flags) */
+    m->render_at = 0;
     m->vblank_done = 0;
     m->frames = 0;
     m->lc_count = m->vdp[10];
@@ -561,7 +577,7 @@ void sg_sync(void) {
             m->frame_start += GG_FRAME_CYCLES;
             m->vblank_done = 0;
             m->render_line = 0;
-            m->render_at = m->frame_start + GG_LINE_CYCLES;
+            m->render_at = m->frame_start; /* line 0 at its own start, see init */
             gg_vdp_frame_start();
             m->frames++;
             if (m->frame) m->frame(m->platform);
