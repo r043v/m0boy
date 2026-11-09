@@ -349,9 +349,9 @@ uint8_t gg_in(uint8_t port) {
     gg_t *m = &machine;
     static int in_trace = -1;
     if (in_trace < 0) in_trace = getenv("GG_IN_TRACE") ? 1 : 0;
-    if (in_trace && (port & 0xc0) == 0xc0)   /* pad / vcounter / hcounter reads */
-        fprintf(stderr, "gg_in %02x -> %02x (buttons=%02x ctl=%02x) pc=%04x cyc=%u\n",
-                port, 0, m->buttons, m->io_ctl, m->cpu.pc, m->cyc);
+    if (in_trace && ((port & 0xc0) == 0xc0 || port == 0xbf))   /* pad / vcounter / hcounter / VDP status reads */
+        fprintf(stderr, "gg_in %02x -> %02x (buttons=%02x ctl=%02x st=%02x) pc=%04x cyc=%u fr=%u\n",
+                port, port == 0xbf ? m->vdp_status : 0, m->buttons, m->io_ctl, m->vdp_status, m->cpu.pc, m->cyc, m->frames);
     if (port <= 6 && !GG_IS_SMS) { /* Game Gear registers: START, region, link port, stereo */
         if (!port) return (uint8_t)((m->buttons & GG_START ? 0 : 0x80) | 0x40); /* export, NTSC */
         if (port == 4) return 0xff;              /* serial receive: nothing */
@@ -587,6 +587,9 @@ static int irq_enter(void) {
         c->pc = 0x66;
         cycles = 11;
     } else if (c->irq && c->iff1 && !c->ei_delay) {
+        if (nmi_trace) fprintf(stderr, "irq taken at pc=%04x frame=%u st=%02x line_irq=%d (frame_ie=%d line_ie=%d)\n",
+                               c->pc, m->frames, m->vdp_status, m->line_irq,
+                               m->vdp[1] & 32, m->vdp[0] & 16);
         c->iff1 = c->iff2 = 0;
         if (c->im == 0 && (c->irq_vector & 0xc7) != 0xc7) { c->fault = 1; m->stop = 1; return 0; }
         z80_push(c, c->pc);
