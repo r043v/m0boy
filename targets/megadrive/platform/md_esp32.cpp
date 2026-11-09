@@ -20,9 +20,19 @@ void m0_lcd_wide_begin(uint8_t row0, uint8_t rows);
 void m0_lcd_wide_reserve(void);
 void m0_lcd_wide_submit(const void *batch, uint8_t rows);
 void m0_lcd_wide_flush(void);
+void m0_lcd_send_wide(const void *batch, uint8_t row0, uint8_t rows);
 }
 #include "m0_target.h"
 #include "md_config.h"
+/* aka_headless (tools/AKA_Emulator) never fires the transfers' done
+ * interrupt, so AKA_EMU_SYNC=1 keeps the synchronous per-row send of the
+ * other frontends for headless runs — used together with -DMD_RENDER_THREAD=0
+ * (the emulator's core-0 tasks would starve otherwise, see
+ * docs/AKA_EMU_PROBLEMES.fr.md):
+ *   pio run -d <project> -DMD_RENDER_THREAD=0 -DAKA_EMU_SYNC=1 */
+#ifndef AKA_EMU_SYNC
+#define AKA_EMU_SYNC 0
+#endif
 #ifndef MD_RENDER_THREAD
 #define MD_RENDER_THREAD 0
 #endif
@@ -89,10 +99,18 @@ static void render_task(void *) {
 /* called at the end of every active line, inside md_full_frame: render the
  * line RGB565 into the ring, hand full batches to the DMA queue */
 static void md_line_hook(void *, const MdFull *m, unsigned line) {
-    uint16_t (*batch)[320] = ring[(line >> 3) & (RING_BATCHES - 1u)];
-    if ((line & 7u) == 0u) m0_lcd_wide_reserve();
-    md_full_render_line565(m, line, batch[line & 7]);
-    if ((line & 7u) == 7u) m0_lcd_wide_submit(batch, 8);
+    uint16_t (*r)[320] = ring[(line >> 3) & (RING_BATCHES - 1u)];
+    if ((line & 7u) == 0u && !AKA_EMU_SYNC) m0_lcd_wide_reserve();
+    md_full_render_line565(m, line, r[line & 7]);
+    if ((line & 7u) == 7u) {
+#if AKA_EMU_SYNC
+        /* every row finds its own window on the sync path: send the
+         * finished block instead of queueing it */
+        m0_lcd_send_wide(r, MD_PANEL_ROW0 + (line & ~7u), 8);
+#else
+        m0_lcd_wide_submit(r, 8);
+#endif
+    }
 }
 #endif
 
@@ -139,7 +157,7 @@ extern "C" int m0boy_console_main(void) {
     uint32_t deadline = m0_micros();
     for (;;) {
         machine.screen = NULL;
-#if !MD_RENDER_THREAD
+#if !MD_RENDER_THREAD && !AKA_EMU_SYNC
         m0_lcd_wide_begin(MD_PANEL_ROW0, MD_ROWS);
 #endif
         md_full_frame(&machine, 1);   /* native regions, interpreter fallback */

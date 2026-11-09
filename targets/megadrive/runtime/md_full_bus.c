@@ -39,12 +39,19 @@ static uint8_t pad_read(MdFull *m) {
     if (!(p & 1)) v |= 1;
     if (!(p & 2)) v |= 2;
     if (m->pad_th) {
-        if (!(p & 4)) v |= 4;
-        if (!(p & 8)) v |= 8;
+        if (m->pad_ext & 0x80u && m->pad_cnt == 3u) {
+            /* sixth-button phase: Z Y X Mode in bits 0-3, B C in bits 4-5 */
+            v &= (uint8_t)~3u;
+            for (unsigned i = 0; i < 4; ++i) if (!(m->pad_ext & (1u << i))) v |= (uint8_t)(1u << i);
+        } else {
+            if (!(p & 4)) v |= 4;
+            if (!(p & 8)) v |= 8;
+        }
         if (!(p & 32)) v |= 16;
         if (!(p & 64)) v |= 32;
         v |= 64;
     } else {
+        if (m->pad_ext & 0x80u && m->pad_cnt == 3u) v &= (uint8_t)~3u;   /* identification: bits 0-3 low */
         if (!(p & 16)) v |= 16;
         if (!(p & 128)) v |= 32;
     }
@@ -202,7 +209,11 @@ void md_full_write8(MdFull *m, uint32_t addr, uint8_t v) {
     }
     if (addr >= 0xa00000u && addr < 0xa10000u) { md_full_sound_write(m, addr & 0xffffu, v); return; }
     if (addr >= 0xa10000u && addr <= 0xa1001fu) {
-        if ((addr & 0x1eu) == 2u) m->pad_th = v & 0x40u;
+        if ((addr & 0x1eu) == 2u) {
+            const uint8_t th = v & 0x40u;
+            if (th && !m->pad_th) m->pad_cnt = (uint8_t)((m->pad_cnt + 1u) & 3u);   /* TH rising edge */
+            m->pad_th = th;
+        }
         else if ((addr & 0x1eu) == 8u) m->pad_control = v;
         return;
     }

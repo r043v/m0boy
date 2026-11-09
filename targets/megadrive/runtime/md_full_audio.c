@@ -78,12 +78,15 @@ static void audio_emit(MdFull *m, int left, int right) {
  * position is tracked in audio_next, so a sample emits without any
  * division or 64-bit product — the FM step adds a constant span. */
 static void audio_run(MdFull *m, uint64_t until) {
+    if (m->no_audio) return;
     while (m->audio_time + FM_MASTER <= until) {
         int fm[2];
+        MD_PERF_ADD(m, p_ym);
         md_ym_sample(&m->ym, &fm[0], &fm[1]);
         int psg = 0, ticks = 0;
         for (m->psg_rest += FM_MASTER; m->psg_rest >= PSG_MASTER; m->psg_rest -= PSG_MASTER, ++ticks) {
             psg_tick(&m->psg);
+            MD_PERF_ADD(m, p_psg);
             psg += psg_output(&m->psg);
         }
         if (ticks) psg /= ticks;
@@ -106,6 +109,7 @@ static uint64_t z80_time(const MdFull *m) { return m->sound_cpu.cycles * 15u; }
 
 static void z80_run(MdFull *m, uint64_t until) {
     z80_t *z = &m->sound_cpu;
+    if (m->no_z80) return;
     const uint64_t target = until / 15u;
     if (!m->z80_reset || m->z80_bus || z->fault) {
         if (z->cycles < target) z->cycles = target;
@@ -118,6 +122,7 @@ static void z80_run(MdFull *m, uint64_t until) {
     while (z->cycles < target && !z->fault) {
         z->irq = at >= VINT_MASTER && at < VINT_MASTER + VINT_LENGTH;
         at += z80_step(z) * 15u;
+        MD_PERF_ADD(m, p_z80);
         if (at >= FRAME_MASTER) at -= FRAME_MASTER;
     }
     z->irq = 0;

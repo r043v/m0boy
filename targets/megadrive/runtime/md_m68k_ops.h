@@ -7,6 +7,14 @@
 #define M0BOY_MD_M68K_OPS_H
 #include "md_full.h"
 #include "md_m68k_time.h"
+#if defined(MD_PERF)
+/* one counting of the emitted code per executed instruction (the
+ * interpreter's md_full_execute already does m->instructions++): the
+ * bench decompositions read instructions per frame on both paths */
+#define MDSW(m) (++(m)->instructions)
+#else
+#define MDSW(m) ((void)0)
+#endif
 #ifdef MD_TRACE
 #include "md_trace.h"
 #define MD_T_RD(m, a, sz) do { if (md_trace.rd && !md_trace.quiet) md_trace.rd(md_trace.user, (m), (a), (sz)); } while (0)

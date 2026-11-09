@@ -157,9 +157,14 @@ void generate_full_native(const std::vector<uint8_t> &rom, const GenerateOptions
               "#pragma once\n#define MD_ROM_SIZE " + std::to_string(rom.size()) + "u\n"
               "#define MD_ROWS 224u\n#define MD_PANEL_ROW0 8u\n"
               /* AKA only: the tile-run kernel is Xtensa there (md_video_asm.S,
-               * copied below), and the second core renders one batch behind. */
+               * copied below), and the second core renders one batch behind.
+               * Both keep #ifndef so a bench build can override them: a headless
+               * run then needs -DMD_RENDER_THREAD=0 -DAKA_EMU_SYNC=1 (the
+               * emulator never fires the transfers' done interrupt, see
+               * docs/AKA_EMU_PROBLEMES.fr.md). */
               + std::string(o.target == TargetId::aka ?
-                    "#define MD_VIDEO_ASM 1\n#define MD_RENDER_THREAD 1\n" : ""));
+                    "#ifndef MD_VIDEO_ASM\n#define MD_VIDEO_ASM 1\n#endif\n"
+                    "#ifndef MD_RENDER_THREAD\n#define MD_RENDER_THREAD 1\n#endif\n" : ""));
         fs::create_directories(o.output / "boards");
         copy_template(platform / "boards" / "gamebuino_aka.json", o.output / "boards" / "gamebuino_aka.json");
         std::error_code list_error;

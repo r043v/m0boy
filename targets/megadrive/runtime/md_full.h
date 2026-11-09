@@ -24,6 +24,10 @@ typedef struct MdFull {
     uint32_t vdp_addr, vdp_first;
     uint8_t vdp_code, vdp_pending, dma_fill;
     uint8_t pad, pad_th, pad_control, z80_bus, z80_reset;
+    /* Six-button pad: pad_ext bit 7 = a six-button pad is plugged in, bits 0-3 = Z,Y,X,Mode
+     * (1 = pressed); pad_cnt counts TH rising edges (0-3).  pad_ext == 0 keeps the
+     * three-button behaviour exactly. */
+    uint8_t pad_ext, pad_cnt;
     /* Cartridge SRAM ($200000-$20FFFF), enabled by a write to $A130F1;
      * bit 1 of that write protects it.  Volatile across a reset;
      * sram_dirty: written since the frontend last stored it. */
@@ -57,6 +61,17 @@ typedef struct MdFull {
     uint32_t cycles, frame_cycles, frames, instructions;
     uint32_t native_hits, fallback_hits;
     uint32_t fault_pc;
+    /* Bench-only counters of an MD_PERF build (never hashed; bench variants
+     * are the only consumers): Z80 instructions stepped, FM chip samples,
+     * PSG ticks, tile-run spans, sprite-table entries examined, sprite
+     * pixels written.  The runs' ratio, host instructions per unit, feed
+     * the split estimates in docs/MEGADRIVE.fr.md; nothing else reads them.
+     * no_* short-circuits of the bench itself (MDPERF_NOAUDIO/NOZ80 envs,
+     * cost models only): the audio chip or the Z80 catch-up gets skipped. */
+#if defined(MD_PERF)
+    uint32_t p_z80, p_ym, p_psg, p_span, p_sat, p_sprite_px;
+    uint8_t no_audio, no_z80;
+#endif
     /* distinct PCs the interpreter started, the explorer's novelty
      * (m0_explore.h); moves with the coverage bitmap, host only */
     uint32_t coverage_locations;
@@ -109,5 +124,11 @@ void md_full_sound_control(MdFull *m, unsigned reset_line, uint8_t value);
 void md_full_sound_frame(MdFull *m);
 /* Moves up to max stereo frames (44.1 kHz, L then R) into samples. */
 unsigned md_full_audio_read(MdFull *m, int16_t *samples, unsigned max);
+/* Bench counters (MD_PERF builds only). */
+#if defined(MD_PERF)
+#define MD_PERF_ADD(m, n) (++((MdFull *)(m))->n)
+#else
+#define MD_PERF_ADD(m, n) ((void)0)
+#endif
 uint32_t md_full_hash(const MdFull *m);
 #endif

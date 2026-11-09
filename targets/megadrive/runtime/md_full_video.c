@@ -36,6 +36,7 @@ static void sprite_line(const MdFull *m, const uint16_t *reg, unsigned y, unsign
     unsigned link = 0, found = 0, pixels = 0;
     int masked = 0, shown = 0;
     for (unsigned i = 0; i < max_sprites; ++i) {
+        MD_PERF_ADD(m, p_sat);
         const unsigned a = base + link * 8u;
         const unsigned sy = vram_word(m, a) & 0x1ffu, shape = vram_word(m, a + 2u);
         const unsigned tile = vram_word(m, a + 4u), sx = vram_word(m, a + 6u) & 0x1ffu;
@@ -53,7 +54,7 @@ static void sprite_line(const MdFull *m, const uint16_t *reg, unsigned y, unsign
                 const unsigned row = tile & 0x1000u ? h - 1u - (unsigned)dy : (unsigned)dy;
                 const unsigned pattern = (tile & 0x7ffu) + (col >> 3) * (h >> 3) + (row >> 3);
                 const unsigned nibble = pattern_pixel(m, pattern, col & 7u, row & 7u);
-                if (nibble) { idx[x] = (uint8_t)(((tile >> 9) & 0x30u) | nibble); pri[x] = !!(tile & 0x8000u); }
+                if (nibble) { idx[x] = (uint8_t)(((tile >> 9) & 0x30u) | nibble); pri[x] = !!(tile & 0x8000u); MD_PERF_ADD(m, p_sprite_px); }
             }
             if (masked || pixels > width) break;
         }
@@ -69,6 +70,7 @@ static void sprite_line(const MdFull *m, const uint16_t *reg, unsigned y, unsign
  * split by the callers so the columns never wrap inside the tile. */
 static void span_pixels_c(const MdFull *m, unsigned entry, unsigned row,
                           unsigned col0, int dir, unsigned n, uint8_t *dst, uint8_t *pri) {
+    MD_PERF_ADD(m, p_span);
     const uint8_t *p = m->vram + (((entry & 0x7ffu) << 5) | (row << 2));
     const unsigned pal = (entry >> 9) & 0x30u;
     const uint8_t pr = (uint8_t)(entry >> 15);
@@ -86,6 +88,7 @@ static void span_pixels_c(const MdFull *m, unsigned entry, unsigned row,
  * runs that stay inside the tile) */
 static void span_pixels(const MdFull *m, unsigned entry, unsigned row,
                         unsigned col0, int dir, unsigned n, uint8_t *dst, uint8_t *pri) {
+    MD_PERF_ADD(m, p_span);
     md_span_run(dst, pri, m->vram + (((entry & 0x7ffu) << 5) | (row << 2)),
                 (entry >> 9) & 0x30u,
                 (col0 & 7u) | (unsigned)(dir < 0) << 4 | (entry >> 10 & 0x20u) | n << 8);

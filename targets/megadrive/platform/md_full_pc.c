@@ -99,6 +99,13 @@ static int save_coverage(const char *path, const MdFull *m) {
  * travelling with it. */
 static m0xh_t xh;
 static MdFull *g_machine;
+#if defined(MD_PERF)
+/* marks an MD_PERF build: each md_full_frame timed, every frame
+ * rendered instead of only the last one; is enabled by the MDPERF_RENDER
+ * environment variable */
+static int bench_render;
+static double bench_total, bench_max;
+#endif
 static void snapshot_save(void *ctx, void *state) {
     (void)ctx;
     memcpy(state, g_machine, sizeof *g_machine);
@@ -154,6 +161,9 @@ int main(int argc, char **argv) {
     }
     Event *events = NULL;
     size_t event_count = 0, event_at = 0;
+#if defined(MD_PERF)
+    bench_render = getenv("MDPERF_RENDER") ? 1 : 0;
+#endif
     if (script && !read_events(script, &events, &event_count)) {
         fprintf(stderr, "invalid input script\n"); free(events); return 2;
     }
@@ -246,9 +256,22 @@ int main(int argc, char **argv) {
         /* The VDP draws into pixels line by line; without a window only
          * the last frame is needed. */
         m->screen = !limit || m->frames + 1u >= limit ? pixels : NULL;
+#if defined(MD_PERF)
+        if (bench_render) m->screen = pixels;   /* bench what dry-run never pays */
+#endif
         /* --coverage runs the interpreter: it holds the profile's
          * counter (native and interpreter agree on every hash) */
+#if defined(MD_PERF)
+        {
+            const uint64_t t0 = SDL_GetPerformanceCounter();
+            md_full_frame(m, !interp && !coverage);
+            const double ms = 1000.0 * (double)(SDL_GetPerformanceCounter() - t0) / SDL_GetPerformanceFrequency();
+            bench_total += ms;
+            if (ms > bench_max) bench_max = ms;
+        }
+#else
         md_full_frame(m, !interp && !coverage);
+#endif
         /* the battery back every two seconds of play, and once at the end */
         if (m->sram_dirty && m->frames - sram_flushed >= 120u) {
             if (save_sram(save_name, m)) m->sram_dirty = 0;
@@ -282,6 +305,16 @@ int main(int argc, char **argv) {
         m->frames, m->pc, m->fault, m->fault_pc, m->last_opcode,
         m->native_hits, m->fallback_hits, md_full_hash(m), image_hash(pixels), m->audio_hash,
         m->sram_dirty);
+#if defined(MD_PERF)
+    {
+        const double n = m->frames ? (double)m->frames : 1.0;
+        printf("bench_ms_avg=%.3f bench_ms_max=%.3f bench_render=%d p_z80=%.1f p_ym=%.1f p_psg=%.1f p_span=%.1f p_sat=%.1f p_sprite_px=%.1f instructions=%.1f\n",
+            bench_total / n, bench_max, bench_render,
+            (double)m->p_z80 / n, (double)m->p_ym / n, (double)m->p_psg / n,
+            (double)m->p_span / n, (double)m->p_sat / n, (double)m->p_sprite_px / n,
+            (double)m->instructions / n);
+    }
+#endif
     if (audio_device) SDL_CloseAudioDevice(audio_device);
     pc_frontend_close(&pc);
     if (!limit) SDL_Quit();
