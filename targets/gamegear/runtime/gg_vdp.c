@@ -682,6 +682,11 @@ static void vdp_line(unsigned y) {
     if (y < GG_WIN_TOP || y >= GG_WIN_TOP + GG_WIN_LINES || !m->row || !m->row_out) return;
     const int draw = m->draw_line ? m->draw_line(m->platform, y) : 1;
     if (!draw) return;
+#if GG_OUT_WIDTH != GG_WIDTH /* native panel: the whole line through the
+                              * indices renderer, no box filter, no window
+                              * crop (the display callback gets 256 columns) */
+    gg_render_line(y, m->row_out);
+#else
     if (legacy) {
         if (draw == 2 && m->row_tmp) {
             tms_render(y, m->row_tmp, tms, n);
@@ -691,6 +696,7 @@ static void vdp_line(unsigned y) {
         render(y, m->row_tmp, spr, n);
         average_rows(m->row_out, m->row_tmp);
     } else render(y, m->row_out, spr, n);
+#endif
     if (draw != 3) m->row(m->platform, y, m->row_out);
 }
 
