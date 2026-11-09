@@ -352,7 +352,15 @@ uint8_t gg_in(uint8_t port) {
     }
     case 0x80: return gg_vdp_data_read();
     case 0x81: return gg_vdp_status_read();
-    case 0xc0: return (uint8_t)~(m->buttons & 63);
+    case 0xc0:
+        if (GG_IS_SMS) { /* port DC: the pad is behind the TH mux — TH low shows only
+                          * up/down on D0-D1 and left/right on D4-D5, never the triggers */
+            const unsigned c = m->io_ctl, tha = (c & 2) ? 1 : (c >> 5) & 1;
+            const unsigned pad = m->buttons & 63;
+            if (tha) return (uint8_t)~pad;
+            return (uint8_t)~((pad & 3) | ((pad >> 2) & 0x30) | 0x0c);
+        }
+        return (uint8_t)~(m->buttons & 63);
     case 0xc1:
         if (GG_IS_SMS) { /* RESET up, TH A/B: outputs read back their level */
             const unsigned c = m->io_ctl, tha = (c & 2) ? 1 : (c >> 5) & 1, thb = (c & 8) ? 1 : (c >> 7) & 1;
@@ -498,7 +506,9 @@ void gg_reset(void) {
     schedule();
 }
 
-/* Master System: PAUSE pressed raises the NMI */
+/* Master System: PAUSE pressed raises the NMI (immediately: byte-identical
+ * replay to the reference core, which asserts it at the frame end — the
+ * games' pause handlers are frame-aligned, Alex Kidd/Sonic replayed identically) */
 void gg_buttons(uint8_t pressed) {
     gg_t *m = &machine;
     if (GG_IS_SMS && (pressed & GG_PAUSE) && !(m->buttons & GG_PAUSE)) { m->cpu.nmi = 1; m->next_evt = m->cyc; }
