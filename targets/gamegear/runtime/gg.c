@@ -1,4 +1,6 @@
 #include "gg.h"
+#include <stdio.h>
+#include <stdlib.h>
 #ifdef GG_ROM_TRACE /* host analysis: ROM bytes read as data, interpreted instruction bytes, cartridge RAM */
 void gg_rom_trace(uint32_t offset);
 void gg_rom_trace_fetch(uint32_t offset);
@@ -62,7 +64,14 @@ uintptr_t sg_stack_limit;
 
 static uint8_t bus_read(void *u, uint16_t a) { (void)u; return gg_fetch(a); }
 static void bus_write(void *u, uint16_t a, uint8_t v) { (void)u; gg_write(a, v); }
-static uint8_t bus_in(void *u, uint16_t p) { (void)u; return gg_in((uint8_t)p); }
+static uint8_t bus_in(void *u, uint16_t p) {
+    (void)u;
+    static int btrace = -1;
+    if (btrace < 0) btrace = getenv("GG_IN_TRACE") ? 1 : 0;
+    if (btrace && (p & 0xc0) == 0xc0)
+        fprintf(stderr, "bus_in %04x buttons=%02x ctl=%02x pc=%04x\n", p, machine.buttons, machine.io_ctl, machine.cpu.pc);
+    return gg_in((uint8_t)p);
+}
 static void bus_out(void *u, uint16_t p, uint8_t v) { (void)u; gg_out((uint8_t)p, v); }
 
 static void map_slot(unsigned s, uint8_t value) {
@@ -338,6 +347,11 @@ void gg_write_cart(uint16_t a, uint8_t v) {
 
 uint8_t gg_in(uint8_t port) {
     gg_t *m = &machine;
+    static int in_trace = -1;
+    if (in_trace < 0) in_trace = getenv("GG_IN_TRACE") ? 1 : 0;
+    if (in_trace && (port & 0xc0) == 0xc0)   /* pad / vcounter / hcounter reads */
+        fprintf(stderr, "gg_in %02x -> %02x (buttons=%02x ctl=%02x) pc=%04x cyc=%u\n",
+                port, 0, m->buttons, m->io_ctl, m->cpu.pc, m->cyc);
     if (port <= 6 && !GG_IS_SMS) { /* Game Gear registers: START, region, link port, stereo */
         if (!port) return (uint8_t)((m->buttons & GG_START ? 0 : 0x80) | 0x40); /* export, NTSC */
         if (port == 4) return 0xff;              /* serial receive: nothing */
@@ -511,7 +525,19 @@ void gg_reset(void) {
  * games' pause handlers are frame-aligned, Alex Kidd/Sonic replayed identically) */
 void gg_buttons(uint8_t pressed) {
     gg_t *m = &machine;
-    if (GG_IS_SMS && (pressed & GG_PAUSE) && !(m->buttons & GG_PAUSE)) { m->cpu.nmi = 1; m->next_evt = m->cyc; }
+    static int trace = -1;
+    if (trace < 0) trace = getenv("GG_BTN_TRACE") ? 1 : 0;
+    if (trace && pressed != m->buttons) {
+        static const char *const names[7] = { "U", "D", "L", "R", "B1", "B2", "START" };
+        char s[64] = "";
+        for (int b = 0; b < 7; b++)
+            if (pressed & (1u << b)) { strncat(s, " ", sizeof s - strlen(s) - 1); strncat(s, names[b], sizeof s - strlen(s) - 1); }
+        fprintf(stderr, "gg_buttons: %02x%s\n", pressed, s);
+    }
+    if (GG_IS_SMS && (pressed & GG_PAUSE) && !(m->buttons & GG_PAUSE)) {
+        if (trace) fprintf(stderr, "gg_buttons: PAUSE NMI raised\n");
+        m->cpu.nmi = 1; m->next_evt = m->cyc;
+    }
     m->buttons = pressed;
 }
 
@@ -546,11 +572,14 @@ void sg_sync(void) {
 }
 
 /* Take an NMI or an acceptable IRQ: push pc, jump to the vector. */
+static int nmi_trace = -1;
 static int irq_enter(void) {
     gg_t *m = &machine;
+    if (nmi_trace < 0) nmi_trace = getenv("GG_BTN_TRACE") ? 1 : 0;
     z80_t *c = &m->cpu;
     unsigned cycles;
     if (c->nmi) {
+        if (nmi_trace) fprintf(stderr, "nmi taken at pc=%04x (frame %u)\n", c->pc, m->frames);
         c->nmi = 0;
         c->iff2 = c->iff1; c->iff1 = 0;
         z80_push(c, c->pc);
