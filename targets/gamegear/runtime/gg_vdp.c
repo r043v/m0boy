@@ -765,19 +765,22 @@ uint8_t gg_vcounter(void) {
     return (uint8_t)(line <= 0xda ? line : line - 6);
 }
 
-/* GG_VBL_READ_EARLY=k: the vblank flag is visible to a status read issued at
- * cycle m->cyc when the flag's raise cycle (frame_start + GG_VBLANK_CYCLES)
- * falls at or before cyc + k — BizHawk raises the flag between micro-steps,
- * so an IN $BF whose read T-state (k = 4 of 11) lands past the raise sees it
- * even though the instruction started before it; m0boy's event model only
- * raises at instruction boundaries, one poll iteration later */
+/* An IN samples the bus in its last T-state: a status read issued by an
+ * instruction that starts at m->cyc sees the vblank flag when the flag's
+ * raise cycle (frame_start + GG_VBLANK_CYCLES) falls at or before that
+ * T-state, GG_STATUS_READ_T cycles in (IN A,(n): the 11th T-state) — the
+ * event model alone only raises it at instruction boundaries, one poll
+ * iteration late.  GG_VBL_READ_EARLY=k overrides the offset (bench sweeps). */
+#ifndef GG_STATUS_READ_T
+#define GG_STATUS_READ_T 10
+#endif
 static int vbl_read_early = -1;
 
 uint8_t gg_vdp_status_read(void) {
     gg_t *m = &machine;
     if (vbl_read_early < 0) {
         const char *e = getenv("GG_VBL_READ_EARLY");
-        vbl_read_early = e ? atoi(e) : 0;
+        vbl_read_early = e ? atoi(e) : GG_STATUS_READ_T;
     }
     m->vdp_pending = 0;
     gg_vdp_catchup();
