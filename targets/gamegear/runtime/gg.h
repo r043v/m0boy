@@ -254,10 +254,12 @@ extern gg_t machine;
 extern uintptr_t sg_stack_limit;
 
 void gg_init(const uint8_t *rom, size_t size, uint8_t *cart_ram);
+/* bench watch: log every work-RAM write to GG_WATCH_ADDR (hex) with pc/cycle/
+ * frame — gg_write sees every store (the interp's z80_wr lands here) */
+extern int gg_watch_addr;
+void gg_watch_dump(unsigned a, uint8_t v, unsigned pc, uint32_t cyc, unsigned fr);
 /* The slots' pointers again from the pages (a save state's load). */
 void gg_remap(void);
-/* bench watch: log every write to this work-RAM address (GG_WATCH_ADDR=hex, -1 off) */
-extern int gg_watch_addr;
 /* The save state's stream: the machine as raw bytes, then the cartridge RAM
  * when the game has some (m0_state.cpp's io walker). */
 uint32_t gg_state_bytes(void);
@@ -343,10 +345,8 @@ static inline uint8_t gg_read(uint16_t a) {
 void gg_write_cart(uint16_t a, uint8_t v);
 static inline void gg_write(uint16_t a, uint8_t v) {
     if (a >= 0xc000) {
-        if (gg_watch_addr >= 0 && (a & 8191) == (unsigned)gg_watch_addr) {
-            extern int gg_watch_dump(unsigned, uint8_t, unsigned, uint32_t, unsigned);
+        if (gg_watch_addr >= 0 && (a & 8191) == (unsigned)gg_watch_addr)
             gg_watch_dump(a, v, machine.cpu.pc, machine.cyc, machine.frames);
-        }
         machine.ram[a & 8191] = v;
         if (GG_KOREAN150 ? a == 0xfff3 || a == 0xfffc : a >= 0xfffc && !GG_CODEMASTERS) gg_mapper_write(a, v);
     } else if (GG_CODEMASTERS && !(a & 0x3fff)) gg_mapper_write(a, v);

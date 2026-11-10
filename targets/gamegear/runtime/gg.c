@@ -51,15 +51,12 @@ static inline void gg_native_write(z80_t *c, uint16_t a, uint8_t v) { (void)c; g
 
 gg_t machine;
 
-/* bench watch: log every write to this work-RAM address (GG_WATCH_ADDR=hex) */
+/* bench watch: log every work-RAM write to GG_WATCH_ADDR (hex) */
 int gg_watch_addr = -1;
-static void gg_watch_addr_init(void) {
-    const char *w = getenv("GG_WATCH_ADDR");
-    if (w) { gg_watch_addr = (int)strtoul(w, 0, 16); fprintf(stderr, "watch enabled: %04x\n", gg_watch_addr); }
+void gg_watch_dump(unsigned a, uint8_t v, unsigned pc, uint32_t cyc, unsigned fr) {
+    fprintf(stderr, "watch %04x <- %02x pc=%04x cyc=%u fr=%u\n", a, v, pc, cyc, fr);
 }
-int gg_watch_dump(unsigned a, uint8_t v, unsigned pc, uint32_t cyc, unsigned fr) {
-    return fprintf(stderr, "watch %04x <- %02x pc=%04x cyc=%u fr=%u\n", a, v, pc, cyc, fr);
-}
+
 
 /* Read by gm0 --record-input, which finds it by its tag in the firmware:
  * the frame counter and the buttons the game receives, so that a session
@@ -358,7 +355,11 @@ void gg_write_cart(uint16_t a, uint8_t v) {
 uint8_t gg_in(uint8_t port) {
     gg_t *m = &machine;
     static int in_trace = -1;
-    if (in_trace < 0) { in_trace = getenv("GG_IN_TRACE") ? 1 : 0; gg_watch_addr_init(); }
+    if (in_trace < 0) {
+        in_trace = getenv("GG_IN_TRACE") ? 1 : 0;
+        const char *w = getenv("GG_WATCH_ADDR");
+        if (w) { gg_watch_addr = (int)strtoul(w, 0, 16); fprintf(stderr, "watch enabled: %04x\n", gg_watch_addr); }
+    }
     if (in_trace && ((port & 0xc0) == 0xc0 || port == 0xbf || (port & 0xfe) == 0x7e)) {
         /* pad / vcounter / hcounter / VDP status reads; vcounter/hcounter print their value */
         const uint8_t pv = (port & 0xfe) == 0x7e ? gg_in(port & 0xc1) : (port == 0xbf ? m->vdp_status : 0);
