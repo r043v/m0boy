@@ -647,7 +647,9 @@ void sg_halt(void) {
         if (m->stop || c->nmi || (c->irq && c->iff1 && !c->ei_delay)) return;
         uint32_t ticks = (m->next_evt - m->cyc + 3) / 4;
         m->cyc += ticks * 4;
-        c->r = (uint8_t)((c->r & 128) | ((c->r + ticks) & 127));
+        /* no R increments while halted: the real Z80 only counts opcode fetches
+         * (the halt state performs none) — this R drift showed up the moment
+         * Castle's RNG first mixed LD A,R into the scene transition at f3921 */
     }
 }
 

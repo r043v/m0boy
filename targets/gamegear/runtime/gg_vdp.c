@@ -6,6 +6,8 @@
  * four loads, three shifts and three ORs, then each pixel is a field
  * extraction and a palette read (CRAM kept as panel RGB565). */
 #include "gg.h"
+#include <stdio.h>
+#include <stdlib.h>
 #include "gg_tables.h"
 #include <string.h>
 
@@ -763,11 +765,27 @@ uint8_t gg_vcounter(void) {
     return (uint8_t)(line <= 0xda ? line : line - 6);
 }
 
+/* GG_VBL_READ_EARLY=k: the vblank flag is visible to a status read issued at
+ * cycle m->cyc when the flag's raise cycle (frame_start + GG_VBLANK_CYCLES)
+ * falls at or before cyc + k — BizHawk raises the flag between micro-steps,
+ * so an IN $BF whose read T-state (k = 4 of 11) lands past the raise sees it
+ * even though the instruction started before it; m0boy's event model only
+ * raises at instruction boundaries, one poll iteration later */
+static int vbl_read_early = -1;
+
 uint8_t gg_vdp_status_read(void) {
     gg_t *m = &machine;
+    if (vbl_read_early < 0) {
+        const char *e = getenv("GG_VBL_READ_EARLY");
+        vbl_read_early = e ? atoi(e) : 0;
+    }
     m->vdp_pending = 0;
     gg_vdp_catchup();
     gg_line_counter_catchup();
+    if (vbl_read_early && !m->vblank_done) {
+        const uint32_t vb = m->frame_start + GG_VBLANK_CYCLES;
+        if ((int32_t)(m->cyc + vbl_read_early - vb) >= 0) m->vdp_status |= 128;
+    }
     const uint8_t v = (uint8_t)(m->vdp_status | 31);
     m->vdp_status = 0;
     m->line_irq = 0;
