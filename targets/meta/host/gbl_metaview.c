@@ -53,18 +53,18 @@ int gbl_platform_rom_read(uint32_t sector, uint8_t *dst) {
 }
 #endif
 
-#if GBL_ERAM_SIZE > 0
+#if GBL_SAVE_BYTES > 0
 /* In memory, a fresh card's .SAV (0xFF) at the start, as gbl_host.c. */
-static uint8_t save_mem[(GBL_ERAM_SIZE + 511) / 512 * 512];
-static uint8_t save_valid[(GBL_ERAM_SIZE + 511) / 512];
+static uint8_t save_mem[GBL_SAVE_BYTES];
+static uint8_t save_valid[(GBL_SAVE_BYTES + 511) / 512];
 int gbl_platform_save_read(uint32_t sector, uint8_t *dst) {
-    if (sector * 512u >= GBL_ERAM_SIZE) return 0;
+    if (sector * 512u >= GBL_SAVE_BYTES) return 0;
     if (save_valid[sector]) memcpy(dst, save_mem + sector * 512u, 512);
     else memset(dst, 0xFF, 512);
     return 1;
 }
 int gbl_platform_save_write(uint32_t sector, const uint8_t *src) {
-    if (sector * 512u >= GBL_ERAM_SIZE) return 0;
+    if (sector * 512u >= GBL_SAVE_BYTES) return 0;
     memcpy(save_mem + sector * 512u, src, 512);
     save_valid[sector] = 1;
     return 1;

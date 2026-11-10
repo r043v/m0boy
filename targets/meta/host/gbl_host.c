@@ -351,7 +351,7 @@ static void trace_report(void) {
 }
 #endif
 
-#if GBL_ERAM_SIZE > 0
+#if GBL_SAVE_BYTES > 0
 /* Cartridge RAM file (--save FILE), or kept in memory for the run.  What
  * was never written reads as the .SAV compile.sh puts on the card (0xFF),
  * a missing file too: a failed read would also fail the write-back of a
@@ -359,12 +359,12 @@ static void trace_report(void) {
  * writes would be lost, and profiles recorded on another path than the
  * console's (Super Mario Land 2's demo: a quarter of the code it runs). */
 static const char *save_path;
-static uint8_t save_mem[GBL_ERAM_SIZE];
-static uint8_t save_mem_valid[(GBL_ERAM_SIZE + 511) / 512];
+static uint8_t save_mem[GBL_SAVE_BYTES];
+static uint8_t save_mem_valid[(GBL_SAVE_BYTES + 511) / 512];
 static uint32_t save_writes;
 
 int gbl_platform_save_read(uint32_t sector, uint8_t *dst) {
-    if (sector * 512u >= GBL_ERAM_SIZE) return 0;
+    if (sector * 512u >= GBL_SAVE_BYTES) return 0;
     if (save_path) {
         FILE *f = fopen(save_path, "rb");
         size_t n = f && !fseek(f, (long)sector * 512L, SEEK_SET) ? fread(dst, 1, 512, f) : 0;
@@ -381,7 +381,7 @@ int gbl_platform_save_read(uint32_t sector, uint8_t *dst) {
 }
 
 int gbl_platform_save_write(uint32_t sector, const uint8_t *src) {
-    if (sector * 512u >= GBL_ERAM_SIZE) return 0;
+    if (sector * 512u >= GBL_SAVE_BYTES) return 0;
     save_writes++;
     if (save_path) {
         FILE *f = fopen(save_path, "r+b");
@@ -434,7 +434,7 @@ static void finish(void) {
                 explorer.segments, explorer.pool_size, coverage_count);
     }
 #endif
-#if GBL_ERAM_SIZE > 0
+#if GBL_SAVE_BYTES > 0 || GBL_RTC
     gbl_save_flush(); /* like the META returning to the loader */
 #endif
     write_coverage();
@@ -449,7 +449,7 @@ static void finish(void) {
     for (uint32_t i = 0; i < wram_hash_bytes && i < 0x2000; i++) { wh ^= gbl_wram[i]; wh *= 1099511628211ull; }
     printf("wram_hash %016llx\n", (unsigned long long)wh);
     printf("state_hash %016llx\n", (unsigned long long)state_hash);
-#if GBL_ERAM_SIZE > 0
+#if GBL_SAVE_BYTES > 0
     printf("save sectors_written %u\n", save_writes);
 #endif
 #if GBL_ROM_STREAM

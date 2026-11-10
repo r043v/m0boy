@@ -23,7 +23,7 @@ extern "C" {
 
 uint32_t gbl_save_reads, gbl_save_writes, gbl_save_errors; /* sectors (meta-usb.py read) */
 
-#if GBL_ERAM_SIZE > 0 && (GBL_BATTERY || GBL_ERAM_ON_SD)
+#if GBL_SAVE_BYTES > 0 && (GBL_BATTERY || GBL_ERAM_ON_SD)
 
 #include "m0_card.h"
 
@@ -38,7 +38,7 @@ int gbl_save_init(int card_ok) {
     uint32_t size = 0;
     if (card_ok && m0_fat_find(m0_card_sector, gbl_save_scratch(), GBL_SAVE_NAME83, extents,
                                  MAX_EXTENTS, &n_extents, &size) == M0_FAT_OK &&
-        size >= GBL_ERAM_SIZE)
+        size >= GBL_SAVE_BYTES)
         have_file = 1;
     if (have_file) return META_SAVE_OK;
     return GBL_ERAM_ON_SD ? META_SAVE_MISSING : META_SAVE_NO_FILE;
@@ -95,7 +95,7 @@ int gbl_save_init(int card_ok) {
 
 void gbl_save_tick(void) {}
 
-#if GBL_ERAM_SIZE > 0
+#if GBL_SAVE_BYTES > 0
 /* Cartridge RAM without a battery: nothing to keep. */
 extern "C" int gbl_platform_save_read(uint32_t sector, uint8_t *dst) { (void)sector; (void)dst; return 0; }
 extern "C" int gbl_platform_save_write(uint32_t sector, const uint8_t *src) { (void)sector; (void)src; return 0; }

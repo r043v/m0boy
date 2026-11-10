@@ -2321,6 +2321,12 @@ std::string Generator::emit_config(std::string& error) const {
     const bool battery = cart == 0x03 || cart == 0x06 || cart == 0x09 || cart == 0x0D ||
                          cart == 0x0F || cart == 0x10 || cart == 0x13 || cart == 0x1B ||
                          cart == 0x1E || cart == 0xFF;
+    /* MBC3 timer carts keep their clock (GBL_RTC): the counter lives in the
+     * 512-byte sector after the cartridge RAM in the .SAV.  The ESPboy has
+     * no RTC. */
+    const bool rtc = mbc_has_rtc(h.mbc_type) && !opt_.espboy;
+    const bool save_file = (battery && eram) || eram > 2048 || rtc;
+    const uint32_t save_bytes = save_file ? uint32_t(eram) + (rtc ? 512u : 0u) : 0;
     unsigned banks = rom_.bank_count();
     const std::string sd = opt_.sd_name.empty() ? stream_name(opt_.name) : opt_.sd_name;
     std::ostringstream o;
@@ -2328,11 +2334,13 @@ std::string Generator::emit_config(std::string& error) const {
       << "#define GBL_MBC " << mbc << "\n"
       << "#define GBL_ROM_BANKS " << banks << "\n"
       << "#define GBL_ERAM_SIZE " << eram << "\n"
-      << (battery && eram ? "#define GBL_BATTERY 1\n" : "")
+      << (battery && eram || rtc ? "#define GBL_BATTERY 1\n" : "")
+      << (rtc ? "#define GBL_RTC 1\n" : "")
+      << "#define GBL_SAVE_BYTES " << save_bytes << "\n"
       /* The game's files on the card share the .BIN's 8.3 base; the
        * firmware looks for them in the folder of its own .BIN. */
       << (opt_.espboy ? std::string() : "#define GBL_SD_NAME \"" + sd + "\"\n#define GBL_BIN_NAME83 \"" + name83(sd, "BIN") + "\"\n")
-      << (eram && !opt_.espboy ? "#define GBL_SAVE_NAME \"" + sd + ".SAV\"\n#define GBL_SAVE_NAME83 \"" + name83(sd, "SAV") + "\"\n"
+      << (save_file && !opt_.espboy ? "#define GBL_SAVE_NAME \"" + sd + ".SAV\"\n#define GBL_SAVE_NAME83 \"" + name83(sd, "SAV") + "\"\n"
                : std::string())
       /* Save states: GBL_STATE_SLOTS slots of GBL_STATE_SLOT_SECTORS sectors
        * (a header, the machine within 18 KiB, the cartridge RAM) in a file
@@ -2342,7 +2350,7 @@ std::string Generator::emit_config(std::string& error) const {
       << (opt_.espboy ? espboy_state_config(eram, battery && eram)
                       : "#define GBL_STATE_NAME \"" + sd + ".STA\"\n#define GBL_STATE_NAME83 \"" + name83(sd, "STA") +
                             "\"\n#define GBL_STATE_SLOTS 10\n#define GBL_STATE_SLOT_SECTORS " +
-                            std::to_string(1 + (18432 + eram + 511) / 512) + "\n")
+                            std::to_string(1 + (18432 + eram + 511) / 512 + (rtc ? 1 : 0)) + "\n")
       << (stream_ ? "#define GBL_ROM_STREAM 1\n#define GBL_ROM_CHUNKS " +
                         std::to_string(chunk_weight_.size()) + "\n" +
                          (pack_ ? std::string("#define GBL_ROM_PACKED 1\n") : std::string()) +

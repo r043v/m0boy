@@ -799,3 +799,26 @@ passe, `2-causes` avance jusqu'au test #9 (`PUSH BC`), mais `5-timing_bug`,
 `6-timing_no_bug`, `7-timing_effect` et `8-instr_effect` ne passent pas : le
 décalage exact de la fenêtre et les accès de pile/LD A,(HL+) ne sont pas modélisés.
 Mooneye (90/22/3) et Blargg hors son sont inchangés.
+
+## MBC3 RTC (2026-11-11, harnais META)
+
+Mesure faite avec le harnais hôte des projets META (`tests/test_meta_rtc_e2e.py`
+pour l'e2e et les lectures d'écran ci-dessous via `--dump-frame`), sur deux
+cartouches synthétiques MBC3+TIMER (2 et 8 KiB de RAM). Ce sont des observations
+du harnais, pas des mesures de matériel ; les captures de référence viennent des
+fichiers fournis avec les ROMs (`*_dmg.png`, DMG réelle).
+
+- `tests/test_meta_rtc_e2e.py` : écriture des registres, latch, avance à raison
+  d'une seconde par 60 trames (horloge plateforme à 0 sur l'hôte), persistance
+  dans le secteur RTC du `.SAV` (magic `59`), `run_hash` identique interp /
+  precise / fast. Passe sur les deux tailles de RAM.
+- `rtc3test` (menu, verdict lu à l'écran) : **Basic tests** tout PASS (Tick
+  mesuré 1004.6 ms = 60 trames ; la DMG de référence mesure 1000.6 ms) ;
+  **Range tests** tout PASS (All bits clear/set, Valid bits, Invalid value tick,
+  Invalid rollovers, High minutes, High hours). **Sub-second writes** : aucune
+  ligne FAIL, mais les mesures valent nominal +4.6 ms (phase de tick quantifiée
+  aux frontières de trame) et `RTC off/400` mesure 920.8 ms — hors tolérance
+  1.5 ms de la suite : la phase sous la seconde n'est pas modélisée.
+- `mbc3-tester` (4 Mo MBC30) : grille finale identique à la capture DMG de
+  référence fournie avec la ROM — banques 0x00-0x7E passées, 0x7F et au-delà
+  échouent, comme sur un MBC3 DMG réel face à une cartouche MBC30.

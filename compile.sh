@@ -1586,10 +1586,11 @@ PY
   local save_name eram battery
   save_name=$(sed -n 's/^#define GBL_SAVE_NAME "\(.*\)"$/\1/p' "$out_dir/src/gbl_config.h")
   eram=$(sed -n 's/^#define GBL_ERAM_SIZE \([0-9]*\)$/\1/p' "$out_dir/src/gbl_config.h")
+  save_bytes=$(sed -n 's/^#define GBL_SAVE_BYTES \([0-9]*\)$/\1/p' "$out_dir/src/gbl_config.h")
   battery=$(grep -c '^#define GBL_BATTERY 1' "$out_dir/src/gbl_config.h")
   if [ "$TARGET" != espboy ] && [ -n "$save_name" ] && { [ "$battery" = "1" ] || [ "${eram:-0}" -gt 2048 ]; }; then
     if [ ! -f "$game_dir/$save_name" ]; then
-      head -c "$eram" /dev/zero | tr '\0' '\377' > "$game_dir/$save_name"
+      head -c "${save_bytes:-$eram}" /dev/zero | tr '\0' '\377' > "$game_dir/$save_name"
     fi
     echo "[i] Sauvegarde : $game_name/$save_name (déjà sur la carte : ne plus y toucher)"
   fi

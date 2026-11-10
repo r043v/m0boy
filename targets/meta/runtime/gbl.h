@@ -198,6 +198,10 @@ extern uint32_t gbl_stream_unpacked; /* ... decoded from compressed flash */
  * is no file (reads then give 0xFF, writes are dropped). */
 int gbl_platform_save_read(uint32_t sector, uint8_t *dst);
 int gbl_platform_save_write(uint32_t sector, const uint8_t *src);
+/* MBC3 RTC: seconds since the platform's epoch; 0 when the console has no
+ * clock (the counter then advances only while powered, 1 s per 60 frames).
+ * Weak default in gbl_core.c; a platform with a real clock overrides it. */
+uint32_t gbl_platform_rtc(void);
 #if defined(ESP8266) || defined(GBL_SAVE_IMAGE)
 /* The whole battery RAM as a new copy in flash (0 when it could not be written). */
 int gbl_platform_save_image(const uint8_t *eram, uint32_t bytes);

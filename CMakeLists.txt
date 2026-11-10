@@ -415,6 +415,12 @@ set(GBL_COMMON_DIR "${CMAKE_CURRENT_SOURCE_DIR}/targets/common")
                 --gbrecomp "$<TARGET_FILE:gbrecomp>")
     set_tests_properties(meta_target_end_to_end PROPERTIES TIMEOUT 600)
 
+    # MBC3 RTC: register semantics, machine-time advance and .SAV persistence.
+    add_test(NAME meta_rtc_e2e
+        COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_meta_rtc_e2e.py"
+                --gbrecomp "$<TARGET_FILE:gbrecomp>")
+    set_tests_properties(meta_rtc_e2e PROPERTIES TIMEOUT 600)
+
     # ESPboy: raw/partly packed flash images, precise runtime parity, no SD.
     add_test(NAME meta_espboy_target
         COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_espboy_target.py"

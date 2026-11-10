@@ -494,7 +494,11 @@ dernière seconde. Le firmware n'écrit rien sur le port USB.
 
 - Game Boy DMG uniquement. Les ROM réservées à la Game Boy Color sont
   refusées.
-- Cartouches acceptées : sans MBC, MBC1, MBC2, MBC3 (sans horloge) et MBC5.
+- Cartouches acceptées : sans MBC, MBC1, MBC2, MBC3 (avec ou sans horloge) et MBC5.
+  L'horloge du MBC3 (types 0F/10) tourne avec l'horloge de la plateforme quand
+  elle en a une, sinon une seconde par 60 trames ; elle est persistée dans le
+  .SAV (secteur dédié de 512 octets derrière la RAM). La phase sous la seconde
+  n'est pas modélisée (le tick tombe aux frontières de trame sur l'hôte).
 - La ROM est copiée dans la flash, ce qui laisse environ 210 Ko pour la ROM
   et le code compilé. Jusqu'à 128 Ko de ROM, ça passe. 256 Ko ne rentrent
   pas.

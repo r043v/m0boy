@@ -1557,10 +1557,13 @@ drift apart after that. The M0+ estimate was not measured on a device.
 ## Limitations
 
 - DMG only. CGB-only ROMs are rejected, and CGB features are not emulated.
-- Supported mappers: none, MBC1, MBC2, MBC3 (without RTC) and MBC5.
+- Supported mappers: none, MBC1, MBC2, MBC3 (with or without the RTC) and MBC5.
   Cartridge RAM lives in the META's 32 KiB, so large RAM carts may not fit.
   PlatformIO reports RAM use. Battery saves go to a `.SAV` file on the SD
-  card (see above).
+  card (see above). The MBC3 RTC (cartridge types 0F/10) runs on the platform
+  clock when the platform has one, otherwise one second per 60 frames; its
+  registers and day counter persist in a dedicated 512-byte sector of the
+  `.SAV`, behind the cartridge RAM. Sub-second phase is not modelled.
 - Timing model:
   - mode 3 always lasts 172 dots;
   - scanlines are rasterized all at once;

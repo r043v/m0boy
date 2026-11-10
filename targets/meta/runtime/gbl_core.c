@@ -338,6 +338,177 @@ static uint32_t eram_bank(void) {
 }
 #endif
 
+/* ---- MBC3 RTC ------------------------------------------------------------
+ * Cartridge types 0F/10: RAM bank number 08-0C selects the five registers
+ * instead of a RAM bank (00 arms the latch at 6000-7FFF, 01 snapshots).
+ * The registers are the state, exactly as the hardware holds them: a game
+ * may write out-of-range values (28:63:60) and they read back raw; each
+ * second rolls them by the hardware's rules (a register rolls at its time
+ * boundary — 59 s, 59 min, 23 h — or past its register limit — 63 s, 63 min,
+ * 31 h — and only the time boundary carries into the next register; the day
+ * counter is 9 bits, its wrap sets DH bit 7, sticky until written 0).
+ * Elapsed time comes from the platform clock (gbl_platform_rtc, seconds
+ * since an epoch of the platform's choosing); a platform without one
+ * returns 0 and the counter then advances only while powered, one second
+ * per 60 frames.  Bit 6 of DH pauses it.  The registers are saved as 6
+ * bytes at the start of the 512-byte sector that follows the cartridge RAM
+ * in the .SAV (the file is GBL_SAVE_BYTES long, 512 more than
+ * GBL_ERAM_SIZE when GBL_RTC); the ESPboy has no RTC. */
+#if GBL_RTC && GBL_MBC == 3 && !defined(ESP8266)
+uint32_t __attribute__((weak)) gbl_platform_rtc(void) { return 0; }
+extern uint32_t gbl_save_last_change; /* defined below, in both branches */
+
+static struct {
+    uint8_t S, M, H;      /* raw registers, as written */
+    uint32_t days;        /* absolute day counter (register view: days & 1FF) */
+    uint32_t carry_ref;   /* day count at the last carry clear/rewrite */
+    uint32_t frame_anchor, wall_anchor;
+    uint8_t armed, halted, carry;
+    uint8_t latched[5];   /* S M H DL DH, as the game latched them */
+    uint8_t dirty, pending;
+} rtc;
+
+#define RTC_SAVE_SECTOR (GBL_ERAM_SIZE / 512u)
+#define RTC_MAGIC 0x59u
+static uint8_t rtc_save_buf[512];
+
+static uint8_t rtc_sel(void) { return mbc.hi & 0x0F; }
+
+/* DH bit 7: day-counter carry, set when the 9-bit day counter wraps past
+   511; sticky until the game writes it back 0. */
+static int rtc_carry(void) {
+    return rtc.carry || rtc.days / 512u > rtc.carry_ref / 512u;
+}
+
+/* apply every second that elapsed since the last sync to the registers */
+static void rtc_sync(void) {
+    uint32_t wall = gbl_platform_rtc(), e;
+    if (wall) {
+        if (wall <= rtc.wall_anchor) return;
+        e = wall - rtc.wall_anchor;
+        rtc.wall_anchor += e;
+        rtc.frame_anchor += e * 60u;
+    } else {
+        int32_t f = (int32_t)(gbl_frame - rtc.frame_anchor) / 60;
+        if (f <= 0) return;
+        e = (uint32_t)f;
+        rtc.frame_anchor += e * 60u;
+    }
+    if (rtc.halted) return;
+    rtc.days += e / 86400u;
+    e %= 86400u;
+    if (rtc.S < 60u && rtc.M < 60u && rtc.H < 24u) {
+        /* valid registers: the arithmetic path equals the per-tick rules */
+        uint32_t tod = rtc.H * 3600u + rtc.M * 60u + rtc.S + e;
+        if (tod >= 86400u) { tod -= 86400u; rtc.days++; }
+        rtc.H = (uint8_t)(tod / 3600u);
+        rtc.M = (uint8_t)((tod / 60u) % 60u);
+        rtc.S = (uint8_t)(tod % 60u);
+        return;
+    }
+    /* out-of-range registers: per-tick rules until they land back in
+       range (a few ticks), then the arithmetic path takes the rest */
+    while (e && (rtc.S >= 60u || rtc.M >= 60u || rtc.H >= 24u)) {
+        rtc.S++;
+        if (rtc.S == 60u) { rtc.S = 0; rtc.M++; }
+        else if (rtc.S == 64u) { rtc.S = 0; e--; continue; }
+        else { e--; continue; }
+        if (rtc.M == 60u) { rtc.M = 0; rtc.H++; }
+        else if (rtc.M == 64u) { rtc.M = 0; e--; continue; }
+        else { e--; continue; }
+        if (rtc.H == 24u) { rtc.H = 0; rtc.days++; }
+        else if (rtc.H == 32u) { rtc.H = 0; }
+        e--;
+    }
+    if (e) {
+        uint32_t tod = rtc.H * 3600u + rtc.M * 60u + rtc.S + e;
+        if (tod >= 86400u) { tod -= 86400u; rtc.days++; }
+        rtc.H = (uint8_t)(tod / 3600u);
+        rtc.M = (uint8_t)((tod / 60u) % 60u);
+        rtc.S = (uint8_t)(tod % 60u);
+    }
+}
+
+static void rtc_latch(void) {
+    rtc_sync();
+    rtc.latched[0] = rtc.S;
+    rtc.latched[1] = rtc.M;
+    rtc.latched[2] = rtc.H;
+    rtc.latched[3] = (uint8_t)rtc.days;
+    rtc.latched[4] = (uint8_t)(((rtc.days >> 8) & 1u) | (rtc.halted ? 0x40u : 0u)
+                               | (rtc_carry() ? 0x80u : 0u));
+}
+
+static void rtc_mark(void) {
+    rtc.dirty = rtc.pending = 1;
+    gbl_save_last_change = gbl_frame;
+}
+
+static void rtc_reg_write(uint8_t k, uint8_t v) {
+    rtc_sync();
+    switch (k) {
+    case 0: rtc.S = (uint8_t)(v & 0x3Fu); break;
+    case 1: rtc.M = (uint8_t)(v & 0x3Fu); break;
+    case 2: rtc.H = (uint8_t)(v & 0x1Fu); break;
+    case 3:
+        rtc.days = (rtc.days & 0x100u) | v;
+        rtc.carry_ref = rtc.days; /* the counter restarts from the new value */
+        break;
+    case 4:
+        rtc.days = (rtc.days & 0xFFu) | ((uint32_t)(v & 1u) << 8);
+        rtc.halted = (uint8_t)(v & 0x40u ? 1 : 0);
+        if (v & 0x80u) rtc.carry = 1;
+        else { rtc.carry = 0; rtc.carry_ref = rtc.days; }
+        break;
+    }
+    rtc_mark();
+}
+
+static void rtc_save_build(void) {
+    rtc_sync();
+    memset(rtc_save_buf, 0xFF, sizeof rtc_save_buf);
+    rtc_save_buf[0] = rtc.S;
+    rtc_save_buf[1] = rtc.M;
+    rtc_save_buf[2] = rtc.H;
+    rtc_save_buf[3] = (uint8_t)rtc.days;
+    rtc_save_buf[4] = (uint8_t)(((rtc.days >> 8) & 1u) | (rtc.halted ? 0x40u : 0u)
+                                | (rtc_carry() ? 0x80u : 0u));
+    rtc_save_buf[5] = RTC_MAGIC;
+}
+
+static void rtc_save_load(void) {
+    memset(&rtc, 0, sizeof rtc);
+    memset(rtc_save_buf, 0xFF, sizeof rtc_save_buf);
+    if (gbl_platform_save_read(RTC_SAVE_SECTOR, rtc_save_buf) && rtc_save_buf[5] == RTC_MAGIC) {
+        rtc.S = rtc_save_buf[0];
+        rtc.M = rtc_save_buf[1];
+        rtc.H = rtc_save_buf[2];
+        rtc.days = (uint32_t)rtc_save_buf[3] | ((uint32_t)(rtc_save_buf[4] & 1u) << 8);
+        rtc.halted = (uint8_t)(rtc_save_buf[4] & 0x40u ? 1 : 0);
+        rtc.carry = (uint8_t)(rtc_save_buf[4] & 0x80u ? 1 : 0);
+    }
+    rtc.carry_ref = rtc.days;
+    rtc.frame_anchor = gbl_frame;
+    rtc.wall_anchor = gbl_platform_rtc();
+}
+
+static int rtc_flush_one(void) {
+    if (!rtc.dirty) return 0;
+    rtc_save_build();
+    if (!gbl_platform_save_write(RTC_SAVE_SECTOR, rtc_save_buf)) return 1;
+    rtc.dirty = 0;
+    return 0;
+}
+#endif /* GBL_RTC && GBL_MBC == 3 && !ESP8266 */
+
+#if GBL_RTC && GBL_MBC == 3 && !defined(ESP8266)
+#define RTC_PENDING (rtc.pending)
+#define RTC_SEL() rtc_sel()
+#else
+#define RTC_PENDING 0
+#define RTC_SEL() 0 /* never selected: no RTC in this build */
+#endif
+
 #if GBL_ERAM_SIZE > 0
 static uint32_t eram_offset(uint16_t a) {
 #if GBL_MBC == 2
@@ -428,6 +599,9 @@ static void eram_tables(uint8_t **rmap, uint8_t **wmap) {
     for (unsigned s = 0; s < ESLOTS; s++) rmap[s] = wmap[s] = 0;
 #if GBL_ERAM_SIZE % 0x2000 == 0 && GBL_ERAM_TABLES
     if (!mbc.ram_enable) return;
+#if GBL_RTC && GBL_MBC == 3
+    if (RTC_SEL() >= 8) return; /* the registers live in the slow path */
+#endif
     uint32_t base = (eram_bank() * 0x2000u) % GBL_ERAM_SIZE; /* as eram_offset */
     for (unsigned i = 0; i < ERAM_WAYS; i++) {
         uint32_t off = ETAG_BLK(eram_tag[i]) * CBLK - base;
@@ -741,6 +915,9 @@ static void eram_store(uint32_t off, uint8_t v) {
 
 void gbl_save_flush(void) {
     unsigned dirty = 0;
+#if GBL_RTC && GBL_MBC == 3 && !defined(ESP8266)
+    if (rtc_flush_one()) save_pending = RTC_PENDING;
+#endif
     for (unsigned i = 0; i < ERAM_WAYS; i++) {
         eram_writeback(i);
         dirty |= eram_dirty[i];
@@ -750,6 +927,12 @@ void gbl_save_flush(void) {
 }
 
 int gbl_save_flush_next(int i) {
+#if GBL_RTC && GBL_MBC == 3 && !defined(ESP8266)
+    if (rtc.dirty && i >= (int)RTC_SAVE_SECTOR) { /* the registers' sector, last */
+        if (!rtc_flush_one()) save_pending = RTC_PENDING;
+        return -1;
+    }
+#endif
     for (; i >= 0 && i < ERAM_WAYS; i++)
         if (eram_dirty[i]) {
             eram_writeback(i);
@@ -759,6 +942,9 @@ int gbl_save_flush_next(int i) {
     unsigned dirty = 0;
     for (unsigned w = 0; w < ERAM_WAYS; w++) dirty |= eram_dirty[w];
     save_pending = (uint8_t)(dirty != 0);
+#if GBL_RTC && GBL_MBC == 3 && !defined(ESP8266)
+    if (rtc_flush_one()) save_pending = RTC_PENDING;
+#endif
     return -1;
 }
 
@@ -792,6 +978,9 @@ static void eram_store(uint32_t off, uint8_t v) {
 }
 
 void gbl_save_flush(void) {
+#if GBL_RTC && GBL_MBC == 3 && !defined(ESP8266)
+    if (rtc_flush_one()) save_pending = RTC_PENDING;
+#endif
 #if GBL_BATTERY && defined(ESP8266)
     /* Flash is erased by 4 KiB blocks: the platform writes the whole RAM as
      * a new copy (espboy_flash.cpp) rather than one sector at a time. */
@@ -813,6 +1002,12 @@ int gbl_save_flush_next(int i) {
     gbl_save_flush();
     return -1;
 #elif GBL_BATTERY
+#if GBL_RTC && GBL_MBC == 3 && !defined(ESP8266)
+    if (rtc.dirty && i >= (int)RTC_SAVE_SECTOR) {
+        if (!rtc_flush_one()) save_pending = RTC_PENDING;
+        return -1;
+    }
+#endif
     for (; i >= 0 && i < 32; i++)
         if (eram_dirty_mask & (1u << i)) {
             gbl_platform_save_write((uint32_t)i, gbl_eram + (uint32_t)i * 512u);
@@ -820,6 +1015,9 @@ int gbl_save_flush_next(int i) {
             return i + 1;
         }
     save_pending = (uint8_t)(eram_dirty_mask != 0);
+#if GBL_RTC && GBL_MBC == 3 && !defined(ESP8266)
+    if (rtc_flush_one()) save_pending = RTC_PENDING;
+#endif
 #else
     (void)i;
 #endif
@@ -840,7 +1038,7 @@ static void eram_reset(void) {
 }
 #endif
 
-int gbl_save_pending(void) { return save_pending; }
+int gbl_save_pending(void) { return save_pending || RTC_PENDING; }
 
 /* RAM enable register: a game that disables cartridge RAM has finished
  * writing it; that is the moment to save. */
@@ -850,9 +1048,13 @@ static __attribute__((unused)) void set_ram_enable(uint8_t v) {
     mbc.ram_enable = on;
 }
 #else
-void gbl_save_flush(void) {}
+void gbl_save_flush(void) {
+#if GBL_RTC && GBL_MBC == 3 && !defined(ESP8266)
+    rtc_flush_one();
+#endif
+}
 int gbl_save_flush_next(int i) { (void)i; return -1; }
-int gbl_save_pending(void) { return 0; }
+int gbl_save_pending(void) { return RTC_PENDING; }
 uint8_t *gbl_save_scratch(void) { return 0; }
 uint32_t gbl_save_last_change;
 static __attribute__((unused)) void set_ram_enable(uint8_t v) { mbc.ram_enable = (v & 0x0F) == 0x0A; }
@@ -865,8 +1067,13 @@ static void map_eram(void) {
 #if GBL_ERAM_SIZE >= 0x2000 && GBL_MBC != 2 && !GBL_ERAM_ON_SD
     /* Whole 8 KiB banks map directly (reads always; writes only without a
      * battery, whose saves need the dirty tracking of the slow path).
-     * Smaller RAM mirrors through the slow path. */
+     * Smaller RAM mirrors through the slow path.  An RTC bank (MBC3, RAM
+     * bank number 08-0C) maps nothing: the registers live in gbl_rd_slow /
+     * gbl_wr_slow. */
     uint32_t off = (eram_bank() * 0x2000u) % GBL_ERAM_SIZE;
+#if GBL_RTC && GBL_MBC == 3
+    if (RTC_SEL() >= 8) return;
+#endif
     uint8_t *base = mbc.ram_enable ? BIAS(gbl_eram + off, 0xA000u) : 0;
     gbl_rmap[0xA] = gbl_rmap[0xB] = base;
     gbl_wmap[0xA] = gbl_wmap[0xB] = GBL_BATTERY ? 0 : base;
@@ -1037,7 +1244,16 @@ void mbc_write(uint16_t a, uint8_t v) {
     case 0: set_ram_enable(v); map_eram(); break;
     case 1: mbc.lo = v; map_rom_bank(); break;
     case 2: mbc.hi = v; map_eram(); break;
-    default: break; /* RTC latch: no RTC on this target */
+    default:
+#if GBL_RTC && !defined(ESP8266)
+        /* The latch: 00 arms, 01 snapshots the registers. */
+        if (v == 0x00) rtc.armed = 1;
+        else if (v == 0x01 && rtc.armed) {
+            rtc_latch();
+            rtc.armed = 0;
+        }
+#endif
+        break;
     }
 #elif GBL_MBC == 5
     if (a < 0x2000) { set_ram_enable(v); map_eram(); }
@@ -1653,6 +1869,13 @@ uint8_t gbl_rd_slow(uint16_t a) {
     if (a >= 0xFE00) return a < 0xFEA0 ? gbl_oam[a - 0xFE00] : 0xFF;
 #endif
     if (a >= 0xE000) return gbl_wram[wram_echo(a)];
+#if GBL_RTC && GBL_MBC == 3 && !defined(ESP8266)
+    if (a >= 0xA000 && a < 0xC000 && mbc.ram_enable) {
+        uint8_t sel = RTC_SEL();
+        /* Registers, then 0D-0F open bus. */
+        return sel >= 8 && sel <= 0xC ? rtc.latched[sel - 8] : 0xFF;
+    }
+#endif
 #if GBL_MBC == 2
     if (a >= 0xA000 && a < 0xC000 && mbc.ram_enable)
         return eram_load(eram_offset(a)) | 0xF0;
@@ -1764,6 +1987,13 @@ void gbl_wr_slow(uint16_t a, uint8_t v) {
         return;
     }
     if (a < 0x8000) { mbc_write(a, v); return; }
+#if GBL_RTC && GBL_MBC == 3 && !defined(ESP8266)
+    if (a >= 0xA000 && a < 0xC000 && mbc.ram_enable) {
+        uint8_t sel = RTC_SEL();
+        if (sel >= 8 && sel <= 0xC) rtc_reg_write(sel - 8, v);
+        return; /* 0D-0F: ignored, like the real chip */
+    }
+#endif
 #if GBL_MBC == 2
     if (a >= 0xA000 && a < 0xC000 && mbc.ram_enable) eram_store(eram_offset(a), v & 0x0F);
 #elif GBL_ERAM_SIZE > 0
@@ -2214,6 +2444,9 @@ void gbl_reset(void) {
 #if GBL_ERAM_SIZE > 0
     eram_reset();
 #endif
+#if GBL_RTC && GBL_MBC == 3 && !defined(ESP8266)
+    rtc_save_load();
+#endif
 #if GBL_LOOKUP_CACHE
     /* pc 0xFFFF is never looked up (>= 0x8000): an empty slot. */
     for (int i = 0; i < GBL_LOOKUP_CACHE; i++) lookup_cache[i].pc = 0xFFFF;
@@ -2267,6 +2500,9 @@ static void state_mem(gbl_state_fn io, void *ctx, int load) {
     io(&gbl_timer_state, sizeof(gbl_timer_state), ctx);
     io(&buttons, sizeof(buttons), ctx);
     io(&gbl_frame, sizeof(gbl_frame), ctx);
+#if GBL_RTC && GBL_MBC == 3 && !defined(ESP8266)
+    io(&rtc, sizeof(rtc), ctx);
+#endif
 #if GBL_CGB
     io(&gbl_cgb, sizeof(gbl_cgb), ctx);
     io(&gbl_vbk, sizeof(gbl_vbk), ctx);
