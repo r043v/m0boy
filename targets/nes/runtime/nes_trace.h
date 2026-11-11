@@ -25,7 +25,10 @@ typedef struct NesTrace {
                * instruction boundary */
 } NesTrace;
 
-extern NesTrace nes_trace;
+#ifndef M0_TL
+#define M0_TL
+#endif
+extern M0_TL NesTrace nes_trace;
 
 #ifdef __cplusplus
 }

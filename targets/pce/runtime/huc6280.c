@@ -7,6 +7,9 @@
  * after every instruction but SET, RTI and PLP.  Decimal mode follows the
  * mednafen core, quirks included (the Z flag from the raw nibble sum). */
 #if __has_include("pce_config.h") /* a generated project's: PCE_NATIVE */
+#ifndef M0_TL
+#define M0_TL   /* deepeel builds with -DM0_TL=__thread: one machine per worker thread */
+#endif
 #include "pce_config.h"
 #endif
 #include "huc6280.h"
@@ -621,7 +624,7 @@ PCE_INTERP_FN(huc6280_t *cpu, uint32_t until) {
  * time.  pce_native = 0 is the reference (--interp). */
 #include "pce_gen.h"
 
-int pce_native = 1;
+M0_TL int pce_native = 1;
 
 /* the interpreter's push (its wr through the window tables) at the
  * dispatcher's reach */

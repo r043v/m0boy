@@ -6,7 +6,7 @@
 typedef struct { unsigned kind, reg; uint32_t addr, imm; } Ea;
 
 #ifdef MD_TRACE
-MdTrace md_trace;
+MD_THREAD_LOCAL MdTrace md_trace;
 #define MD_QUIET(x) (++md_trace.quiet, (x))
 #define MD_UNQUIET() (--md_trace.quiet)
 #define MD_FETCHED(n) (md_trace.fetched += (n))

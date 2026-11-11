@@ -1,3 +1,6 @@
+#ifndef M0_TL
+#define M0_TL   /* deepeel builds with -DM0_TL=__thread: one machine per worker thread */
+#endif
 #include "vdc.h"
 
 /* the row composer is the runtime's hottest loop on the ESP32 target;
@@ -38,8 +41,8 @@ typedef struct {
     uint32_t packed[2]; /* the row's 16 nibbles, leftmost pixel first */
 } sprite_t;
 
-static sprite_t sprite_list[16];
-static int active_sprites;
+static M0_TL sprite_t sprite_list[16];
+static M0_TL int active_sprites;
 
 /* Spread a four-bit plane across four pixel nibbles, leftmost bit first. */
 static const uint16_t spread4[16] = {
@@ -77,8 +80,8 @@ static uint32_t cell_nibbles(uint16_t w0, uint16_t w1) {
  * it; $FFFF is the free tag (a row's address tops at $FFF7). */
 #define CELL_CACHE 256
 #define CELL_SLOT(row) (((row) & 7u) | (((row) >> 1) & 0xF8u))
-static uint16_t cell_cache_addr[CELL_CACHE];
-static uint32_t cell_cache_bits[CELL_CACHE];
+static M0_TL uint16_t cell_cache_addr[CELL_CACHE];
+static M0_TL uint32_t cell_cache_bits[CELL_CACHE];
 
 /* the sprite pattern-row cache, the same idea for the 4-plane rows the
  * fetch reads (16 pixels, 64 bits of packed nibbles): the same row comes
@@ -96,8 +99,8 @@ static uint32_t cell_cache_bits[CELL_CACHE];
 #endif
 #define SPRITE_CACHE PCE_SPRITE_CACHE
 #define SPRITE_SLOT(row) (((row) & 15u) | (((row) >> 2) & (unsigned)(SPRITE_CACHE - 16)))
-static uint16_t sprite_cache_addr[SPRITE_CACHE];
-static uint32_t sprite_cache_bits[SPRITE_CACHE][2];
+static M0_TL uint16_t sprite_cache_addr[SPRITE_CACHE];
+static M0_TL uint32_t sprite_cache_bits[SPRITE_CACHE][2];
 
 static void vram_cache_drop(unsigned address) {
     cell_cache_addr[CELL_SLOT(address & ~8u)] = 0xFFFFu;
@@ -133,8 +136,8 @@ static uint32_t nibrev32(uint32_t x) {
 
 /* a byte of nibbles as two 16-bit pixels (the low nibble first), so the
  * background writes a cell as four 32-bit stores */
-static uint32_t nib2[256];
-static int nib2_ready;
+static M0_TL uint32_t nib2[256];
+static M0_TL int nib2_ready;
 static void nib2_init(void) {
     for (unsigned b = 0; b < 256; b++) nib2[b] = (b & 0xFu) | (uint32_t)(b >> 4) << 16;
     nib2_ready = 1;
@@ -189,9 +192,9 @@ static void draw_bg(vdc_t *v) {
  * line instead of testing all 64.  Lines past the table fall back to the
  * full walk. */
 #define SAT_LINES 320
-static uint64_t sat_line_mask[SAT_LINES];
-static uint16_t sat_masked[256];
-static int sat_masked_ok;
+static M0_TL uint64_t sat_line_mask[SAT_LINES];
+static M0_TL uint16_t sat_masked[256];
+static M0_TL int sat_masked_ok;
 
 static void sat_masks_build(const uint16_t *sat) {
     memset(sat_line_mask, 0, sizeof sat_line_mask);

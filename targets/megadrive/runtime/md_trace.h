@@ -16,5 +16,9 @@ typedef struct {
     uint32_t fetched; /* extension bytes fetched by the current instruction */
     int quiet;   /* >0: instruction fetch in progress, do not report reads */
 } MdTrace;
-extern MdTrace md_trace;
+/* deepeel runs several machines in parallel: it builds with -DMD_THREAD_LOCAL=__thread */
+#ifndef MD_THREAD_LOCAL
+#define MD_THREAD_LOCAL
+#endif
+extern MD_THREAD_LOCAL MdTrace md_trace;
 #endif

@@ -4,13 +4,16 @@
  * Illegal opcodes run as NOPs of their true length — no game in the
  * pipeline's scope relies on them. */
 #if __has_include("nes_config.h") /* a generated project's: NES_NATIVE */
+#ifndef M0_TL
+#define M0_TL   /* deepeel builds with -DM0_TL=__thread: one machine per worker thread */
+#endif
 #include "nes_config.h"
 #endif
 #include "6502.h"
 #include "nes_native.h"
 #ifdef NES_TRACE
 #include "nes_trace.h"
-NesTrace nes_trace;
+M0_TL NesTrace nes_trace;
 #endif
 #ifdef NES_COVERAGE
 #include <stdio.h>
@@ -138,9 +141,9 @@ void nes6502_stall(nes6502_t *cpu, uint32_t cycles) { cpu->stall_pending += cycl
  * cannot see — and the distinct addresses played, the explorer's novelty
  * (m0_explore.h).  The tables are allocated to the cartridge's banks
  * (nes_coverage_init, the host calls it before nes_init). */
-uint32_t *nes_coverage_hits;
-uint8_t *nes_coverage_dynamic;
-uint32_t nes_coverage_locations;
+M0_TL uint32_t *nes_coverage_hits;
+M0_TL uint8_t *nes_coverage_dynamic;
+M0_TL uint32_t nes_coverage_locations;
 void nes_coverage_init(unsigned banks) {
     nes_coverage_hits = calloc((size_t)(banks + 1) * 0x8000u, sizeof *nes_coverage_hits);
     nes_coverage_dynamic = calloc((size_t)(banks + 1) * 0x8000u, 1);
@@ -464,7 +467,7 @@ done:
  * instruction at a time.  nes_native = 0 is the reference (--interp). */
 #include "nes_gen.h"
 
-int nes_native = 1;
+M0_TL int nes_native = 1;
 #ifdef NES_GEN_STATS
 uint32_t nes_gen_calls, nes_gen_steps; /* the harness prints them */
 #define GEN_STAT(n) ((n)++)

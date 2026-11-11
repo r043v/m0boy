@@ -1,9 +1,12 @@
+#ifndef M0_TL
+#define M0_TL   /* deepeel builds with -DM0_TL=__thread: one machine per worker thread */
+#endif
 #include "nes.h"
 #ifdef NES_TRACE
 #include "nes_trace.h"
 #endif
 
-nes_t machine; /* the CPU's bus lands here (one machine per firmware, as
+M0_TL nes_t machine; /* the CPU's bus lands here (one machine per firmware, as
                 * the Z80 runtime's own machine) */
 
 /* Read by gm0 --record-input, which finds it by its tag in the firmware:
@@ -11,8 +14,10 @@ nes_t machine; /* the CPU's bus lands here (one machine per firmware, as
  * and Game Gear runtimes), so a session played in gm0 replays on the host
  * harness (--input).  nes_reset references it: --gc-sections would drop it
  * otherwise. */
+#ifndef M0_NO_INPUT_PROBE
 static const struct { char tag[8]; uint32_t version; const volatile void *frame, *buttons, *extra; }
     nes_input_probe __attribute__((used, aligned(4))) = { "m0input", 1, &machine.frames, &machine.input, 0 };
+#endif
 
 uint8_t nes_bus_read(uint16_t at) {
     nes_t *nes = &machine;
@@ -139,7 +144,9 @@ void nes_init(const uint8_t *prg, uint32_t prg_bytes,
 
 void nes_reset(void) {
     nes_t *nes = &machine;
+#ifndef M0_NO_INPUT_PROBE
     __asm__ volatile("" : : "r"(&nes_input_probe));
+#endif
     nes6502_reset(&nes->cpu);
     nes_ppu_reset(&nes->ppu);
     nes_apu_reset(&nes->apu);
@@ -243,7 +250,7 @@ void nes_audio(uint8_t *dst, unsigned n, unsigned rate) {
 /* the consoles' audio drivers (meta_audio.cpp and its like) call these two
  * without knowing the machine; the samples are rendered at the rate the
  * driver plays (the META's 22049 Hz: a frame asks for 367 of them) */
-static unsigned audio_rate = 11025u;
+static M0_TL unsigned audio_rate = 11025u;
 void nes_audio_set_rate(unsigned rate) { audio_rate = rate ? rate : 11025u; }
 void nes_audio_render(uint8_t *buffer, unsigned n) {
     nes_apu_render(&machine.apu, buffer, n, audio_rate);

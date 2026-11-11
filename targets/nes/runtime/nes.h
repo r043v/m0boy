@@ -71,7 +71,10 @@ typedef struct {
 } nes_t;
 
 /* NROM: prg 16 or 32 KiB, chr 8 KiB, vertical_mirror from iNES flags 6. */
-extern nes_t machine;
+#ifndef M0_TL
+#define M0_TL
+#endif
+extern M0_TL nes_t machine;
 void nes_init(const uint8_t *prg, uint32_t prg_bytes,
               const uint8_t *chr, uint32_t chr_bytes, int vertical_mirror);
 void nes_reset(void);

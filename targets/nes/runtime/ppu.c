@@ -1,3 +1,6 @@
+#ifndef M0_TL
+#define M0_TL   /* deepeel builds with -DM0_TL=__thread: one machine per worker thread */
+#endif
 #include "ppu.h"
 #if __has_include("nes_config.h") /* a generated project's; the checkout has none */
 #include "nes_config.h"
@@ -37,7 +40,7 @@ static const uint16_t nes_colors[64] = {
 
 /* the panel tables' palette entries a palette RAM write makes stale, and
  * the count of nametable writes (the decoded tile row's key) */
-static uint32_t pal_dirty = 0xFFFFFFFFu, nt_writes;
+static M0_TL uint32_t pal_dirty = 0xFFFFFFFFu, nt_writes;
 
 /* NES_PPU_ASM: the panel renderer's loops in Thumb-1 (ppu_asm.S), the C
  * versions in this file being their reference (the host's) */
@@ -55,7 +58,7 @@ static uint32_t pal_dirty = 0xFFFFFFFFu, nt_writes;
 #define NES_LOOP __attribute__((noinline))
 static void tables_init(void);
 #ifdef NES_PPU_REFERENCE
-static int pair_init; /* the pair tables wait for the palette RAM to exist */
+static M0_TL int pair_init; /* the pair tables wait for the palette RAM to exist */
 static void pair_write(nes_ppu_t *ppu, unsigned i);
 #endif
 
@@ -213,18 +216,18 @@ static const uint8_t *sprite_pattern(const nes_ppu_t *ppu, const uint8_t *oam, u
 #define ROW_AT(s) ((((s) >> 2) << 3) | ((s) & 3u)) /* stream byte -> offset */
 static uint8_t pairs[PAIR_BYTES] __attribute__((aligned(4)));
 static uint8_t probe[PAIR_BYTES] __attribute__((aligned(4))); /* sprite-0 lines of hidden frames */
-static uint8_t row_x[2];               /* each pair line's fine x */
-static uint32_t expand[256];           /* lo nibble | hi nibble << 4 -> 4 bytes */
-static uint8_t flip8[256];             /* bit reversal: horizontal flip */
-static uint32_t spr_lines[240][2];     /* the sprites over each line, bit = OAM index */
-static uint32_t spal[32];              /* spread colours of the palette indices */
-static uint16_t pair_tabs[2][32 * 32]; /* m0_box58_fast's (5,3) and (4,4) of
+static M0_TL uint8_t row_x[2];               /* each pair line's fine x */
+static M0_TL uint32_t expand[256];           /* lo nibble | hi nibble << 4 -> 4 bytes */
+static M0_TL uint8_t flip8[256];             /* bit reversal: horizontal flip */
+static M0_TL uint32_t spr_lines[240][2];     /* the sprites over each line, bit = OAM index */
+static M0_TL uint32_t spal[32];              /* spread colours of the palette indices */
+static M0_TL uint16_t pair_tabs[2][32 * 32]; /* m0_box58_fast's (5,3) and (4,4) of
                                         * pixel pairs, native RGB565 (one array:
                                         * ppu_asm.S finds the second after the first) */
 #define pair53 pair_tabs[0]
 #define pair44 pair_tabs[1]
-static unsigned panel_row;             /* the row being filled */
-static unsigned panel_open;            /* the row has its first line (pair slot 1 next) */
+static M0_TL unsigned panel_row;             /* the row being filled */
+static M0_TL unsigned panel_open;            /* the row has its first line (pair slot 1 next) */
 
 static void tables_init(void) {
     static int ready;
@@ -297,8 +300,8 @@ static void nes_ppu_sprite_lines(nes_ppu_t *ppu) {
  * of a word.  The key is v without its fine y, the page, and a count of
  * the nametable writes. */
 typedef struct { const uint8_t *pattern; uint32_t pal; } nes_tile;
-static nes_tile tile_row[33];
-static uint32_t tile_key = 0xFFFFFFFFu;
+static M0_TL nes_tile tile_row[33];
+static M0_TL uint32_t tile_key = 0xFFFFFFFFu;
 
 void nes_ppu_state_loaded(nes_ppu_t *ppu) {
     pal_dirty = 0xFFFFFFFFu;
@@ -574,8 +577,8 @@ static unsigned palette_color(nes_ppu_t *ppu, uint8_t index) {
  * c = lo_pair | hi_pair << 2 | p << 4.  The tables are pure functions of the
  * palette RAM, rebuilt around the entries a $2007 write touches (four if the
  * written colour is one of the mirrored ones the renderer never reads). */
-static uint32_t pair_rgb[64]; /* two RGB565 pixels, low pixel first */
-static uint8_t pair_idx[64]; /* two palette-space indices, low nibble first */
+static M0_TL uint32_t pair_rgb[64]; /* two RGB565 pixels, low pixel first */
+static M0_TL uint8_t pair_idx[64]; /* two palette-space indices, low nibble first */
 
 static void pair_build(nes_ppu_t *ppu, unsigned c) {
     const unsigned pal = c >> 4, pair = c & 15;

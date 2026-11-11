@@ -1,10 +1,13 @@
+#ifndef M0_TL
+#define M0_TL   /* deepeel builds with -DM0_TL=__thread: one machine per worker thread */
+#endif
 #include "pce.h"
 
 #include <string.h>
 
 typedef uint32_t __attribute__((may_alias)) u32a_;
 
-pce_t machine; /* the CPU's bus lands here (one machine per firmware, as
+M0_TL pce_t machine; /* the CPU's bus lands here (one machine per firmware, as
                 * the other runtimes' own machine) */
 
 /* Read by gm0 --record-input, which finds it by its tag in the firmware:
@@ -12,8 +15,10 @@ pce_t machine; /* the CPU's bus lands here (one machine per firmware, as
  * and Sega runtimes), so a session played in gm0 replays on the host
  * harness (--input).  pce_reset references it: --gc-sections would drop
  * it otherwise. */
+#ifndef M0_NO_INPUT_PROBE
 static const struct { char tag[8]; uint32_t version; const volatile void *frame, *buttons, *extra; }
     pce_input_probe __attribute__((used, aligned(4))) = { "m0input", 1, &machine.frames, &machine.input, 0 };
+#endif
 
 /* the VCE: the 512-color table (B on bits 0-2, R on 3-5, G on 6-8) and
  * its RGB565 image.  A pixel whose color nibble is 0 shows the table's
@@ -196,12 +201,14 @@ void pce_init(const uint8_t *rom, uint32_t rom_bytes) {
 }
 
 /* the CPU-budget carry across frames and resets */
-static unsigned master_carry;
+static M0_TL unsigned master_carry;
 
 void pce_reset(void) {
     pce_t *p = &machine;
     master_carry = 0;
+#ifndef M0_NO_INPUT_PROBE
     __asm__ volatile("" : : "r"(&pce_input_probe));
+#endif
     huc6280_reset(&p->cpu);
     vdc_reset(&p->vdc);
     psg_reset(&p->psg);

@@ -66,7 +66,10 @@ typedef struct {
 
 /* rom must live as long as the machine; its size is padded to 8 KiB
  * pages by the project generator */
-extern pce_t machine;
+#ifndef M0_TL
+#define M0_TL
+#endif
+extern M0_TL pce_t machine;
 void pce_init(const uint8_t *rom, uint32_t rom_bytes);
 void pce_reset(void);
 /* one frame (262 lines): emulation, then the row callback has drawn the
