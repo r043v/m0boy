@@ -38,6 +38,10 @@ struct MetaTargetOptions {
     bool aka = false;    ///< Gamebuino AKA: ESP32-S3, 320x240, SD, 8 MiB PSRAM
     /// the ESP32 family shares its core (targets/common/consoles/esp32)
     bool esp32_console() const { return odroid || aka; }
+    /* --cgb: accept CGB-only ROMs and run CGB cartridges in colour mode.
+     * The CGB's 12 KiB of VRAM + 16 KiB of WRAM do not fit a console's
+     * 32 KiB of SRAM, so this stays a PC-target option; DMG ROMs ignore it. */
+    bool cgb = false;
     std::vector<std::filesystem::path> coverage_files; ///< gbl coverage v1 files
     /* deepeel's executed-RAM-code variants ("gbl ram code v1": `ram ADDR
      * HEXBYTES OFFSETS`, WRAM $C000-$DFFF and HRAM $FF80-$FFFE).  Each

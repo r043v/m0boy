@@ -2307,8 +2307,9 @@ std::string Generator::emit_config(std::string& error) const {
         return {};
     }
     if (h.is_cgb_only) {
-        error = "CGB-only ROMs are not supported by the DMG-only gbl runtime";
-        return {};
+        error = opt_.cgb ? std::string()
+                : "CGB-only ROMs are not supported by the DMG-only gbl runtime; pass --cgb to convert for the pc target";
+        if (!opt_.cgb) return {};
     }
     size_t eram = mbc == 2 ? 512 : h.ram_size_bytes;
     if (opt_.espboy && eram > 16384) {
@@ -2334,6 +2335,10 @@ std::string Generator::emit_config(std::string& error) const {
       << "#define GBL_MBC " << mbc << "\n"
       << "#define GBL_ROM_BANKS " << banks << "\n"
       << "#define GBL_ERAM_SIZE " << eram << "\n"
+      /* --cgb on a CGB cartridge (0x80/0xC0 in $143): colour mode.  A DMG
+       * cartridge stays DMG: gbl_options.h defaults GBL_CGB to 0 and the
+       * firmware is byte-identical to a conversion without the flag. */
+      << (opt_.cgb && h.is_cgb ? "#define GBL_CGB 1\n" : "")
       << (battery && eram || rtc ? "#define GBL_BATTERY 1\n" : "")
       << (rtc ? "#define GBL_RTC 1\n" : "")
       << "#define GBL_SAVE_BYTES " << save_bytes << "\n"
@@ -2350,7 +2355,8 @@ std::string Generator::emit_config(std::string& error) const {
       << (opt_.espboy ? espboy_state_config(eram, battery && eram)
                       : "#define GBL_STATE_NAME \"" + sd + ".STA\"\n#define GBL_STATE_NAME83 \"" + name83(sd, "STA") +
                             "\"\n#define GBL_STATE_SLOTS 10\n#define GBL_STATE_SLOT_SECTORS " +
-                            std::to_string(1 + (18432 + eram + 511) / 512 + (rtc ? 1 : 0)) + "\n")
+                            std::to_string(1 + ((opt_.cgb && h.is_cgb ? 51200u : 18432u) + eram + 511) / 512 +
+                                           (rtc ? 1 : 0)) + "\n")
       << (stream_ ? "#define GBL_ROM_STREAM 1\n#define GBL_ROM_CHUNKS " +
                         std::to_string(chunk_weight_.size()) + "\n" +
                          (pack_ ? std::string("#define GBL_ROM_PACKED 1\n") : std::string()) +
@@ -2470,6 +2476,11 @@ bool generate_meta_project(const ROM& rom, const MetaTargetOptions& options,
     }
     if (options.espboy + options.pokitto + options.pc + options.odroid + options.aka > 1) {
         error = "choose one destination console";
+        return false;
+    }
+    if (options.cgb && !options.pc) {
+        error = "--cgb needs the pc target: the CGB's 12 KiB of VRAM + 16 KiB of WRAM "
+                "do not fit a console's 32 KiB of SRAM";
         return false;
     }
     if (options.espboy && (options.stream == 1 || options.thumb || options.compiler != "gcc")) {

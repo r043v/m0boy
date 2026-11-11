@@ -822,3 +822,21 @@ fichiers fournis avec les ROMs (`*_dmg.png`, DMG réelle).
 - `mbc3-tester` (4 Mo MBC30) : grille finale identique à la capture DMG de
   référence fournie avec la ROM — banques 0x00-0x7E passées, 0x7F et au-delà
   échouent, comme sur un MBC3 DMG réel face à une cartouche MBC30.
+
+## CGB (2026-11-11, cible pc + --cgb)
+
+Mesure faite avec le harnais hôte des projets pc (`--cgb --target pc`, mode
+couleur GBL_CGB) ; les captures sont comparées pixel par pixel aux images de
+référence fournies avec les ROMs, après l'expansion 5 bits documentée
+(`(X << 3) | (X >> 2)`).
+
+- `cgb-acid2` : **identique au pixel près** (0 / 23 040 pixels d'écart).
+- `cgb-acid-hell` : 2 pixels d'écart (le point de score à (80,69) est rendu
+  à (80,68)) — un test du « hell » échoue, non identifié dans la source.
+- `tests/test_meta_cgb_e2e.py` : cartouche synthétique CGB-only — lecture
+  des palettes (BCPS/BCPD), GDMA WRAM→VRAM, écritures/lectures dans la bank 1
+  (VBK), bascule en double vitesse (KEY1 + STOP) ; `run_hash` identique
+  interp / precise / fast. Passe.
+- Régression DMG : `dmg-acid2 --target pc` reste identique à sa référence
+  (0 écart structurel) et la suite meta ctest complète passe ; le firmware
+  DMG ne contient aucun code CGB (GBL_CGB absent de sa config).

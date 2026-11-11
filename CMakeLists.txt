@@ -421,6 +421,13 @@ set(GBL_COMMON_DIR "${CMAKE_CURRENT_SOURCE_DIR}/targets/common")
                 --gbrecomp "$<TARGET_FILE:gbrecomp>")
     set_tests_properties(meta_rtc_e2e PROPERTIES TIMEOUT 600)
 
+    # CGB mode: palettes, VRAM banks, GDMA, attributes, double speed; the
+    # precise/fast builds print the interpreter's run_hash in colour mode.
+    add_test(NAME meta_cgb_e2e
+        COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_meta_cgb_e2e.py"
+                --gbrecomp "$<TARGET_FILE:gbrecomp>")
+    set_tests_properties(meta_cgb_e2e PROPERTIES TIMEOUT 600)
+
     # ESPboy: raw/partly packed flash images, precise runtime parity, no SD.
     add_test(NAME meta_espboy_target
         COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_espboy_target.py"

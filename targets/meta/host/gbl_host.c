@@ -7,7 +7,7 @@
  *
  *   gbl_host [--frames N] [--interp] [--input FILE] [--coverage FILE]
  *            [--dump-frame N FILE.ppm]... [--hash-every K] [--stack-kib N | --stack-bytes N]
- *            [--wav FILE.wav] [--mute MASK] [--wram-hash-bytes N] [--dump-wram FILE]
+ *            [--wav FILE.wav] [--mute MASK] [--wram-hash-bytes N] [--dump-wram FILE] [--dump-vram FILE]
  *            [--static-skip-check] [--max-seconds S] [--save FILE]
  *            [--trace FRAME COUNT (profile build)] [--agent]
  *            [--explore FRAMES [--random SEED] (profile build)]
@@ -54,7 +54,9 @@ static double elapsed_seconds(void) {
     return (double)(t.tv_sec - run_start.tv_sec) + (t.tv_nsec - run_start.tv_nsec) * 1e-9;
 }
 
-static uint8_t frame_buf[144][160];
+/* DMG: shade indexes 0-3.  CGB (GBL_CGB, gbl_cgb): RGB565 straight from the
+ * palette RAM — writers below branch on that. */
+static uint16_t frame_buf[144][160];
 #ifdef GBL_SDL
 static uint32_t max_frames = 0; /* play until the window closes */
 #else
@@ -63,9 +65,10 @@ static uint32_t max_frames = 600;
 static uint32_t hash_every;
 static uint32_t wram_hash_bytes = 0x2000;
 static const char *wram_dump_path;
+static const char *vram_dump_path;
 static int static_check;           /* --static-skip-check */
 static uint8_t static_skip_next;
-static uint8_t displayed[144][160];
+static uint16_t displayed[144][160];
 static uint32_t static_skipped, static_stale, static_stale_run, static_stale_max;
 static uint64_t run_hash = 1469598103934665603ull;
 /* Machine state at every VBlank entry: CPU registers, cycle counter, WRAM,
@@ -168,6 +171,23 @@ static void write_ppm(const char *path) {
     FILE *f = fopen(path, "wb");
     if (!f) { perror(path); return; }
     fprintf(f, "P6\n160 144\n255\n");
+#if GBL_CGB
+    if (gbl_cgb) {
+        /* the reference screenshots' own 5-bit expansion: (X << 3) | (X >> 2);
+         * the green channel is read as its 5-bit value, not the replicated
+         * 6-bit one the RGB565 pixel carries */
+        for (int y = 0; y < 144; y++)
+            for (int x = 0; x < 160; x++) {
+                uint16_t c = frame_buf[y][x];
+                uint8_t px[3] = {(uint8_t)(((c >> 11 & 31u) << 3) | (c >> 13)),
+                                 (uint8_t)(((c >> 6 & 31u) << 3) | ((c >> 8) & 7u)),
+                                 (uint8_t)(((c & 31u) << 3) | ((c >> 2) & 7u))};
+                fwrite(px, 1, 3, f);
+            }
+        fclose(f);
+        return;
+    }
+#endif
     for (int y = 0; y < 144; y++)
         for (int x = 0; x < 160; x++) {
             uint8_t s = shade[frame_buf[y][x] & 3];
@@ -180,7 +200,16 @@ static void write_ppm(const char *path) {
 static uint64_t frame_hash(void) {
     uint64_t h = 1469598103934665603ull;
     for (int y = 0; y < 144; y++)
-        for (int x = 0; x < 160; x++) { h ^= frame_buf[y][x]; h *= 1099511628211ull; }
+        for (int x = 0; x < 160; x++) {
+            /* the DMG shade indexes hashed as bytes, whatever the buffer's
+             * width: the run_hash stays stable across the CGB option */
+#if GBL_CGB
+            h ^= frame_buf[y][x] & (gbl_cgb ? 0xFFFFu : 0xFFu);
+#else
+            h ^= frame_buf[y][x] & 0xFFu;
+#endif
+            h *= 1099511628211ull;
+        }
     return h;
 }
 
@@ -212,10 +241,10 @@ void gbl_platform_line_end(uint8_t ly) {
         if (line_claimed_same[ly]) {
             lines_same++;
             for (int x = 0; x < 160; x++)
-                if (frame_buf[ly][x] != (uint8_t)line_buf[x]) { lines_same_wrong++; break; }
+                if (frame_buf[ly][x] != line_buf[x]) { lines_same_wrong++; break; }
             line_claimed_same[ly] = 0;
         }
-        for (int x = 0; x < 160; x++) frame_buf[ly][x] = (uint8_t)line_buf[x];
+        for (int x = 0; x < 160; x++) frame_buf[ly][x] = line_buf[x];
     }
 }
 
@@ -482,6 +511,10 @@ static void finish(void) {
         FILE *df = fopen(wram_dump_path, "wb");
         if (df) { fwrite(gbl_wram, 1, sizeof(gbl_wram), df); fclose(df); }
     }
+    if (vram_dump_path) {
+        FILE *df = fopen(vram_dump_path, "wb");
+        if (df) { fwrite(gbl_vram, 1, sizeof(gbl_vram), df); fclose(df); }
+    }
     printf("pc %04x sp %04x bank %u ime %u ie %02x if %02x lcdc %02x stat %02x ly %u\n",
            gbr.pc, gbr.sp, gbr.rom_bank, gbr.ime, gbl_ie, gbl_io[0x0F], gbl_io[0x40],
            gbl_io[0x41], gbl_io[0x44]);
@@ -541,6 +574,22 @@ static void record_buttons(uint8_t b) {
 static void sdl_frame(void) {
     static const uint32_t shade[4] = {0xFFE0F8D0, 0xFF88C070, 0xFF346856, 0xFF081820};
     static uint32_t pix[144 * 160];
+#if GBL_CGB
+    if (gbl_cgb) {
+        for (int y = 0; y < 144; y++)
+            for (int x = 0; x < 160; x++) {
+                uint16_t c = frame_buf[y][x];
+                pix[y * 160 + x] = 0xFF000000u | (uint32_t)(((c >> 11 & 31u) << 3) | (c >> 13)) << 16
+                                 | (uint32_t)(((c >> 6 & 31u) << 3) | ((c >> 8) & 7u)) << 8
+                                 | (uint32_t)(((c & 31u) << 3) | ((c >> 2) & 7u));
+            }
+        SDL_UpdateTexture(sdl_tex, NULL, pix, 160 * 4);
+        SDL_RenderClear(sdl_ren);
+        SDL_RenderCopy(sdl_ren, sdl_tex, NULL, NULL);
+        SDL_RenderPresent(sdl_ren);
+        return;
+    }
+#endif
     for (int y = 0; y < 144; y++)
         for (int x = 0; x < 160; x++) pix[y * 160 + x] = shade[frame_buf[y][x] & 3];
     SDL_UpdateTexture(sdl_tex, NULL, pix, 160 * 4);
@@ -871,6 +920,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--wram-hash-bytes") && i + 1 < argc) wram_hash_bytes = (uint32_t)strtoul(argv[++i], 0, 0);
         else if (!strcmp(argv[i], "--static-skip-check")) static_check = 1;
         else if (!strcmp(argv[i], "--dump-wram") && i + 1 < argc) wram_dump_path = argv[++i];
+        else if (!strcmp(argv[i], "--dump-vram") && i + 1 < argc) vram_dump_path = argv[++i];
         else if (!strcmp(argv[i], "--mute") && i + 1 < argc) gbl_apu_mute = (uint8_t)strtoul(argv[++i], 0, 0);
         else if (!strcmp(argv[i], "--wav") && i + 1 < argc) {
             wav = fopen(argv[++i], "wb");

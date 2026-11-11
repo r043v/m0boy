@@ -405,6 +405,11 @@ uint16_t gbl_ppu_map_ver[64];
 static uint32_t tile_epoch; /* any tile data change */
 
 static void vram_version_bump(uint16_t off) {
+#if GBL_CGB
+    if (off >= 0x2000u) return; /* VRAM bank 1: gbl_vram_wr passes the banked
+        * offset and the version tables are sized for one bank — the line
+        * signatures they feed are unused in colour mode (every line renders) */
+#endif
     if (off < 0x1800) {
         tile_ver[off >> 4]++;
         tile_epoch++;

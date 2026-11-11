@@ -1556,7 +1556,11 @@ drift apart after that. The M0+ estimate was not measured on a device.
 
 ## Limitations
 
-- DMG only. CGB-only ROMs are rejected, and CGB features are not emulated.
+- DMG only. CGB-only ROMs are rejected, and CGB features are not emulated —
+  except on the PC target with `--cgb`, which runs CGB cartridges in colour
+  mode (palettes, VBK/SVBK, GDMA/HDMA, double speed; the runtime's GBL_CGB
+  path) and refuses the console targets: the CGB's 12 KiB of VRAM + 16 KiB
+  of WRAM do not fit their 32 KiB of SRAM. A DMG cartridge ignores the flag.
 - Supported mappers: none, MBC1, MBC2, MBC3 (with or without the RTC) and MBC5.
   Cartridge RAM lives in the META's 32 KiB, so large RAM carts may not fit.
   PlatformIO reports RAM use. Battery saves go to a `.SAV` file on the SD

@@ -493,7 +493,9 @@ dernière seconde. Le firmware n'écrit rien sur le port USB.
 ## Limites
 
 - Game Boy DMG uniquement. Les ROM réservées à la Game Boy Color sont
-  refusées.
+  refusées ; `--cgb --target pc` les accepte en mode couleur (palettes,
+  banques VRAM/WRAM, GDMA, double vitesse) — la console META n'a pas la
+  mémoire pour ce mode et le drapeau la refuse.
 - Cartouches acceptées : sans MBC, MBC1, MBC2, MBC3 (avec ou sans horloge) et MBC5.
   L'horloge du MBC3 (types 0F/10) tourne avec l'horloge de la plateforme quand
   elle en a une, sinon une seconde par 60 trames ; elle est persistée dans le

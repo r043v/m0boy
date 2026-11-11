@@ -193,6 +193,8 @@ void print_usage(const char* program) {
     std::cout << "  --meta-compiler <gcc|clang>  Firmware compiler (default gcc)\n";
     std::cout << "  --meta-thumb          Experimental register-IR / Thumb-1 code generation\n";
     std::cout << "  --meta-precise        Poll interrupts before every instruction (differential tests)\n";
+    std::cout << "  --cgb                 Game Boy: CGB colour mode (12 KiB VRAM + 16 KiB WRAM, pc target\n"
+                 "                        only); CGB-only ROMs need it, DMG ROMs ignore it\n";
     std::cout << "  --meta-sync-cycles <n>  SG-1000/GG/SMS: also poll once n T-states ran since the last poll (default 40, 0: loop heads only)\n";
     std::cout << "  --nes-interp          NES, Vectrex: no recompiled code, the interpreter only (alias --interp)\n";
     std::cout << "  --pce-sweep           PC Engine: the card swept for JSR/JMP targets the reachability walk cannot prove (pairs with --meta-code-budget)\n";
@@ -1843,6 +1845,7 @@ static fs::path g_rom_plan;                     /* --rom-plan FILE (Game Boy too
 static std::vector<fs::path> g_ram_code;        /* --ram-code FILE (repeatable) */
 static size_t g_meta_resident = 0;              /* --meta-rom-resident-kib */
 static bool g_meta_pack = false;                /* --meta-pack */
+static bool g_cgb = false;                      /* --cgb: CGB mode for Game Boy, pc target */
 static std::string g_sd_name;                   /* --sd-name */
 
 /* Refuse a (system, target) pair: when the hardware cannot run the runtime,
@@ -1875,6 +1878,7 @@ static int run_meta_target(const char* argv0, const std::string& rom_path,
     options.pc = target_id == m0boy::TargetId::pc;
     options.odroid = target_id == m0boy::TargetId::odroid;
     options.aka = target_id == m0boy::TargetId::aka;
+    options.cgb = g_cgb;
     options.template_dir = resolve_meta_dir(argv0, explicit_meta_dir);
     if (options.template_dir.empty()) {
         std::cerr << "Error: could not locate targets/meta. Use --meta-dir or GBRECOMP_META_DIR.\n";
@@ -2280,6 +2284,8 @@ int main(int argc, char* argv[]) {
             meta_thumb = true;
         } else if (arg == "--meta-precise") {
             meta_precise = true;
+        } else if (arg == "--cgb") {
+            g_cgb = true;
         } else if (arg == "--nes-interp" || arg == "--interp") {
             nes_interp = true;
         } else if (arg == "--pce-sweep") {
