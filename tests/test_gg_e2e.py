@@ -14,6 +14,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gg_fixture import fixture  # noqa: E402
+from gg_vdp_fixture import fixture as vdp_fixture  # noqa: E402
 
 
 def run(*args):
@@ -213,6 +214,85 @@ def exercise_cart_storage(args, root):
             assert fingerprint(run(build / 'cart_host', *common, *flags)) == reference
 
 
+def exercise_vdp(args, root, system):
+    """Left-column masking (reg 0 bit 5), the line interrupt (reg 10 + the V
+    counter it sees), the PAUSE button's NMI (SMS only) and the TMS9918 modes
+    0-3 the VDP falls into when M4 is clear (tests/gg_vdp_fixture.py: Graphics
+    I, Graphics II, 40-column text and multicolour, 40 frames each)."""
+    root.mkdir()
+    rom = root / ('vdp.' + system)
+    rom.write_bytes(vdp_fixture())
+    common = ('--frames', 60)
+    PAUSE = '20:128:3'
+
+    # The counters (line interrupts, PAUSE NMIs) and the registers land in
+    # the run hash: the build pairs must agree on the whole program.
+    baseline = fingerprint(run(args.host, rom, *common, '--shot', root / 'ref.ppm'))
+    paused = fingerprint(run(args.host, rom, *common, '--input', PAUSE))
+    if system == 'sms':
+        assert paused != baseline, 'the PAUSE press did not raise the NMI'
+    else:
+        assert paused == baseline, 'the GG has no PAUSE NMI'
+
+    # Masking (SMS): frames 20-39 blank the left column — the five device
+    # pixels collapse onto the backdrop, the rest of the picture stays.
+    if system == 'sms':
+        s19 = run(args.host, rom, '--frames', 19, '--shot', root / 'm19.ppm')
+        s39 = run(args.host, rom, '--frames', 39, '--shot', root / 'm39.ppm')
+        assert fingerprint(s19) != fingerprint(s39)
+        left19 = {p for p in ppm_pixels(root / 'm19.ppm', 5)}
+        left39 = {p for p in ppm_pixels(root / 'm39.ppm', 5)}
+        assert len(left39) == 1 and left19 != left39, \
+            f'the masked left column is not the backdrop: {left39}'
+
+    # The TMS modes render: Graphics I (60-99), Graphics II (100-139), text
+    # (140-179) and multicolour (180-219) give pairwise-distinct pictures.
+    shots = []
+    for frames, name in ((99, 'g1'), (139, 'g2'), (179, 'text'), (219, 'multi')):
+        run(args.host, rom, '--frames', frames, '--shot', root / f'{name}.ppm')
+        shots.append((root / f'{name}.ppm').read_bytes())
+    assert all(a != b for a, b in zip(shots, shots[1:])) and shots[0] != shots[3] \
+        and shots[0] != shots[2] and shots[1] != shots[3], 'the TMS modes render alike'
+
+    # Native parity for the whole program, PAUSE press included.
+    for target in ('desktop', 'meta'):
+        output = root / target
+        run(args.recompiler, rom, '--target', target, '--meta-precise',
+            '--output-prefix', 'vdp', '-o', output)
+        host = output / 'host/build'
+        run('cmake', '-G', 'Ninja', '-S', output / 'host', '-B', host)
+        run('ninja', '-C', host)
+        exe = host / 'vdp_host'
+        native = run(exe, *common, '--input', PAUSE, '--shot', root / 'native.ppm')
+        interpreted = run(exe, *common, '--input', PAUSE, '--interp')
+        assert fingerprint(native) == fingerprint(interpreted) == paused, \
+            f'{system}/{target}: native != interpreter on the VDP program'
+        if system == 'sms':
+            assert (root / 'native.ppm').read_bytes() == (root / 'ref.ppm').read_bytes(), \
+                'the native pixels differ from the reference at frame 60 (without the PAUSE edit)' 
+        fast_output = root / (target + '-fast')
+        run(args.recompiler, rom, '--target', target, '--output-prefix', 'vdp', '-o', fast_output)
+        fast_host = fast_output / 'host/build'
+        run('cmake', '-G', 'Ninja', '-S', fast_output / 'host', '-B', fast_host)
+        run('ninja', '-C', fast_host)
+        fast = run(fast_host / 'vdp_host', *common, '--input', PAUSE)
+        assert fingerprint(fast) == paused
+        print(system + '/' + target + ': masking, line IRQ, PAUSE NMI and TMS modes: native = interpreter')
+
+
+def ppm_pixels(path, columns):
+    data = Path(path).read_bytes()
+    parts = data.split(b'\n', 3)
+    w, h = map(int, parts[1].split())
+    px = parts[3]
+    seen = set()
+    for y in range(h):
+        for x in range(columns):
+            i = (y * w + x) * 3
+            seen.add((px[i], px[i + 1], px[i + 2]))
+    return seen
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--recompiler', required=True)
@@ -222,6 +302,8 @@ def main():
         root = Path(temporary)
         for system in ('gg', 'sms'):
             exercise(args, root / system, system)
+        for system in ('gg', 'sms'):
+            exercise_vdp(args, root / ('vdp-' + system), system)
         exercise_pool(args, root / 'pool')
         exercise_pool(args, root / 'packed', packed=True)
         exercise_cart_storage(args, root / 'cart')

@@ -440,6 +440,7 @@ void md_full_step_interp(MdFull *m) {
 #ifdef MD_TRACE
     md_trace.fetched = 0;
     if (md_trace.step) md_trace.step(md_trace.user, m, pc, op);
+    if (m->fault) return;   /* a budget cut: the instruction must not run (its effects would replay) */
 #endif
     md_full_execute(m, op);
 #ifdef MD_TRACE
