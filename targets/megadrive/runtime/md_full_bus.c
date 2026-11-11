@@ -113,7 +113,8 @@ uint16_t md_full_read16(MdFull *m, uint32_t addr) {
     if (addr & 1u) { m->fault = 3; m->fault_pc = m->pc; m->slice_limit = 0; return 0xffff; }
     if (addr >= 0xc00000u && addr <= 0xc0001fu) {
         if ((addr & 0x1cu) == 4u) { m->vdp_pending = 0; return vdp_status(m); }
-        if ((addr & 0x1cu) == 8u) return (uint16_t)((m->frame_cycles / 488u) << 8);
+        if ((addr & 0x1cu) == 8u || (addr & 0x1cu) == 12u) return (uint16_t)((m->frame_cycles / 488u) << 8);   /* HV counter, $C00008-$C0000F mirrors */
+        if ((addr & 0x1cu) >= 16u) return 0;   /* PSG/unused: read8 would recurse back here */
         if ((addr & 0x1cu) == 0u) {
             uint16_t v = 0;
             if ((m->vdp_code & 15u) == 0u) v = (uint16_t)(m->vram[m->vdp_addr & 0xffffu] << 8 |

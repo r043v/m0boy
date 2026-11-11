@@ -441,7 +441,8 @@ static void average_rows(uint16_t *a, const uint16_t *b) {
 
 /* ---- TMS9918 modes (Korean 150-in-1) ----------------------------------------- *
  *
- * The cartridge's MSX games leave the VDP in Graphics I/II (reg 0 without M4):
+ * The VDP falls into Graphics I/II, text and multicolour whenever M4 (reg 0
+ * bit 2) is clear, whatever the cartridge:
  * the Master System's VDP draws those modes like a TMS9918, with the colours
  * of its own fixed palette.  Only that cartridge pays for the code: the other
  * Master System firmwares never take this path (GG_KOREAN150 is constant).
@@ -645,7 +646,7 @@ void gg_render_line(unsigned y, uint16_t *out) {
                               * whole line, palette applied 1:1 — the indices
                               * renderers, no box filter, no window crop */
     uint8_t px[256];
-    if (GG_KOREAN150 && !(machine.vdp[0] & 4)) {
+    if (!(machine.vdp[0] & 4)) {
         tms_sprite_t t[4];
         const unsigned n = (machine.vdp[1] & 0x40) ? tms_sprites(y, t) : 0;
         tms_indices(y, px, t, n, 0xffffffffu);
@@ -655,7 +656,7 @@ void gg_render_line(unsigned y, uint16_t *out) {
     gg_render_indices(y, px);
     for (unsigned i = 0; i < GG_OUT_WIDTH; i++) out[i] = machine.pal[px[i]];
 #else
-    if (GG_KOREAN150 && !(machine.vdp[0] & 4)) { /* TMS9918 modes, below */
+    if (!(machine.vdp[0] & 4)) { /* TMS9918 modes, below */
         tms_sprite_t t[4];
         tms_render(y, out, t, (machine.vdp[1] & 0x40) ? tms_sprites(y, t) : 0);
         return;
@@ -671,7 +672,7 @@ static void vdp_line(unsigned y) {
     sprite_t spr[8];
     tms_sprite_t tms[4];
     unsigned n = 0;
-    const int legacy = GG_KOREAN150 && !(m->vdp[0] & 4); /* Graphics I/II, text, multicolour */
+    const int legacy = !(m->vdp[0] & 4); /* Graphics I/II, text, multicolour */
     if (legacy) {
         if (m->vdp[1] & 0x40) {
             n = tms_sprites(y, tms);
