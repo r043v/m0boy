@@ -5,6 +5,9 @@
  * its bits into eight 4-bit fields (gg_tables.h), so a row is decoded with
  * four loads, three shifts and three ORs, then each pixel is a field
  * extraction and a palette read (CRAM kept as panel RGB565). */
+#ifndef M0_TL
+#define M0_TL   /* deepeel builds a thread-local flavour with -DM0_TL=__thread */
+#endif
 #include "gg.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,9 +23,9 @@
 
 /* Master System: the CRAM spread for the box filter (true RGB565), and the
  * blends of palette 0 pairs (below) */
-static uint32_t spal[32];
-static uint16_t pair53[2][256];
-static uint8_t pairs_stale = 1;
+static M0_TL uint32_t spal[32];
+static M0_TL uint16_t pair53[2][256];
+static M0_TL uint8_t pairs_stale = 1;
 /* Master System colour: 6 bits, --BBGGRR */
 static void cram_colour_sms(unsigned i) {
     static const uint8_t c5[4] = { 0, 10, 21, 31 }, c6[4] = { 0, 21, 42, 63 };
@@ -47,8 +50,8 @@ static void cram_colour(unsigned i) {
 /* Sprites covering each band of 8 lines (64 sprites: two words), kept up to
  * date on every Y write; terminator, size or table changes rebuild. */
 #define GG_BANDS (GG_ACTIVE / 8)
-static uint32_t band_mask[GG_BANDS][2];
-static unsigned sat_end;
+static M0_TL uint32_t band_mask[GG_BANDS][2];
+static M0_TL unsigned sat_end;
 
 static inline int sprite_top(unsigned sy) { return sy >= 0xe0 ? (int)sy - 255 : (int)sy + 1; }
 static inline unsigned sprite_span(void) {
@@ -195,7 +198,7 @@ static unsigned gg_bg_tiles_c(uint16_t *o, const uint8_t *names_row, unsigned tx
 }
 #endif
 #ifdef GG_SELFTEST
-static int render_c; /* the self test renders both ways */
+static M0_TL int render_c; /* the self test renders both ways */
 #define BG_TILES(o, n, t, a) (render_c ? gg_bg_tiles_c(o, n, t, a) : gg_bg_tiles(o, n, t, a))
 #elif GG_RENDER_ASM
 #define BG_TILES gg_bg_tiles
@@ -456,9 +459,9 @@ typedef struct {
 
 /* TMS colour -> Master System colour (--BBGGRR) as the VDP shows it */
 static const uint8_t tms_sms[16] = { 0x00, 0x00, 0x08, 0x0c, 0x10, 0x30, 0x01, 0x3c, 0x02, 0x03, 0x05, 0x0f, 0x04, 0x33, 0x15, 0x3f };
-static uint32_t tms_spal[16];
-static uint16_t tms_solid[16]; /* five equal output pixels */
-static uint8_t tms_ready;
+static M0_TL uint32_t tms_spal[16];
+static M0_TL uint16_t tms_solid[16]; /* five equal output pixels */
+static M0_TL uint8_t tms_ready;
 static void tms_palette(void) {
     static const uint8_t c5[4] = { 0, 10, 21, 31 }, c6[4] = { 0, 21, 42, 63 };
     for (unsigned i = 0; i < 16; i++) {
@@ -775,7 +778,7 @@ uint8_t gg_vcounter(void) {
 #ifndef GG_STATUS_READ_T
 #define GG_STATUS_READ_T 10
 #endif
-static int vbl_read_early = -1;
+static M0_TL int vbl_read_early = -1;
 
 uint8_t gg_vdp_status_read(void) {
     gg_t *m = &machine;

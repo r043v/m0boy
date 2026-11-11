@@ -1,3 +1,6 @@
+#ifndef M0_TL
+#define M0_TL   /* deepeel builds a thread-local flavour with -DM0_TL=__thread */
+#endif
 #include "sg1000.h"
 static inline uint8_t sg_native_read(z80_t *c, uint16_t a) { (void)c; return sg1000_read(a); }
 static inline void sg_native_write(z80_t *c, uint16_t a, uint8_t v) { (void)c; sg1000_write(a, v); }
@@ -6,7 +9,7 @@ static inline void sg_native_write(z80_t *c, uint16_t a, uint8_t v) { (void)c; s
 #include "z80_ops.h"
 /* Opcode fetch as the generic decoder sees it: mapped, never a data read. */
 #if defined(SG_MSX_TRACE)
-extern int msx_in_fetch;
+extern M0_TL int msx_in_fetch;
 static inline uint8_t sg_fetch(uint16_t a) { msx_in_fetch = 1; const uint8_t v = sg1000_read(a); msx_in_fetch = 0; return v; }
 #define Z80_FAST_FETCH(a) sg_fetch((a))
 #else
@@ -18,7 +21,7 @@ static inline uint8_t sg_fetch(uint16_t a) { msx_in_fetch = 1; const uint8_t v =
 #include "m0_msx_layout.h"
 #endif
 
-sg1000_t machine;
+M0_TL sg1000_t machine;
 
 #if SG_MSX
 /* Profiling location of a pc: banked cartridges count page << 16 | pc (the
@@ -34,10 +37,12 @@ static uint32_t msx_location(uint16_t pc) {
  * the frame counter and the buttons the game receives (player 1, pause),
  * so that a session played in gm0 replays in the host harness (--input).
  * sg1000_reset references it: --gc-sections would drop it otherwise. */
+#ifndef M0_NO_INPUT_PROBE
 static const struct { char tag[8]; uint32_t version; const volatile void *frame, *buttons, *extra; }
     sg_input_probe __attribute__((used, aligned(4))) = { "m0input", 1, &machine.frames, &machine.buttons[0], &machine.pause };
+#endif
 
-uintptr_t sg_stack_limit;
+M0_TL uintptr_t sg_stack_limit;
 
 const uint32_t sg1000_palette[16] = {
     0x000000, 0x000000, 0x21c842, 0x5edc78, 0x5455ed, 0x7d76fc, 0xd4524d, 0x42ebf5,
@@ -205,7 +210,9 @@ void sg1000_init(const uint8_t *rom, size_t size, uint8_t *cart_ram) {
 }
 
 void sg1000_reset(void) {
+#ifndef M0_NO_INPUT_PROBE
     __asm__ volatile("" : : "r"(&sg_input_probe));
+#endif
     sg1000_t *m = &machine;
     z80_t keep = m->cpu;
     z80_reset(&m->cpu);

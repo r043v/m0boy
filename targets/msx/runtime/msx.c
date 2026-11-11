@@ -18,6 +18,9 @@
  * CHGET, GTPAD, GTPDL) and the frame counter JIFFY.  Not covered: the BIOS
  * font (text modes show no glyphs), CHPUT and the other text routines, the
  * cassette, printer and disk routines, slot expansion, MSX2. */
+#ifndef M0_TL
+#define M0_TL   /* deepeel builds a thread-local flavour with -DM0_TL=__thread */
+#endif
 #include "sg1000.h"
 #if SG_MSX
 #include "m0_msx_layout.h"
@@ -41,7 +44,7 @@
 #endif
 #ifdef SG_MSX_TRACE
 uint32_t *msx_trace_count, *msx_trace_last;
-int msx_in_fetch;
+M0_TL int msx_in_fetch;
 #endif
 #if SG_MSX_PACKED
 #include "m0_rom_codec.h"
@@ -51,8 +54,8 @@ int msx_in_fetch;
 extern const uint32_t msx_rom_records[];
 extern const uint8_t msx_rom_blob[];
 static uint8_t rom_cache[MSX_CACHE_SECTORS][512] __attribute__((aligned(4)));
-static uint32_t rom_cache_tag[MSX_CACHE_SECTORS];
-uint32_t msx_rom_decoded;
+static M0_TL uint32_t rom_cache_tag[MSX_CACHE_SECTORS];
+M0_TL uint32_t msx_rom_decoded;
 
 static uint8_t msx_rom_byte(uint32_t offset) {
     const uint32_t sector = offset >> 9, record = msx_rom_records[sector];
@@ -86,7 +89,7 @@ static uint8_t cart_byte(unsigned w, uint16_t a) {
 #endif
 }
 
-static int mapper_override = -1;
+static M0_TL int mapper_override = -1;
 void msx_set_mapper(int mapper) { mapper_override = mapper; }
 int msx_mapper_forced(void) { return mapper_override; }
 
@@ -151,7 +154,7 @@ enum {
 };
 
 /* Time the routines take; none while the machine is being set up. */
-static int booting;
+static M0_TL int booting;
 static void spend(unsigned cycles) { if (!booting) machine.cyc += cycles; }
 
 static uint8_t rd(uint16_t a) { return sg1000_read(a); }

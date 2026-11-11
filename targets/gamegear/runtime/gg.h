@@ -1,5 +1,8 @@
 #ifndef M0_GG_H
 #define M0_GG_H
+#ifndef M0_TL
+#define M0_TL
+#endif
 /* Game Gear and Master System runtime shared by recompiled code and the Z80
  * interpreter (the Master System: GG_IS_SMS, notes below).
  *
@@ -163,10 +166,10 @@ unsigned gg_cache_ways(void);
 int gg_cache_grow(void);
 int gg_cache_shrink(void);
 extern uint32_t gg_cache_loads;  /* blocks the cache loaded (ROM and cartridge RAM) */
-extern uint32_t sg_exec_refused; /* sg_exec calls refused for want of stack (unwinds) */
+extern M0_TL uint32_t sg_exec_refused; /* sg_exec calls refused for want of stack (unwinds) */
 /* Nonzero: sg_exec calls gg_platform_pool on entry with its frame above
  * this address (the stack pool's blocks taken back, m0_stack_pool_run). */
-extern uintptr_t sg_pool_sp;
+extern M0_TL uintptr_t sg_pool_sp;
 void gg_platform_pool(void);
 #endif
 #endif
@@ -250,13 +253,13 @@ typedef struct {
     uint8_t cart_ram_used;        /* cartridge RAM was enabled */
 } gg_t;
 
-extern gg_t machine;
-extern uintptr_t sg_stack_limit;
+extern M0_TL gg_t machine;
+extern M0_TL uintptr_t sg_stack_limit;
 
 void gg_init(const uint8_t *rom, size_t size, uint8_t *cart_ram);
 /* bench watch: log every work-RAM write to GG_WATCH_ADDR (hex) with pc/cycle/
  * frame — gg_write sees every store (the interp's z80_wr lands here) */
-extern int gg_watch_addr;
+extern M0_TL int gg_watch_addr;
 void gg_watch_dump(unsigned a, uint8_t v, unsigned pc, uint32_t cyc, unsigned fr);
 /* The slots' pointers again from the pages (a save state's load). */
 void gg_remap(void);
@@ -377,7 +380,7 @@ uint8_t gg_vcounter(void);
 void gg_vdp_frame_start(void);       /* new frame: scroll latch, line counter */
 #ifdef GG_ROM_TRACE
 void gg_vdp_restore(void);            /* host explorer: after the machine is copied back */
-extern uint32_t gg_new_locations;     /* locations executed for the first time */
+extern M0_TL uint32_t gg_new_locations;     /* locations executed for the first time */
 #endif
 uint32_t gg_vdp_next_event(void);    /* next line interrupt, or 0 */
 void gg_line_counter_catchup(void);

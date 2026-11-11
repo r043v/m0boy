@@ -1,3 +1,6 @@
+#ifndef M0_TL
+#define M0_TL   /* deepeel builds a thread-local flavour with -DM0_TL=__thread */
+#endif
 #include "gg.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,7 +18,7 @@ static inline int gg_rom_offset(uint16_t a, uint32_t *offset) {
 }
 /* gg_read and RD trace each read (gg_trace_read): an instruction byte while
  * the interpreter fetches, a data read otherwise. */
-static unsigned trace_fetching;
+static M0_TL unsigned trace_fetching;
 void gg_trace_read(uint16_t a) {
     if (!machine.coverage) return;
     uint32_t offset;
@@ -49,10 +52,10 @@ static inline void gg_native_write(z80_t *c, uint16_t a, uint8_t v) { (void)c; g
 #include "m0_rom_codec.h"
 #endif
 
-gg_t machine;
+M0_TL gg_t machine;
 
 /* bench watch: log every work-RAM write to GG_WATCH_ADDR (hex) */
-int gg_watch_addr = -1;
+M0_TL int gg_watch_addr = -1;
 void gg_watch_dump(unsigned a, uint8_t v, unsigned pc, uint32_t cyc, unsigned fr) {
     fprintf(stderr, "watch %04x <- %02x pc=%04x cyc=%u fr=%u\n", a, v, pc, cyc, fr);
 }
@@ -62,10 +65,12 @@ void gg_watch_dump(unsigned a, uint8_t v, unsigned pc, uint32_t cyc, unsigned fr
  * the frame counter and the buttons the game receives, so that a session
  * played in gm0 replays in the host harness (--input).  gg_reset
  * references it: --gc-sections would drop it otherwise. */
+#ifndef M0_NO_INPUT_PROBE
 static const struct { char tag[8]; uint32_t version; const volatile void *frame, *buttons, *extra; }
     gg_input_probe __attribute__((used, aligned(4))) = { "m0input", 1, &machine.frames, &machine.buttons, 0 };
+#endif
 
-uintptr_t sg_stack_limit;
+M0_TL uintptr_t sg_stack_limit;
 
 /* ---- bus ------------------------------------------------------------------ */
 
@@ -192,8 +197,8 @@ static int rom_sector(uint32_t sec, uint8_t *dst) {
 #endif
 
 #if GG_CART_ON_CARD
-static uint8_t save_pending;
-static uint32_t save_change;
+static M0_TL uint8_t save_pending;
+static M0_TL uint32_t save_change;
 #define M0C_SAVE_READ(sec, dst) gg_platform_save_read((sec), (dst))
 #define M0C_SAVE_WRITE(sec, src) gg_platform_save_write((sec), (src))
 #define M0C_PENDING save_pending
@@ -483,7 +488,9 @@ void gg_init_system(const uint8_t *rom, size_t size, uint8_t *cart_ram, int sms)
 }
 
 void gg_reset(void) {
+#ifndef M0_NO_INPUT_PROBE
     __asm__ volatile("" : : "r"(&gg_input_probe));
+#endif
     gg_t *m = &machine;
     z80_t keep = m->cpu;
     z80_reset(&m->cpu);
@@ -589,7 +596,7 @@ void sg_sync(void) {
 }
 
 /* Take an NMI or an acceptable IRQ: push pc, jump to the vector. */
-static int nmi_trace = -1;
+static M0_TL int nmi_trace = -1;
 static int irq_enter(void) {
     gg_t *m = &machine;
     if (nmi_trace < 0) nmi_trace = getenv("GG_BTN_TRACE") ? 1 : 0;
@@ -660,8 +667,8 @@ void sg_halt(void) {
  * reserve; 768 there refused every native entry once the stack was under
  * ~1.4 KiB (Master System, 2026-10-21). */
 #if GG_CACHE_DYN
-uint32_t sg_exec_refused;
-uintptr_t sg_pool_sp;
+M0_TL uint32_t sg_exec_refused;
+M0_TL uintptr_t sg_pool_sp;
 #endif
 
 static void dispatch_one(int compiled) {
@@ -721,7 +728,7 @@ static void note_dynamic(const z80_decoded_t *d, uint16_t sp, uint16_t pc) {
 /* Host profiling: one more execution of the instruction at loc; the
  * explorer (gg_host --explore) counts the locations never seen before. */
 #ifdef GG_ROM_TRACE
-uint32_t gg_new_locations;
+M0_TL uint32_t gg_new_locations;
 static inline void gg_cover(uint32_t loc) {
     if (!machine.coverage[loc]) gg_new_locations++;
     machine.coverage[loc]++;

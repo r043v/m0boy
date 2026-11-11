@@ -6,6 +6,9 @@
  * and II: 5 of the 8 pixels of each tile, the nearest-neighbour 256 -> 160
  * columns); text and multicolour modes, and the host's reference image, go
  * through the 256-pixel colour-index renderer. */
+#ifndef M0_TL
+#define M0_TL   /* deepeel builds a thread-local flavour with -DM0_TL=__thread */
+#endif
 #include "sg1000.h"
 #include <string.h>
 
@@ -126,8 +129,8 @@ const uint32_t sg_tile_wv[256] = {
 /* mix_row(c): the 9 blends of colour byte c (byte-addressed: entry w at
  * offset 2w); mix_prepare first, once per line.  A full table (4.5 KiB) or,
  * with cartridge RAM (SG_LOW_RAM), a 16-entry cache filled on demand. */
-static uint16_t mix_backdrop;
-static uint8_t mix_ready;
+static M0_TL uint16_t mix_backdrop;
+static M0_TL uint8_t mix_ready;
 static inline void mix_fill(uint16_t *row, unsigned c, const uint16_t *pal, uint16_t bd) {
     uint32_t f = m0_spread565((c >> 4) ? pal[c >> 4] : bd), b = m0_spread565((c & 15) ? pal[c & 15] : bd);
     for (unsigned w = 0; w <= 8; w++) row[w] = m0_panel(m0_fold565(w * f + (8 - w) * b));
@@ -143,8 +146,8 @@ typedef struct {
     uint16_t row[SG_MIX_SLOTS][9];
 } sg_mix_t;
 sg_mix_t sg_mix __attribute__((aligned(4)));
-static uint16_t mix_owner[SG_MIX_SLOTS]; /* colour byte of each slot, 0xffff: free */
-static uint8_t mix_hand;
+static M0_TL uint16_t mix_owner[SG_MIX_SLOTS]; /* colour byte of each slot, 0xffff: free */
+static M0_TL uint8_t mix_hand;
 static void mix_reset(const uint16_t *pal, uint16_t bd) {
     (void)pal; (void)bd;
     memset(sg_mix.off, 0, sizeof sg_mix.off);
@@ -168,7 +171,7 @@ static inline const uint8_t *mix_row_keep(unsigned c, const uint8_t *keep) {
 static inline const uint8_t *mix_row(unsigned c) { return mix_row_keep(c, 0); }
 #define SG_MIX_BASE (&sg_mix)
 #elif !SG_LOW_RAM
-static uint16_t mix[256][9];
+static M0_TL uint16_t mix[256][9];
 static void mix_reset(const uint16_t *pal, uint16_t bd) {
     for (unsigned c = 0; c < 256; c++) mix_fill(mix[c], c, pal, bd);
 }
@@ -176,8 +179,8 @@ static inline const uint8_t *mix_row(unsigned c) { return (const uint8_t *)mix[c
 #define SG_MIX_BASE mix
 #else
 #define SG_MIX_CACHE 16
-static uint16_t mix[SG_MIX_CACHE][9];
-static int16_t mix_tag[SG_MIX_CACHE];
+static M0_TL uint16_t mix[SG_MIX_CACHE][9];
+static M0_TL int16_t mix_tag[SG_MIX_CACHE];
 static void mix_reset(const uint16_t *pal, uint16_t bd) {
     (void)pal; (void)bd;
     for (unsigned i = 0; i < SG_MIX_CACHE; i++) mix_tag[i] = -1;
@@ -192,8 +195,8 @@ static inline const uint8_t *mix_row(unsigned c) {
 }
 #endif
 /* machine.palette is set by sg1000_init only, which calls this */
-static uint32_t spal[16];
-static unsigned spal_backdrop = ~0u;
+static M0_TL uint32_t spal[16];
+static M0_TL unsigned spal_backdrop = ~0u;
 void sg1000_palette_changed(void) {
     mix_ready = 0;
     spal_backdrop = ~0u;
@@ -296,7 +299,7 @@ const uint8_t sg_tile_w8[256][8] = {
 #endif
 /* SG_SELFTEST: both paths built, chosen at run time (render selftest) */
 #ifdef SG_SELFTEST
-static int sg_render_c;
+static M0_TL int sg_render_c;
 #define SG_USE_C sg_render_c
 #else
 #define SG_USE_C 0
@@ -313,8 +316,8 @@ static int sg_render_c;
 #define SG_MASK_ROWS SG_HEIGHT
 #define SG_MASK_SHIFT 0
 #endif
-static uint32_t line_mask[SG_MASK_ROWS];
-static unsigned sat_end; /* sprites before the terminator */
+static M0_TL uint32_t line_mask[SG_MASK_ROWS];
+static M0_TL unsigned sat_end; /* sprites before the terminator */
 
 static inline int sprite_top(unsigned sy) { return sy > 208 ? (int)sy - 255 : (int)sy + 1; }
 static void span_bits(unsigned sy, unsigned span, uint32_t bit, int set) {
@@ -660,7 +663,7 @@ void sg1000_filter_line(const uint8_t *pixels, uint16_t *out) {
 }
 
 /* the sprites of the previous line, for the pair drawn with it */
-static sprite_t prev_spr[4];
+static M0_TL sprite_t prev_spr[4];
 static unsigned prev_n, prev_y = ~0u;
 
 /* Device row from two source lines (ya, ya + 1) of one tile row: tiles

@@ -1,5 +1,8 @@
 #ifndef M0_SG1000_H
 #define M0_SG1000_H
+#ifndef M0_TL
+#define M0_TL
+#endif
 /* SG-1000 runtime shared by recompiled code and the Z80 interpreter.
  *
  * Time is a T-state counter (machine.cyc) with two device events per frame:
@@ -141,10 +144,10 @@ typedef struct {
 #endif
 } sg1000_t;
 
-extern sg1000_t machine;
+extern M0_TL sg1000_t machine;
 extern const uint32_t sg1000_palette[16];
 /* Below this stack pointer regions and nested dispatch loops unwind. */
-extern uintptr_t sg_stack_limit;
+extern M0_TL uintptr_t sg_stack_limit;
 
 void sg1000_init(const uint8_t *rom, size_t size, uint8_t *cart_ram);
 void sg1000_reset(void);
