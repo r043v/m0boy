@@ -173,6 +173,16 @@ static void vdp_dma(MdFull *m) {
             vdp_store(m, v);
         }
     }
+    if (mode < 2u) {
+        /* The VDP owns the 68000 bus for the whole transfer: the CPU is frozen for length / rate lines
+         * (rate in words per line: blanking vs active display, H40 vs H32; VRAM writes move bytes, so twice the slots). */
+        const int h40 = (m->vdp_reg[12] & 0x81u) == 0x81u;
+        const int blank = m->line >= 224u || !(m->vdp_reg[1] & 0x40u);
+        const uint32_t rate = blank ? (h40 ? 204u : 166u) : (h40 ? 18u : 16u);
+        const uint32_t reads = length << ((m->vdp_code & 0x0fu) == 1u);
+        const uint32_t stall = 488u * reads / rate;
+        m->cycles += stall; m->frame_cycles += stall;
+    }
     m->vdp_reg[19] = m->vdp_reg[20] = 0;
     m->vdp_reg[21] = source & 255u;
     m->vdp_reg[22] = (source >> 8) & 255u;
