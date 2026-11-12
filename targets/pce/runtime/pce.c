@@ -279,6 +279,7 @@ void pce_reset(void) {
 
 /* the frame cut can start on any VDC line (a reference core cuts its frames elsewhere): pce_frame_start_line */
 unsigned pce_frame_start_line;
+int pce_boot_offset;   /* debug: CPU cycles the very first line starts ahead (+) of / behind (-) the video */
 /* debug: snapshot the work RAM this many CPU cycles before the end of the frame's last line (a sub-line frame cut); 0 = off */
 unsigned pce_cut_cycles; uint8_t pce_cut_wram[0x2000]; int pce_cut_valid;
 unsigned pce_scale_permille = 1000;
@@ -292,7 +293,7 @@ void pce_frame(void) {
     const unsigned total = (p->vce_cr & 4) ? 263u : 262u;
     for (unsigned fl = 0; fl < total; fl++) {
         const unsigned line = (fl + pce_frame_start_line) % total;
-        if (!cpu_target_init) { cpu_target = p->cpu.cycles; cpu_target_init = 1; }
+        if (!cpu_target_init) { cpu_target = p->cpu.cycles + (uint32_t)pce_boot_offset; cpu_target_init = 1; }
         p->line_cycles = cpu_target;   /* the nominal start of the line: a stall that overshot the last one is inside this one */
         /* 1365 master clocks per line: 455 CPU cycles at CSH (7.16 MHz),
          * 1365/12 ≈ 114 at CSL (1.79 MHz) — the game boots in CSL and the
