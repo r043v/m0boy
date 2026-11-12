@@ -79,6 +79,8 @@ static void vce_write(unsigned at, uint8_t v) {
  * attached — Raiden's boot probe keys on it) */
 static uint8_t pad_read(void) {
     unsigned nibble;
+    if (machine.pad_idx > 4) return 0x30 | 0x80;                     /* past the tap's five ports: all bits low */
+    if (machine.pad_idx > 0) return (uint8_t)(0x0F | 0x30 | 0x80);   /* ports 2..5: nothing plugged */
     if (machine.pad_sel)
         nibble = (machine.input >> 4) & 0x0F; /* Up Right Down Left */
     else
@@ -215,7 +217,10 @@ void pce_bus_write(uint16_t at, uint8_t v) {
         }
         break;
     case 0x1000: /* the pad's SEL and CLR */
-        machine.pad_sel = v & 1;
+        { const unsigned sel = v & 1, clr = (v >> 1) & 1;
+          if (sel && !machine.pad_clr && clr) machine.pad_idx = 0;                          /* CLR 0->1 with SEL high: back to port 1 */
+          else if (!machine.pad_clr && !clr && !machine.pad_sel && sel && machine.pad_idx < 255) machine.pad_idx++;   /* SEL 0->1, CLR low: next port */
+          machine.pad_sel = (uint8_t)sel; machine.pad_clr = (uint8_t)clr; }
         break;
     case 0x1400: /* the interrupt controller */
         if (!(at & 2)) break;
@@ -241,7 +246,7 @@ void pce_init(const uint8_t *rom, uint32_t rom_bytes) {
     p->row_raw = 0;
     p->host = 0;
     p->input = 0;
-    p->pad_sel = 0;
+    p->pad_sel = 0; p->pad_clr = 0; p->pad_idx = 0;
     p->have_frame = 0;
     p->first_active_line = 0;
     pce_reset();
@@ -265,7 +270,7 @@ void pce_reset(void) {
     p->timer_reload = 0;
     p->timer_irq = 0;
     p->timer_clock = 0;
-    p->pad_sel = 0;
+    p->pad_sel = 0; p->pad_clr = 0; p->pad_idx = 0;
     p->frames = 0;
     p->have_frame = 0;
     update_irq();

@@ -50,7 +50,7 @@ typedef struct {
     uint32_t timer_clock;
     /* the pad: the host's byte, the port's SEL latch */
     uint8_t input;
-    uint8_t pad_sel;
+    uint8_t pad_sel, pad_clr, pad_idx;   /* SEL / CLR and the multitap's port counter (the reference core enables the tap) */
     uint32_t frames;
     /* VDC wait states (the reference core stalls a VRAM access while the SATB DMA holds the bus) */
     uint64_t line_master;   /* master clocks at the current line's start */
