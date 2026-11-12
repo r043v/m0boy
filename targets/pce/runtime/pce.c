@@ -116,6 +116,7 @@ static void update_irq(void) {
  * clock being 4/3/2/2 master clocks by the dot clock) and the next VDC data access waits for the DMA's end */
 int pce_trace;
 unsigned pce_stat_waits;
+unsigned pce_vdc_waits = 1;   /* 0: no VRAM wait states behind SATB DMA / the commit window (PCEHawk does not model them) */
 extern unsigned vdc_master_per_cycle;
 static uint64_t now_master(void) {
     return machine.line_master + (uint64_t)(machine.cpu.cycles - machine.line_cycles) * (machine.cpu.speed ? 3u : 12u);
@@ -131,6 +132,7 @@ static void vdc_wait(void) {
 }
 unsigned pce_mys_off = 980, pce_mys_w = 90;   /* a VRAM commit is held in this window of each line (fitted on TurboNyma traces) */
 static void vdc_park(void) {
+    if (!pce_vdc_waits) return;
     const uint64_t now = now_master();
     if (now < machine.sat_end) machine.vdc_pending = 1;
     else if (pce_mys_off) {   /* the HuC6270 holds a VRAM commit for 16 dot clocks, 48 clocks after the hsync starts */
