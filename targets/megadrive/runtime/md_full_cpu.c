@@ -505,7 +505,7 @@ void md_full_frame(MdFull *m, int native) {
     for (unsigned line = 0; line < FRAME_LINES && !m->fault; ++line) {
         m->line = (uint16_t)line;
         if (line == ACTIVE_LINES) m->irq_pending = 1;        /* vertical blank */
-        run_slice(m, (line + 1u) * LINE_CYCLES, native);
+        run_slice(m, (line + 1u) * 3420u / 7u, native);
         if (line < ACTIVE_LINES) {
             /* the frontend hook first (the ESP32 one captures the line's
              * registers for its second core), then the reference row */
@@ -519,7 +519,7 @@ void md_full_frame(MdFull *m, int native) {
             else --m->hint_counter;
         } else m->hint_counter = (uint8_t)m->vdp_reg[10];
     }
-    m->frame_cycles -= FRAME_LINES * LINE_CYCLES;
+    m->frame_cycles -= FRAME_LINES * 3420u / 7u;
     ++m->frames;
     md_full_sound_frame(m);
 }
