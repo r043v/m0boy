@@ -499,22 +499,24 @@ static void run_slice(MdFull *m, uint32_t end, int native) {
     }
 }
 
-enum { LINE_CYCLES = 488, FRAME_LINES = 262, ACTIVE_LINES = 224 };
+enum { LINE_CYCLES = 488, FRAME_LINES = 262, ACTIVE_LINES = 224, VBLANK_LINES = 38 };
+/* A frame starts at the vertical interrupt (line 0 here is VDP line 224), like the reference core's frame and
+ * the way pads are latched: the game reads its input in the V-int that opens the frame. Active line n is slot 38+n. */
 
 void md_full_frame(MdFull *m, int native) {
     for (unsigned line = 0; line < FRAME_LINES && !m->fault; ++line) {
         m->line = (uint16_t)line;
-        if (line == ACTIVE_LINES) m->irq_pending = 1;        /* vertical blank */
+        if (line == 0) m->irq_pending = 1;        /* vertical blank */
         run_slice(m, (line + 1u) * 3420u / 7u, native);
-        if (line < ACTIVE_LINES) {
+        if (line >= VBLANK_LINES) {
             /* the frontend hook first (the ESP32 one captures the line's
              * registers for its second core), then the reference row */
-            if (m->line_hook) m->line_hook(m->hook_user, m, line);
-            if (m->screen) md_full_render_line(m, line, m->screen + line * 320u);
+            if (m->line_hook) m->line_hook(m->hook_user, m, line - VBLANK_LINES);
+            if (m->screen) md_full_render_line(m, line - VBLANK_LINES, m->screen + (line - VBLANK_LINES) * 320u);
         }
         /* The horizontal counter counts active lines (and the first blank
          * one) and is reloaded during the vertical blank. */
-        if (line <= ACTIVE_LINES) {
+        if (line == 0 || line >= VBLANK_LINES) {
             if (m->hint_counter == 0) { m->hint_counter = (uint8_t)m->vdp_reg[10]; m->hint_pending = 1; }
             else --m->hint_counter;
         } else m->hint_counter = (uint8_t)m->vdp_reg[10];

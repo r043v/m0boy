@@ -60,7 +60,7 @@ static uint8_t pad_read(MdFull *m) {
 
 static uint16_t vdp_status(const MdFull *m) {
     /* A full NTSC frame is 262 lines; the active display lasts 224. */
-    const unsigned line = (m->frame_cycles * 7u / 3420u);
+    const unsigned line = (m->frame_cycles * 7u / 3420u + 224u) % 262u;
     return (uint16_t)(0x3400u | (line >= 224 ? 0x0008u : 0u) |
                       (line >= 224 && m->irq_pending ? 0x0080u : 0u));
 }
@@ -113,7 +113,7 @@ uint16_t md_full_read16(MdFull *m, uint32_t addr) {
     if (addr & 1u) { m->fault = 3; m->fault_pc = m->pc; m->slice_limit = 0; return 0xffff; }
     if (addr >= 0xc00000u && addr <= 0xc0001fu) {
         if ((addr & 0x1cu) == 4u) { m->vdp_pending = 0; return vdp_status(m); }
-        if ((addr & 0x1cu) == 8u || (addr & 0x1cu) == 12u) return (uint16_t)(((m->frame_cycles * 7u / 3420u)) << 8);   /* HV counter, $C00008-$C0000F mirrors */
+        if ((addr & 0x1cu) == 8u || (addr & 0x1cu) == 12u) return (uint16_t)((((m->frame_cycles * 7u / 3420u) + 224u) % 262u) << 8);   /* HV counter, $C00008-$C0000F mirrors */
         if ((addr & 0x1cu) >= 16u) return 0;   /* PSG/unused: read8 would recurse back here */
         if ((addr & 0x1cu) == 0u) {
             uint16_t v = 0;
@@ -177,7 +177,7 @@ static void vdp_dma(MdFull *m) {
         /* The VDP owns the 68000 bus for the whole transfer: the CPU is frozen for length / rate lines
          * (rate in words per line: blanking vs active display, H40 vs H32; VRAM writes move bytes, so twice the slots). */
         const int h40 = (m->vdp_reg[12] & 0x81u) == 0x81u;
-        const int blank = m->line >= 224u || !(m->vdp_reg[1] & 0x40u);
+        const int blank = ((m->line + 224u) % 262u) >= 224u || !(m->vdp_reg[1] & 0x40u);
         const uint32_t rate = blank ? (h40 ? 204u : 166u) : (h40 ? 18u : 16u);
         const uint32_t reads = length << ((m->vdp_code & 0x0fu) == 1u);
         const uint32_t stall = (3420u * reads / 7u) / rate;
