@@ -524,11 +524,26 @@ enum { LINE_CYCLES = 488, FRAME_LINES = 262, ACTIVE_LINES = 224, VBLANK_LINES = 
 /* A frame starts at the vertical interrupt (line 0 here is VDP line 224), like the reference core's frame and
  * the way pads are latched: the game reads its input in the V-int that opens the frame. Active line n is slot 38+n. */
 
+/* End of a line's slice.  Exact mode follows the reference: lines run 3419 master clocks in the blanking (38) and 3418 in the
+ * active display (224), the frame ends at 895780, and the 68000 runs while 7 * time + carry < the target. */
+static uint32_t md_line_end(const MdFull *m, unsigned line) {
+    if (!m->exact_clock) return (line + 1u) * (m->line_master ? m->line_master : 3420u) / 7u;
+    uint32_t t = line < 38u ? (line + 1u) * 3419u : 38u * 3419u + (line - 38u + 1u) * 3418u;
+    if (line == 261u) t = 895780u;
+    return (t - m->clock_off + 6u) / 7u;
+}
+
+static void md_frame_wrap(MdFull *m) {
+    if (!m->exact_clock) { m->frame_cycles -= FRAME_LINES * (m->line_master ? m->line_master : 3420u) / 7u; return; }
+    const uint32_t x = 7u * m->frame_cycles + m->clock_off - 895780u;
+    m->frame_cycles = x / 7u; m->clock_off = (uint8_t)(x % 7u);
+}
+
 void md_full_frame(MdFull *m, int native) {
     for (unsigned line = 0; line < FRAME_LINES && !m->fault; ++line) {
         m->line = (uint16_t)line;
         if (line == 0) m->irq_pending = !m->no_vint0;        /* vertical blank */
-        run_slice(m, (line + 1u) * (m->line_master ? m->line_master : 3420u) / 7u, native);
+        run_slice(m, md_line_end(m, line), native);
         if (line >= VBLANK_LINES) {
             /* the frontend hook first (the ESP32 one captures the line's
              * registers for its second core), then the reference row */
@@ -542,7 +557,7 @@ void md_full_frame(MdFull *m, int native) {
             else --m->hint_counter;
         } else m->hint_counter = (uint8_t)m->vdp_reg[10];
     }
-    m->frame_cycles -= FRAME_LINES * (m->line_master ? m->line_master : 3420u) / 7u;
+    md_frame_wrap(m);
     m->no_vint0 = 0;
     ++m->frames;
     md_full_sound_frame(m);

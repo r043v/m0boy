@@ -34,7 +34,8 @@ void md_full_reset(MdFull *m) {
     md_full_audio_reset(m);
     /* DP_MD_POWERON=gpgx: the 68000 leaves reset at VDP line 159 (HV counter $9F21 measured on a VA4 MD1, as Genesis Plus GX
      * models it), not at the V-int; frame slot 0 is VDP line 224, so execution starts 197 lines and 1004 master clocks in. */
-    m->line_master = getenv("DP_MD_CLOWN_CLOCK") ? (uint16_t)(atoi(getenv("DP_MD_CLOWN_CLOCK")) > 1 ? atoi(getenv("DP_MD_CLOWN_CLOCK")) : 3419) : 3420u;
+    { const char *ck = getenv("DP_MD_CLOWN_CLOCK"); m->exact_clock = ck && !strcmp(ck, "exact"); m->clock_off = 0; }
+    m->line_master = getenv("DP_MD_CLOWN_CLOCK") ? (uint16_t)(!strcmp(getenv("DP_MD_CLOWN_CLOCK"), "exact") ? 3419 : atoi(getenv("DP_MD_CLOWN_CLOCK")) > 1 ? atoi(getenv("DP_MD_CLOWN_CLOCK")) : 3419) : 3420u;
     const char *po = getenv("DP_MD_POWERON");
     if (po && !strcmp(po, "gpgx")) { m->frame_cycles = (197u * 3420u + 1004u) / 7u; m->no_vint0 = 1; }
 }

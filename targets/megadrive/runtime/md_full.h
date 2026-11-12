@@ -51,6 +51,7 @@ typedef struct MdFull {
     /* Optional: every YM2612 data write, with the FM sample it precedes. */
     void (*ym_log)(void *user, uint64_t sample, unsigned bank, uint8_t reg, uint8_t value);
     void *ym_log_user;
+    uint8_t exact_clock, clock_off;        /* DP_MD_CLOWN_CLOCK=exact: master-clock bookkeeping of the reference (frame 895780, carry in master units) */
     uint16_t line_master;                  /* master clocks per line (3420; 3419 with DP_MD_CLOWN_CLOCK, the reference core's 60 Hz frame) */
     uint8_t no_vint0;                      /* power-on phase: the first frame's opening V-int never happened */
     uint8_t stopped, fault, irq_pending;   /* irq_pending: vertical interrupt */
