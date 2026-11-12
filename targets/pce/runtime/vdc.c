@@ -521,8 +521,7 @@ void vdc_line(vdc_t *v, unsigned line) {
         v->vcounter = M_vdc_VSW + 1;
         v->rcr_count = 0;
         v->bg_y = v->byr;
-        v->vb_test = 0;
-        v->sat_test = 0;
+        /* vb_test / sat_test survive the vsync as in the HuC6270: a VD pending in the active area fires right after it */
         v->active_started = 0;
         v->active_width = v->row_width;
         v->active_height = (unsigned)(M_vdc_VDW + 1);
