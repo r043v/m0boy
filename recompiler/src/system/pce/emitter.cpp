@@ -945,7 +945,7 @@ bool Emitter::emit_ins(std::ostream& o, const Ins& in, bool t_zero, bool tail) {
     case Shape::stv: {
         const char* port = op == Op::st0 ? "0x0000" : op == Op::st1 ? "0x0002" : "0x0003";
         /* ST0/ST1/ST2 #imm write the immediate, not A (mednafen) */
-        body = std::string("pce_bus_write(") + port + ", " + hex(in.o[0], 2) + ");";
+        body = std::string("PCE_BUS_SYNC(); pce_bus_write(") + port + ", " + hex(in.o[0], 2) + "); PCE_BUS_DONE();";
         break;
     }
     case Shape::block: {
@@ -962,9 +962,9 @@ bool Emitter::emit_ins(std::ostream& o, const Ins& in, bool t_zero, bool tail) {
                "PCE_PUSH(y_); PCE_PUSH(a_); PCE_PUSH(x_); "
                "uint16_t src = (uint16_t)sl_, dst = (uint16_t)dl_, len = (uint16_t)ln_; "
                "unsigned alt = 0; uint32_t n_ = 0; "
-               "do { " + std::string(loop_body[which]) + "; alt ^= 1; len--; n_++; } while (len); "
+               "do { " + std::string(loop_body[which]) + "; alt ^= 1; len--; n_++; budget -= 6; } while (len); "
                "x_ = PCE_POP(); a_ = PCE_POP(); y_ = PCE_POP(); "
-               "budget -= 17u + 6u * n_; }";
+               "(void)n_; budget -= 17u; }";
         cycles = 0; /* subtracted inside */
         break;
     }

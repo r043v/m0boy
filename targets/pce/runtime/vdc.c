@@ -390,6 +390,7 @@ static void run_vram_dma(vdc_t *v) {
     } while (len != 0xFFFF);
     v->sour = src;
     v->desr = dst;
+    { extern unsigned vdc_master_per_cycle; v->dma_master = ((unsigned)v->lenr + 1u) * 2u * vdc_master_per_cycle; }
     if (v->dcr & 0x02) {   /* a word per 2 dot-clock cycles: the end flag rises when the transfer would be done */
         extern unsigned vdc_master_per_cycle;
         unsigned master = (unsigned)(((unsigned)v->lenr + 1u) * 2u * vdc_master_per_cycle);

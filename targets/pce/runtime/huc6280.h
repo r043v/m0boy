@@ -36,6 +36,7 @@ typedef struct {
     uint8_t a, x, y, s, p;
     uint16_t pc;
     uint32_t cycles;
+    uint32_t gen_until;   /* the slice end compiled regions measure their budget against */
     uint32_t steal;       /* wait states the bus asked for: charged after the instruction */
     uint8_t mpr[8];
     uint8_t irq_low;      /* the latched sources the mask lets through */

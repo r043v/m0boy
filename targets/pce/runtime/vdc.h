@@ -34,6 +34,7 @@ typedef struct {
     uint8_t select;
     uint16_t dma_lines;    /* lines left before a VRAM DMA's end flag (DV) rises */
     uint8_t dma_dv;
+    uint32_t dma_master;   /* master clocks of the VRAM DMA just started (the bus waits it out behind a pending write) */
     uint8_t sat_started;   /* a SATB DMA began at this line (the host charges its bus time) */
     uint16_t mawr, marr;
     uint16_t cr, rcr, bxr, byr, mwr;

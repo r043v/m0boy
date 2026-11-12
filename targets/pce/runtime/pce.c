@@ -1,3 +1,4 @@
+#include <stdio.h>
 #ifndef M0_TL
 #define M0_TL   /* deepeel builds with -DM0_TL=__thread: one machine per worker thread */
 #endif
@@ -111,7 +112,9 @@ static void update_irq(void) {
 
 /* HuC6270 bus wait states.  The reference core parks a VRAM access behind a running SATB DMA (1024 VDC clocks, a
  * clock being 4/3/2/2 master clocks by the dot clock) and the next VDC data access waits for the DMA's end */
+int pce_trace;
 unsigned pce_stat_waits;
+extern unsigned vdc_master_per_cycle;
 static uint64_t now_master(void) {
     return machine.line_master + (uint64_t)(machine.cpu.cycles - machine.line_cycles) * (machine.cpu.speed ? 3u : 12u);
 }
@@ -121,13 +124,22 @@ static void vdc_wait(void) {
     const uint64_t now = now_master();
     if (now >= machine.sat_end) return;
     const unsigned unit = machine.cpu.speed ? 3u : 12u;
+    if (pce_trace) fprintf(stderr, "WAIT now=%llu end=%llu\n", (unsigned long long)now, (unsigned long long)machine.sat_end);
     pce_stat_waits++; machine.cpu.steal += (uint32_t)((machine.sat_end - now + unit - 1) / unit);
 }
+unsigned pce_mys_off = 980, pce_mys_w = 90;   /* a VRAM commit is held in this window of each line (fitted on TurboNyma traces) */
 static void vdc_park(void) {
-    if (now_master() < machine.sat_end) machine.vdc_pending = 1;
+    const uint64_t now = now_master();
+    if (now < machine.sat_end) machine.vdc_pending = 1;
+    else if (pce_mys_off) {   /* the HuC6270 holds a VRAM commit for 16 dot clocks, 48 clocks after the hsync starts */
+        const uint64_t r = vdc_master_per_cycle;
+        (void)r; const uint64_t ws = machine.line_master + (pce_mys_off - 1), we = ws + pce_mys_w;
+        if (now >= ws && now < we) { machine.sat_end = we; machine.vdc_pending = 1; }
+    }
 }
 
 uint8_t pce_bus_read(uint16_t at) {
+    if (pce_trace && !(at & 0x0C00)) fprintf(stderr, "R %04x t=%llu\n", at & 0x1FFF, (unsigned long long)now_master());
     if (!(at & 0x0800)) machine.cpu.steal++;   /* every VDC / VCE access costs one extra cycle (Mednafen StealCycle) */
     switch (at & 0x1C00) {
     case 0x0000: { /* the VDC */
@@ -170,6 +182,7 @@ uint8_t pce_bus_read(uint16_t at) {
 
 void pce_bus_write(uint16_t at, uint8_t v) {
     machine.cpu.io_latch = v;
+    if (pce_trace && !(at & 0x0C00)) fprintf(stderr, "W %04x=%02x t=%llu\n", at & 0x1FFF, v, (unsigned long long)now_master());
     if (!(at & 0x0800)) machine.cpu.steal++;
     switch (at & 0x1C00) {
     case 0x0000: /* the VDC */
@@ -182,6 +195,11 @@ void pce_bus_write(uint16_t at, uint8_t v) {
             break;
         }
         vdc_write(&machine.vdc, at & 3, v);
+        if (machine.vdc.dma_master) {
+            const uint64_t e = now_master() + machine.vdc.dma_master;
+            if (e > machine.sat_end) machine.sat_end = e;
+            machine.vdc.dma_master = 0;
+        }
         update_irq();
         break;
     case 0x0400: vce_write(at & 7, v); break;
@@ -258,6 +276,7 @@ void pce_reset(void) {
 unsigned pce_frame_start_line;
 unsigned pce_scale_permille = 1000;
 int pce_sat_offset;   /* master clocks added to the SATB DMA's end (calibration) */
+static uint32_t cpu_target; static int cpu_target_init;
 void pce_frame(void) {
     pce_t *p = &machine;
     p->frames++;
@@ -266,14 +285,16 @@ void pce_frame(void) {
     const unsigned total = (p->vce_cr & 4) ? 263u : 262u;
     for (unsigned fl = 0; fl < total; fl++) {
         const unsigned line = (fl + pce_frame_start_line) % total;
-        p->line_cycles = p->cpu.cycles;
+        if (!cpu_target_init) { cpu_target = p->cpu.cycles; cpu_target_init = 1; }
+        p->line_cycles = cpu_target;   /* the nominal start of the line: a stall that overshot the last one is inside this one */
         /* 1365 master clocks per line: 455 CPU cycles at CSH (7.16 MHz),
          * 1365/12 ≈ 114 at CSL (1.79 MHz) — the game boots in CSL and the
          * switch lands at a line boundary here */
         master_carry += 1365;
         const unsigned cycles = master_carry / (p->cpu.speed ? 3 : 12);
         master_carry %= p->cpu.speed ? 3u : 12u;
-        huc6280_run(&p->cpu, p->cpu.cycles + (cycles * pce_scale_permille) / 1000u);
+        cpu_target += (cycles * pce_scale_permille) / 1000u;
+        huc6280_run(&p->cpu, cpu_target);
         { extern unsigned vdc_master_per_cycle; static const unsigned rt[4] = { 4, 3, 2, 2 }; vdc_master_per_cycle = rt[p->vce_cr & 3]; }
         if (line < 262) vdc_line(&p->vdc, line);
         p->line_master += 1365;
@@ -282,6 +303,7 @@ void pce_frame(void) {
             p->vdc.sat_started = 0;
             p->sat_end = p->line_master + 1024u * ratio[p->vce_cr & 3] + pce_sat_offset;
             p->vdc_pending = 0;
+            if (pce_trace) fprintf(stderr, "SAT %llu..%llu\n", (unsigned long long)p->line_master, (unsigned long long)p->sat_end);
         }
         /* the timer runs on the CPU clock: a tick every 1024 of the same
          * cycles the CPU just consumed (the sweep's jitter stays under

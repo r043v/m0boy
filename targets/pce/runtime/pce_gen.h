@@ -56,11 +56,20 @@ extern int pce_native;
     machine.cpu.s = s_; machine.cpu.p = p_; \
 } while (0)
 
+/* the bus accesses of compiled code see the cycle they happen at (the slice's end minus the budget left) and
+ * pay the wait states the access asked for, as the interpreter does */
+#define PCE_BUS_SYNC() (machine.cpu.cycles = machine.cpu.gen_until - (uint32_t)budget)
+#define PCE_BUS_DONE() do { budget -= (int32_t)machine.cpu.steal; machine.cpu.steal = 0; } while (0)
+static inline uint8_t pce_bus_read_charged(int32_t *budget, uint16_t at) {
+    const uint8_t v = pce_bus_read(at);
+    *budget -= (int32_t)machine.cpu.steal; machine.cpu.steal = 0;
+    return v;
+}
 #define PCE_RD(at) (__extension__({ uint16_t rd_at_ = (at); \
     const uint8_t *rd_b_ = rb_[rd_at_ >> 13]; \
-    rd_b_ ? rd_b_[rd_at_ & 0x1FFFu] : pce_bus_read(rd_at_); }))
+    rd_b_ ? rd_b_[rd_at_ & 0x1FFFu] : (PCE_BUS_SYNC(), pce_bus_read_charged(&budget, rd_at_)); }))
 #define PCE_WR(at, v) do { uint16_t wr_at_ = (at); uint8_t *wr_b_ = wb_[wr_at_ >> 13]; \
-    if (wr_b_) wr_b_[wr_at_ & 0x1FFFu] = (v); else pce_bus_write(wr_at_, (v)); } while (0)
+    if (wr_b_) wr_b_[wr_at_ & 0x1FFFu] = (v); else { const uint8_t wr_v_ = (v); PCE_BUS_SYNC(); pce_bus_write(wr_at_, wr_v_); PCE_BUS_DONE(); } } while (0)
 #define PCE_PUSH(v_) do { PCE_WR((uint16_t)(0x2100u | s_), (v_)); s_--; } while (0)
 #define PCE_POP() (__extension__({ s_++; PCE_RD((uint16_t)(0x2100u | s_)); }))
 

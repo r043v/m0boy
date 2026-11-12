@@ -158,9 +158,9 @@ static uint8_t rd_out(huc6280_t *cpu, uint16_t at) {
     push(cpu, y_); push(cpu, a_); push(cpu, x_); \
     uint16_t src = (uint16_t)sl_, dst = (uint16_t)dl_; uint16_t len = (uint16_t)ln_; \
     unsigned alt = 0; uint32_t n_ = 0; \
-    do { loop; alt ^= 1; len--; n_++; } while (len); \
+    do { loop; alt ^= 1; len--; n_++; budget -= 6 + (int32_t)cpu->steal; cpu->steal = 0; } while (len); \
     x_ = pop(cpu); a_ = pop(cpu); y_ = pop(cpu); \
-    left = 17u + 6u * n_; \
+    left = 17u; (void)n_; \
 } while (0)
 
 void huc6280_map(huc6280_t *cpu) {
@@ -730,6 +730,7 @@ void huc6280_run(huc6280_t *cpu, uint32_t until) {
         }
         const int entry = pce_gen_lookup(cpu->pc, cpu->mpr_key);
         if (entry >= 0) {
+            cpu->gen_until = until;
             budget = pce_gen_enter(entry, budget);
             continue;
         }
