@@ -256,6 +256,7 @@ void md_full_write16(MdFull *m, uint32_t addr, uint16_t v) {
             return;
         }
         if ((addr & 0x1cu) == 0x10u) { md_full_sound_write(m, 0x7f11u, (uint8_t)v); return; }
+        return;   /* $C00008-$C0000F HV counter and $C00018-$C0001F are not writable: falling through to the byte path recursed forever */
     }
     md_full_write8(m, addr, v >> 8);
     md_full_write8(m, addr + 1u, (uint8_t)v);
