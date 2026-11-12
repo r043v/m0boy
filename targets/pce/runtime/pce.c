@@ -156,6 +156,7 @@ uint8_t pce_bus_read(uint16_t at) {
         if ((at & 3) >= 2) vdc_wait();
         const uint8_t ret = vdc_read(&machine.vdc, at & 3);
         update_irq(); /* the status read dropped the line's sources */
+        if (pce_trace) fprintf(stderr, "RV %u=%02x pc=%04x\n", at & 3, ret, machine.cpu.pc);
         return ret;
     }
     case 0x0400: return vce_read(at & 7);
@@ -164,6 +165,7 @@ uint8_t pce_bus_read(uint16_t at) {
     case 0x0C00: { /* the timer, both offsets */
         const uint8_t ret = (uint8_t)(machine.timer_value | (machine.cpu.io_latch & 0x80));
         machine.cpu.io_latch = ret;
+        if (pce_trace) fprintf(stderr, "RT %02x pc=%04x\n", ret, machine.cpu.pc);
         return ret;
     }
     case 0x1000: { /* the pad */
