@@ -98,6 +98,7 @@ uint8_t md_full_read8(MdFull *m, uint32_t addr) {
         switch (addr & 0x1eu) {
         case 0: return md_version_reg();
         case 2: return pad_read(m);
+        case 4: return 0x7f;   /* port 2: no controller plugged, every button reads released (Clown: Sonic 1 $F606 = 00) */
         case 8: return m->pad_control;
         default: return 0;
         }
