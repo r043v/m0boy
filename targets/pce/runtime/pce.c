@@ -90,6 +90,9 @@ static uint8_t pad_read(void) {
 
 /* the timer: a tick every 1024 CPU cycles, the underflow latches the IRQ
  * until the controller's ack, the reload takes the tick after */
+unsigned pce_timer_clk;   /* debug: prescaler phase at timer enable */
+unsigned pce_timer_phase;   /* debug: ticks added to the first timer period */
+unsigned pce_timer_extra = 1;   /* 1: the reload costs a tick of its own (period load + 2) */
 static void timer_tick(void) {
     if (machine.timer_reload) {
         machine.timer_reload = 0;
@@ -98,9 +101,9 @@ static void timer_tick(void) {
     }
     if (!machine.timer_enable) return;
     if (machine.timer_value == 0) {
-        machine.timer_value = -1;
         machine.timer_irq = 1;
-        machine.timer_reload = 1;
+        if (pce_timer_extra) { machine.timer_value = -1; machine.timer_reload = 1; }
+        else machine.timer_value = machine.timer_load;   /* period = load + 1 ticks */
     } else {
         machine.timer_value--;
     }
@@ -211,11 +214,12 @@ void pce_bus_write(uint16_t at, uint8_t v) {
     case 0x0400: vce_write(at & 7, v); break;
     case 0x0800: psg_write(&machine.psg, at & 0x0F, v); break;
     case 0x0C00: /* the timer */
+        if (pce_trace) fprintf(stderr, "TW %d=%02x t=%u clk=%u val=%d\n", at & 1, v, machine.cpu.cycles, machine.timer_clock, machine.timer_value);
         if (!(at & 1)) machine.timer_load = v & 0x7F;
         else {
             if ((v & 1) && !machine.timer_enable) {
-                machine.timer_value = machine.timer_load;
-                machine.timer_clock = 0;
+                machine.timer_value = machine.timer_load + pce_timer_phase;
+                machine.timer_clock = pce_timer_clk;
             }
             machine.timer_enable = v & 1;
         }
@@ -285,6 +289,8 @@ void pce_reset(void) {
 unsigned pce_frame_start_line;
 int pce_boot_offset;   /* debug: CPU cycles the very first line starts ahead (+) of / behind (-) the video */
 /* debug: snapshot the work RAM this many CPU cycles before the end of the frame's last line (a sub-line frame cut); 0 = off */
+unsigned pce_timer_mul = 4;   /* debug: timer clock per slow-mode CPU cycle */
+unsigned pce_irq_delay;   /* debug: CPU cycles the VDC's IRQ1 reaches the CPU after the line end */
 unsigned pce_cut_cycles; uint8_t pce_cut_wram[0x2000]; int pce_cut_valid;
 unsigned pce_scale_permille = 1000;
 int pce_sat_offset;   /* master clocks added to the SATB DMA's end (calibration) */
@@ -317,6 +323,7 @@ void pce_frame(void) {
             huc6280_run(&p->cpu, cpu_target);
         }
         { extern unsigned vdc_master_per_cycle; static const unsigned rt[4] = { 4, 3, 2, 2 }; vdc_master_per_cycle = rt[p->vce_cr & 3]; }
+        const unsigned st_before = p->vdc.status & 0x3F;
         if (line < 262) vdc_line(&p->vdc, line);
         if (pce_evt_master) { update_irq(); huc6280_run(&p->cpu, cpu_target); }
         p->line_master += 1365;
@@ -330,11 +337,12 @@ void pce_frame(void) {
         /* the timer runs on the CPU clock: a tick every 1024 of the same
          * cycles the CPU just consumed (the sweep's jitter stays under
          * one line) */
-        p->timer_clock += p->cpu.speed ? cycles : cycles * 4u;   /* the timer counts 7.16 MHz cycles in both speed modes */
+        p->timer_clock += p->cpu.speed ? cycles : cycles * pce_timer_mul;   /* the timer counts 7.16 MHz cycles in both speed modes */
         while (p->timer_clock >= 1024) {
             p->timer_clock -= 1024;
             timer_tick();
         }
+        if (pce_irq_delay && !st_before && (p->vdc.status & 0x3F)) huc6280_run(&p->cpu, cpu_target + pce_irq_delay);
         update_irq();
         if (p->vdc.active_started && !p->have_frame) {
             p->first_active_line = line;
