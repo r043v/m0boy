@@ -141,7 +141,7 @@ static void vdc_park(void) {
 }
 
 uint8_t pce_bus_read(uint16_t at) {
-    if (pce_trace && !(at & 0x0C00)) fprintf(stderr, "R %04x t=%llu\n", at & 0x1FFF, (unsigned long long)now_master());
+    if (pce_trace && !(at & 0x0C00)) fprintf(stderr, "R %04x pc=%04x t=%llu\n", at & 0x1FFF, machine.cpu.pc, (unsigned long long)now_master());
     if (!(at & 0x0800)) machine.cpu.steal++;   /* every VDC / VCE access costs one extra cycle (Mednafen StealCycle) */
     switch (at & 0x1C00) {
     case 0x0000: { /* the VDC */
