@@ -22,10 +22,13 @@
 #ifdef PCE_TRACE
 extern void pce_trace_step(uint16_t pc);
 extern void pce_trace_dyn(uint16_t pc);
+extern void pce_trace_regs(uint8_t a, uint8_t x, uint8_t y, uint8_t s, uint8_t p, uint32_t cyc);
+#define PCE_TRACE_REGS(a,x,y,s,p,c) pce_trace_regs(a,x,y,s,p,c)
 #define PCE_TRACE_HOOK(pc) pce_trace_step(pc)
 #define PCE_DYN_HOOK(pc) pce_trace_dyn(pc)
 #else
 #define PCE_TRACE_HOOK(pc) ((void)0)
+#define PCE_TRACE_REGS(a,x,y,s,p,c) ((void)0)
 #define PCE_DYN_HOOK(pc) ((void)0)
 #endif
 
@@ -237,7 +240,7 @@ PCE_INTERP_FN(huc6280_t *cpu, uint32_t until) {
             PCE_TRACE_HOOK(pc_);
             continue;
         }
-        PCE_TRACE_HOOK(pc_);
+        PCE_TRACE_HOOK(pc_); PCE_TRACE_REGS(a_, x_, y_, s_, p_, until - (uint32_t)budget);
         {
             const uint8_t op = rd(cpu, pc_); /* pc_ stays on the opcode;
                 the cases advance it by the instruction's length */
@@ -455,7 +458,7 @@ PCE_INTERP_FN(huc6280_t *cpu, uint32_t until) {
          * operand follows the immediate byte (83 imm zp), so A_ZP()'s
          * pc_+1 fetch would read the immediate as the address */
         #define TST_OF(m_, t_) do { p_ = (uint8_t)((p_ & ~(PCE_P_Z | PCE_P_V | PCE_P_N)) \
-            | ((t_ & (m_)) ? 0 : PCE_P_Z) | ((m_) & 0xC0u)); } while (0)
+            | ((t_ & (m_)) ? 0 : PCE_P_Z) | ((t_) & 0xC0u)); } while (0)
         case 0x83: { const uint8_t imm_ = rd(cpu, (uint16_t)(pc_ + 1));
             const uint8_t m_ = rd(cpu, ZP_AT(rd(cpu, (uint16_t)(pc_ + 2))));
             TST_OF(imm_, m_); pc_ += 3; left = 7; break; }

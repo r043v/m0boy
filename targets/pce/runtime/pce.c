@@ -140,9 +140,11 @@ static void vdc_park(void) {
     }
 }
 
+unsigned pce_evt_master;   /* debug: master clocks into the line where the VDC's line events land (0 = the line's end) */
+unsigned pce_cur_line;   /* trace only: the VDC line the CPU slice belongs to */
 uint8_t pce_bus_read(uint16_t at) {
-    if (pce_trace && !(at & 0x0C00)) fprintf(stderr, "R %04x pc=%04x t=%llu\n", at & 0x1FFF, machine.cpu.pc, (unsigned long long)now_master());
-    if (!(at & 0x0800)) machine.cpu.steal++;   /* every VDC / VCE access costs one extra cycle (Mednafen StealCycle) */
+    if (pce_trace && !(at & 0x0C00)) fprintf(stderr, "R %04x pc=%04x ln=%u t=%llu\n", at & 0x1FFF, machine.cpu.pc, pce_cur_line, (unsigned long long)now_master());
+    if (!(at & 0x1800)) machine.cpu.steal++;   /* only VDC ($0000) and VCE ($0400) accesses cost an extra cycle (Mednafen StealCycle); the pad port $1000 and the IRQ registers $1400 do not */
     switch (at & 0x1C00) {
     case 0x0000: { /* the VDC */
         if ((at & 3) >= 2) vdc_wait();
@@ -184,8 +186,8 @@ uint8_t pce_bus_read(uint16_t at) {
 
 void pce_bus_write(uint16_t at, uint8_t v) {
     machine.cpu.io_latch = v;
-    if (pce_trace && !(at & 0x0C00)) fprintf(stderr, "W %04x=%02x t=%llu\n", at & 0x1FFF, v, (unsigned long long)now_master());
-    if (!(at & 0x0800)) machine.cpu.steal++;
+    if (pce_trace && !(at & 0x0C00)) fprintf(stderr, "W %04x=%02x ln=%u t=%llu\n", at & 0x1FFF, v, pce_cur_line, (unsigned long long)now_master());
+    if (!(at & 0x1800)) machine.cpu.steal++;   /* VDC / VCE only (Mednafen) */
     switch (at & 0x1C00) {
     case 0x0000: /* the VDC */
         if (((at & 3) == 3 && (machine.vdc.select == 1 || machine.vdc.select == 2)) ||
@@ -293,6 +295,7 @@ void pce_frame(void) {
     const unsigned total = (p->vce_cr & 4) ? 263u : 262u;
     for (unsigned fl = 0; fl < total; fl++) {
         const unsigned line = (fl + pce_frame_start_line) % total;
+        pce_cur_line = line;
         if (!cpu_target_init) { cpu_target = p->cpu.cycles + (uint32_t)pce_boot_offset; cpu_target_init = 1; }
         p->line_cycles = cpu_target;   /* the nominal start of the line: a stall that overshot the last one is inside this one */
         /* 1365 master clocks per line: 455 CPU cycles at CSH (7.16 MHz),
@@ -306,9 +309,14 @@ void pce_frame(void) {
             huc6280_run(&p->cpu, cpu_target - pce_cut_cycles);
             memcpy(pce_cut_wram, p->wram, sizeof pce_cut_wram); pce_cut_valid = 1;
         }
-        huc6280_run(&p->cpu, cpu_target);
+        if (pce_evt_master) {   /* the VDC's line events land this many master clocks into the line, not at its end */
+            huc6280_run(&p->cpu, cpu_target - cycles + pce_evt_master / (p->cpu.speed ? 3u : 12u));
+        } else {
+            huc6280_run(&p->cpu, cpu_target);
+        }
         { extern unsigned vdc_master_per_cycle; static const unsigned rt[4] = { 4, 3, 2, 2 }; vdc_master_per_cycle = rt[p->vce_cr & 3]; }
         if (line < 262) vdc_line(&p->vdc, line);
+        if (pce_evt_master) { update_irq(); huc6280_run(&p->cpu, cpu_target); }
         p->line_master += 1365;
         if (p->vdc.sat_started) {
             static const unsigned ratio[4] = { 4, 3, 2, 2 };
