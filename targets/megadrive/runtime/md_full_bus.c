@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include "md_full.h"
 #include <string.h>
 
@@ -31,6 +32,10 @@ void md_full_reset(MdFull *m) {
     m->pad_th = 0x40;
     for (unsigned i = 0; i < 64; ++i) cram_lut(m, i);
     md_full_audio_reset(m);
+    /* DP_MD_POWERON=gpgx: the 68000 leaves reset at VDP line 159 (HV counter $9F21 measured on a VA4 MD1, as Genesis Plus GX
+     * models it), not at the V-int; frame slot 0 is VDP line 224, so execution starts 197 lines and 1004 master clocks in. */
+    const char *po = getenv("DP_MD_POWERON");
+    if (po && !strcmp(po, "gpgx")) { m->frame_cycles = (197u * 3420u + 1004u) / 7u; m->no_vint0 = 1; }
 }
 
 static uint8_t pad_read(MdFull *m) {

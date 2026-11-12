@@ -506,7 +506,7 @@ enum { LINE_CYCLES = 488, FRAME_LINES = 262, ACTIVE_LINES = 224, VBLANK_LINES = 
 void md_full_frame(MdFull *m, int native) {
     for (unsigned line = 0; line < FRAME_LINES && !m->fault; ++line) {
         m->line = (uint16_t)line;
-        if (line == 0) m->irq_pending = 1;        /* vertical blank */
+        if (line == 0) m->irq_pending = !m->no_vint0;        /* vertical blank */
         run_slice(m, (line + 1u) * 3420u / 7u, native);
         if (line >= VBLANK_LINES) {
             /* the frontend hook first (the ESP32 one captures the line's
@@ -522,6 +522,7 @@ void md_full_frame(MdFull *m, int native) {
         } else m->hint_counter = (uint8_t)m->vdp_reg[10];
     }
     m->frame_cycles -= FRAME_LINES * 3420u / 7u;
+    m->no_vint0 = 0;
     ++m->frames;
     md_full_sound_frame(m);
 }
