@@ -109,9 +109,29 @@ static void update_irq(void) {
     if (machine.vdc.status & 0x3F) machine.cpu.irq_low |= PCE_IQ_IRQ1;
 }
 
+/* HuC6270 bus wait states.  The reference core parks a VRAM access behind a running SATB DMA (1024 VDC clocks, a
+ * clock being 4/3/2/2 master clocks by the dot clock) and the next VDC data access waits for the DMA's end */
+unsigned pce_stat_waits;
+static uint64_t now_master(void) {
+    return machine.line_master + (uint64_t)(machine.cpu.cycles - machine.line_cycles) * (machine.cpu.speed ? 3u : 12u);
+}
+static void vdc_wait(void) {
+    if (!machine.vdc_pending) return;
+    machine.vdc_pending = 0;
+    const uint64_t now = now_master();
+    if (now >= machine.sat_end) return;
+    const unsigned unit = machine.cpu.speed ? 3u : 12u;
+    pce_stat_waits++; machine.cpu.steal += (uint32_t)((machine.sat_end - now + unit - 1) / unit);
+}
+static void vdc_park(void) {
+    if (now_master() < machine.sat_end) machine.vdc_pending = 1;
+}
+
 uint8_t pce_bus_read(uint16_t at) {
+    if (!(at & 0x0800)) machine.cpu.steal++;   /* every VDC / VCE access costs one extra cycle (Mednafen StealCycle) */
     switch (at & 0x1C00) {
     case 0x0000: { /* the VDC */
+        if ((at & 3) >= 2) vdc_wait();
         const uint8_t ret = vdc_read(&machine.vdc, at & 3);
         update_irq(); /* the status read dropped the line's sources */
         return ret;
@@ -150,8 +170,17 @@ uint8_t pce_bus_read(uint16_t at) {
 
 void pce_bus_write(uint16_t at, uint8_t v) {
     machine.cpu.io_latch = v;
+    if (!(at & 0x0800)) machine.cpu.steal++;
     switch (at & 0x1C00) {
     case 0x0000: /* the VDC */
+        if (((at & 3) == 3 && (machine.vdc.select == 1 || machine.vdc.select == 2)) ||
+            ((at & 3) == 2 && machine.vdc.select >= 0x12 && machine.vdc.select != 0x13)) {
+            vdc_wait();
+            vdc_write(&machine.vdc, at & 3, v);
+            vdc_park();
+            update_irq();
+            break;
+        }
         vdc_write(&machine.vdc, at & 3, v);
         update_irq();
         break;
@@ -225,23 +254,39 @@ void pce_reset(void) {
 }
 
 
+/* the frame cut can start on any VDC line (a reference core cuts its frames elsewhere): pce_frame_start_line */
+unsigned pce_frame_start_line;
+unsigned pce_scale_permille = 1000;
+int pce_sat_offset;   /* master clocks added to the SATB DMA's end (calibration) */
 void pce_frame(void) {
     pce_t *p = &machine;
     p->frames++;
     p->have_frame = 0;
-    for (unsigned line = 0; line < 262; line++) {
+    /* VCE control bit 2 (lc263): the frame is 263 lines, the VDC idles through the extra one */
+    const unsigned total = (p->vce_cr & 4) ? 263u : 262u;
+    for (unsigned fl = 0; fl < total; fl++) {
+        const unsigned line = (fl + pce_frame_start_line) % total;
+        p->line_cycles = p->cpu.cycles;
         /* 1365 master clocks per line: 455 CPU cycles at CSH (7.16 MHz),
          * 1365/12 ≈ 114 at CSL (1.79 MHz) — the game boots in CSL and the
          * switch lands at a line boundary here */
         master_carry += 1365;
         const unsigned cycles = master_carry / (p->cpu.speed ? 3 : 12);
         master_carry %= p->cpu.speed ? 3u : 12u;
-        huc6280_run(&p->cpu, p->cpu.cycles + cycles);
-        vdc_line(&p->vdc, line);
+        huc6280_run(&p->cpu, p->cpu.cycles + (cycles * pce_scale_permille) / 1000u);
+        { extern unsigned vdc_master_per_cycle; static const unsigned rt[4] = { 4, 3, 2, 2 }; vdc_master_per_cycle = rt[p->vce_cr & 3]; }
+        if (line < 262) vdc_line(&p->vdc, line);
+        p->line_master += 1365;
+        if (p->vdc.sat_started) {
+            static const unsigned ratio[4] = { 4, 3, 2, 2 };
+            p->vdc.sat_started = 0;
+            p->sat_end = p->line_master + 1024u * ratio[p->vce_cr & 3] + pce_sat_offset;
+            p->vdc_pending = 0;
+        }
         /* the timer runs on the CPU clock: a tick every 1024 of the same
          * cycles the CPU just consumed (the sweep's jitter stays under
          * one line) */
-        p->timer_clock += cycles;
+        p->timer_clock += p->cpu.speed ? cycles : cycles * 4u;   /* the timer counts 7.16 MHz cycles in both speed modes */
         while (p->timer_clock >= 1024) {
             p->timer_clock -= 1024;
             timer_tick();
@@ -251,7 +296,7 @@ void pce_frame(void) {
             p->first_active_line = line;
             p->have_frame = 1;
         }
-        if (p->row) {
+        if (p->row && line < 262) {
             const unsigned width = p->vdc.row_width < 1024 ? p->vdc.row_width : 1024;
             if (p->row_raw) {
                 p->row(p->host, line, p->vdc.linebuf, width);

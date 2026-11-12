@@ -390,8 +390,15 @@ static void run_vram_dma(vdc_t *v) {
     } while (len != 0xFFFF);
     v->sour = src;
     v->desr = dst;
-    if (v->dcr & 0x02) v->status |= VDCS_DV;
+    if (v->dcr & 0x02) {   /* a word per 2 dot-clock cycles: the end flag rises when the transfer would be done */
+        extern unsigned vdc_master_per_cycle;
+        unsigned master = (unsigned)(((unsigned)v->lenr + 1u) * 2u * vdc_master_per_cycle);
+        v->dma_lines = (uint16_t)((master + 1364u) / 1365u);
+        v->dma_dv = 1;
+        if (v->dma_lines == 0) v->dma_lines = 1;
+    }
 }
+unsigned vdc_master_per_cycle = 4;
 
 static void run_sat_dma(vdc_t *v) {
     if (v->dvssr < VDC_VRAM_WORDS) {
@@ -400,6 +407,7 @@ static void run_sat_dma(vdc_t *v) {
         memcpy(v->sat, &v->vram[v->dvssr], len * sizeof(uint16_t));
     }
     if (v->dcr & 0x01) v->status |= VDCS_DS;
+    v->sat_started = 1;
 }
 
 void vdc_reset(vdc_t *v) {
@@ -503,6 +511,7 @@ void vdc_write(vdc_t *v, unsigned at, uint8_t value) {
 }
 
 void vdc_line(vdc_t *v, unsigned line) {
+    if (v->dma_dv && --v->dma_lines == 0) { v->dma_dv = 0; v->status |= VDCS_DV; }
     v->row_width = (unsigned)(((v->hdr & 0x7F) + 1) * 8);
 
     if (line == 0) { /* the frame's start: the phase machine rewinds */

@@ -32,6 +32,9 @@ typedef struct {
     uint16_t vram[VDC_VRAM_WORDS];
     uint16_t sat[256]; /* the 64 sprites' 4 words, copied by the SATB DMA */
     uint8_t select;
+    uint16_t dma_lines;    /* lines left before a VRAM DMA's end flag (DV) rises */
+    uint8_t dma_dv;
+    uint8_t sat_started;   /* a SATB DMA began at this line (the host charges its bus time) */
     uint16_t mawr, marr;
     uint16_t cr, rcr, bxr, byr, mwr;
     uint16_t hsr, hdr, vsr, vdr, vcr;

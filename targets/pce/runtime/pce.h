@@ -52,6 +52,11 @@ typedef struct {
     uint8_t input;
     uint8_t pad_sel;
     uint32_t frames;
+    /* VDC wait states (the reference core stalls a VRAM access while the SATB DMA holds the bus) */
+    uint64_t line_master;   /* master clocks at the current line's start */
+    uint32_t line_cycles;   /* cpu.cycles at that moment */
+    uint64_t sat_end;       /* master clock the SATB DMA ends */
+    uint8_t vdc_pending;    /* a VRAM access is parked behind the DMA */
     /* what the display showed this frame (the harness's window) */
     unsigned active_width, active_height, first_active_line;
     uint8_t have_frame;
@@ -75,6 +80,9 @@ void pce_reset(void);
 /* one frame (262 lines): emulation, then the row callback has drawn the
  * frame's lines (256 or 352 pixels wide).  Call once per frame. */
 void pce_frame(void);
+extern unsigned pce_frame_start_line;
+extern int pce_sat_offset;
+extern unsigned pce_scale_permille;
 /* the frame's sound: n samples of unsigned PCM at rate Hz */
 void pce_audio(uint8_t *dst, unsigned n, unsigned rate);
 /* the consoles' drivers' entry points (fixed 11025 Hz) */

@@ -40,9 +40,9 @@ static uint8_t rd_out(huc6280_t *cpu, uint16_t at) {
 
 #define rd(cpu, at) (__extension__({ uint16_t rd_at_ = (at); \
     const uint8_t *rd_b_ = rbase_[rd_at_ >> 13]; \
-    rd_b_ ? rd_b_[rd_at_ & 0x1FFFu] : pce_bus_read(rd_at_); }))
+    rd_b_ ? rd_b_[rd_at_ & 0x1FFFu] : (cpu->cycles = until - (uint32_t)budget, pce_bus_read(rd_at_)); }))
 #define wr(cpu, at, v) do { uint16_t wr_at_ = (at); uint8_t *wr_b_ = wbase_[wr_at_ >> 13]; \
-    if (wr_b_) wr_b_[wr_at_ & 0x1FFFu] = (v); else pce_bus_write(wr_at_, (v)); } while (0)
+    if (wr_b_) wr_b_[wr_at_ & 0x1FFFu] = (v); else { cpu->cycles = until - (uint32_t)budget; pce_bus_write(wr_at_, (v)); } } while (0)
 #define push(cpu, v) do { wr(cpu, (uint16_t)(0x2100u | s_), (v)); s_--; } while (0)
 #define pop(cpu) (__extension__({ s_++; rd(cpu, (uint16_t)(0x2100u | s_)); }))
 
@@ -600,7 +600,8 @@ PCE_INTERP_FN(huc6280_t *cpu, uint32_t until) {
         }
         if (!pc_set && pc_ == pc0) pc_ = (uint16_t)(pc0 + 1); /* a one-byte instruction */
         if (!keep_t) p_ &= (uint8_t)~PCE_P_T;
-        budget -= left;
+        budget -= left + (int32_t)cpu->steal;
+        cpu->steal = 0;
     }
     cpu->pc = pc_;
     cpu->s = s_;
