@@ -279,6 +279,8 @@ void pce_reset(void) {
 
 /* the frame cut can start on any VDC line (a reference core cuts its frames elsewhere): pce_frame_start_line */
 unsigned pce_frame_start_line;
+/* debug: snapshot the work RAM this many CPU cycles before the end of the frame's last line (a sub-line frame cut); 0 = off */
+unsigned pce_cut_cycles; uint8_t pce_cut_wram[0x2000]; int pce_cut_valid;
 unsigned pce_scale_permille = 1000;
 int pce_sat_offset;   /* master clocks added to the SATB DMA's end (calibration) */
 static uint32_t cpu_target; static int cpu_target_init;
@@ -299,6 +301,10 @@ void pce_frame(void) {
         const unsigned cycles = master_carry / (p->cpu.speed ? 3 : 12);
         master_carry %= p->cpu.speed ? 3u : 12u;
         cpu_target += (cycles * pce_scale_permille) / 1000u;
+        if (pce_cut_cycles && fl + 1 == total) {
+            huc6280_run(&p->cpu, cpu_target - pce_cut_cycles);
+            memcpy(pce_cut_wram, p->wram, sizeof pce_cut_wram); pce_cut_valid = 1;
+        }
         huc6280_run(&p->cpu, cpu_target);
         { extern unsigned vdc_master_per_cycle; static const unsigned rt[4] = { 4, 3, 2, 2 }; vdc_master_per_cycle = rt[p->vce_cr & 3]; }
         if (line < 262) vdc_line(&p->vdc, line);
