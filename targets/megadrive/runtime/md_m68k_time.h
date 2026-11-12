@@ -63,7 +63,7 @@ static inline unsigned md_m68k_cycles(uint16_t op) {
             if ((op & 0x0138u) == 0x0108u) return lng ? 24u : 16u;     /* MOVEP */
             const unsigned kind = (op >> 6) & 3u, dynamic = !!(op & 0x0100u);
             if (mode == 0u)
-                return (kind == 0u ? 6u : kind == 2u ? 10u : 8u) + (dynamic ? 0u : 4u);
+                return (kind == 0u ? 6u : kind == 2u ? 8u : 6u) + (dynamic ? 0u : 4u);   /* +2 when the bit is >= 16: charged at run time */
             return (kind == 0u ? 4u : 8u) + (dynamic ? 0u : 4u) + md_m68k_ea(mode, reg, 0);
         }
         if ((op & 0x00ffu) == 0x003cu || (op & 0x00ffu) == 0x007cu) return 20;   /* to CCR/SR */
@@ -104,7 +104,7 @@ static inline unsigned md_m68k_cycles(uint16_t op) {
         if ((op & 0xffc0u) == 0x40c0u) return mode == 0u ? 6u : 8u + md_m68k_ea(mode, reg, 0);   /* from SR */
         if ((op & 0xffc0u) == 0x44c0u || (op & 0xffc0u) == 0x46c0u) return 12u + md_m68k_ea(mode, reg, 0);
         if ((op & 0xffc0u) == 0x4800u) return mode == 0u ? 6u : 8u + md_m68k_ea(mode, reg, 0);   /* NBCD */
-        if ((op & 0xffc0u) == 0x4ac0u) return mode == 0u ? 4u : 14u + md_m68k_ea(mode, reg, 0);  /* TAS */
+        if ((op & 0xffc0u) == 0x4ac0u) return mode == 0u ? 4u : 10u + md_m68k_ea(mode, reg, 0);  /* TAS */
         if ((op & 0xff00u) == 0x4a00u) return 4u + md_m68k_ea(mode, reg, lng);                 /* TST */
         /* NEGX, CLR, NEG, NOT */
         if (mode == 0u) return lng ? 6u : 4u;

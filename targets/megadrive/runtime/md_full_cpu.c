@@ -139,6 +139,7 @@ void md_full_execute(MdFull *m, uint16_t op) {
             const unsigned kind = (op >> 6) & 3u;
             size = mode == 0u ? 4u : 1u;
             const Ea dst = ea(m, bits, size);
+            if (mode == 0u && kind && (bit & 31u) >= 16u) md_spend(m, 2u);   /* register bit ops: +2 for bits 16-31 */
             bit &= size == 4u ? 31u : 7u;
             const uint32_t old = ea_read(m, dst, size), b = 1u << bit;
             m->sr = (uint16_t)((m->sr & ~MD_Z) | (old & b ? 0 : MD_Z));
