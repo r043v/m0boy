@@ -90,6 +90,7 @@ static uint8_t pad_read(void) {
 
 /* the timer: a tick every 1024 CPU cycles, the underflow latches the IRQ
  * until the controller's ack, the reload takes the tick after */
+unsigned pce_timer_div = 65536;   /* 1/64 of a 7.16 MHz cycle per timer tick: 1024 cycles (calibration) */
 unsigned pce_timer_clk;   /* debug: prescaler phase at timer enable */
 unsigned pce_timer_phase;   /* debug: ticks added to the first timer period */
 unsigned pce_timer_extra = 1;   /* 1: the reload costs a tick of its own (period load + 2) */
@@ -219,7 +220,7 @@ void pce_bus_write(uint16_t at, uint8_t v) {
         else {
             if ((v & 1) && !machine.timer_enable) {
                 machine.timer_value = machine.timer_load + pce_timer_phase;
-                machine.timer_clock = pce_timer_clk;
+                machine.timer_clock = pce_timer_clk * 64u;
             }
             machine.timer_enable = v & 1;
         }
@@ -337,9 +338,9 @@ void pce_frame(void) {
         /* the timer runs on the CPU clock: a tick every 1024 of the same
          * cycles the CPU just consumed (the sweep's jitter stays under
          * one line) */
-        p->timer_clock += p->cpu.speed ? cycles : cycles * pce_timer_mul;   /* the timer counts 7.16 MHz cycles in both speed modes */
-        while (p->timer_clock >= 1024) {
-            p->timer_clock -= 1024;
+        p->timer_clock += (p->cpu.speed ? cycles : cycles * pce_timer_mul) * 64u;   /* in 1/64 cycle */   /* the timer counts 7.16 MHz cycles in both speed modes */
+        while (p->timer_clock >= pce_timer_div) {
+            p->timer_clock -= pce_timer_div;
             timer_tick();
         }
         if (pce_irq_delay && !st_before && (p->vdc.status & 0x3F)) huc6280_run(&p->cpu, cpu_target + pce_irq_delay);
