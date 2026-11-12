@@ -1,3 +1,4 @@
+#include <stdlib.h>
 /* 68000 reference interpreter and the line scheduler.  Times come from
  * md_m68k_time.h, semantics from md_m68k_ops.h: the recompiled C uses the
  * same two, so both count and do the same thing (run_hash must match). */
@@ -489,9 +490,29 @@ static int interrupt(MdFull *m) {
 /* One slice: until frame_cycles reaches `end`.  Interrupts are looked at
  * before each instruction (interpreter) or each region entry (generated
  * code, which leaves its region whenever one could become possible). */
+/* Reference-core interrupt latency (Clown68000): the pending level is latched before an instruction and
+ * entered after it, so one more instruction runs between the request and the stacked return address. */
+static unsigned irq_latched_level(const MdFull *m) {
+    if (m->irq_pending && (m->vdp_reg[1] & 0x20u)) return 6;
+    if (m->hint_pending && (m->vdp_reg[0] & 0x10u)) return 4;
+    return 0;
+}
+
 static void run_slice(MdFull *m, uint32_t end, int native) {
+    static int latency = -1;
+    if (latency < 0) latency = getenv("MD_IRQ_IMMEDIATE") == NULL;   /* default: the reference latency */
     while (m->frame_cycles < end && !m->fault) {
-        interrupt(m);
+        unsigned latched = 0;
+        if (latency && !native && !m->stopped) {
+            latched = irq_latched_level(m);
+            if (latched) {
+                m->slice_limit = end;
+                md_full_step_interp(m);
+                if (m->fault) break;
+                if (latched > ((m->sr >> 8) & 7u)) interrupt(m);
+                continue;
+            }
+        } else interrupt(m);
         if (m->stopped) { md_spend(m, end - m->frame_cycles); break; }
         m->slice_limit = end;
         if (native) md_full_step_native(m); else md_full_step_interp(m);
