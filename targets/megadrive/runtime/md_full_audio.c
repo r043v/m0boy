@@ -6,12 +6,12 @@
  * one sample every 144 of its clocks, the PSG ticks every 16 of its own. */
 enum {
     MASTER_HZ = 53693175, AUDIO_RATE = 44100,
-    FRAME_MASTER = 127856 * 7, VINT_MASTER = 109312 * 7, VINT_LENGTH = 228 * 15,
+    FRAME_MASTER = 262 * 3420, VINT_MASTER = 224 * 3420, VINT_LENGTH = 228 * 15,
     FM_MASTER = 144 * 7, PSG_MASTER = 16 * 15, PSG_AMP = 1800,
 };
 
 static uint64_t m68k_time(const MdFull *m) {
-    return ((uint64_t)m->frames * 127856u + m->frame_cycles) * 7u;
+    return (uint64_t)m->frames * FRAME_MASTER + (uint64_t)m->frame_cycles * 7u;
 }
 
 

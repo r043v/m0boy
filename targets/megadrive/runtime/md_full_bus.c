@@ -180,7 +180,7 @@ static void vdp_dma(MdFull *m) {
         const int blank = m->line >= 224u || !(m->vdp_reg[1] & 0x40u);
         const uint32_t rate = blank ? (h40 ? 204u : 166u) : (h40 ? 18u : 16u);
         const uint32_t reads = length << ((m->vdp_code & 0x0fu) == 1u);
-        const uint32_t stall = 488u * reads / rate;
+        const uint32_t stall = (3420u * reads / 7u) / rate;
         m->cycles += stall; m->frame_cycles += stall;
     }
     m->vdp_reg[19] = m->vdp_reg[20] = 0;
