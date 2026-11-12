@@ -185,10 +185,15 @@ static void vdp_dma(MdFull *m) {
         /* The VDP owns the 68000 bus for the whole transfer: the CPU is frozen for length / rate lines
          * (rate in words per line: blanking vs active display, H40 vs H32; VRAM writes move bytes, so twice the slots). */
         const int h40 = (m->vdp_reg[12] & 0x81u) == 0x81u;
-        const int blank = ((m->line + 224u) % 262u) >= 224u || !(m->vdp_reg[1] & 0x40u);
+        static int vb = -1;
+        if (vb < 0) vb = getenv("DP_MD_DMA_VBLANK37") ? 37 : 38;   /* reference clears the V-blank flag on the last blank line */
+        const int blank = (int)m->line < vb || !(m->vdp_reg[1] & 0x40u);
         const uint32_t rate = blank ? (h40 ? 204u : 166u) : (h40 ? 18u : 16u);
         const uint32_t reads = length << ((m->vdp_code & 0x0fu) == 1u);
-        const uint32_t stall = ((m->line_master ? m->line_master : 3420u) * reads / 7u) / rate;
+        const uint32_t lm = m->line_master ? m->line_master : 3420u;
+        static int refround = -1;
+        if (refround < 0) refround = getenv("DP_MD_DMA_REFROUND") != NULL;   /* reference rounding: master clocks, then ceil to 68000 cycles */
+        const uint32_t stall = refround ? (lm * reads / rate + 6u) / 7u : (lm * reads / 7u) / rate;
         m->cycles += stall; m->frame_cycles += stall;
     }
     m->vdp_reg[19] = m->vdp_reg[20] = 0;
