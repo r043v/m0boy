@@ -193,8 +193,13 @@ static void vdp_dma(MdFull *m) {
         const uint32_t lm = m->line_master ? m->line_master : 3420u;
         static int refround = -1;
         if (refround < 0) refround = getenv("DP_MD_DMA_REFROUND") != NULL;   /* reference rounding: master clocks, then ceil to 68000 cycles */
-        const uint32_t stall = refround ? (lm * reads / rate + 6u) / 7u : (lm * reads / 7u) / rate;
-        m->cycles += stall; m->frame_cycles += stall;
+        uint32_t st = refround ? (lm * reads / rate + 6u) / 7u : (lm * reads / 7u) / rate;
+        static int phase_off = -1; if (phase_off < 0) phase_off = getenv("DP_MD_DMA_NOPHASE") != NULL;
+        if (!phase_off && m->exact_clock) {   /* the reference freezes the CPU for floor(master clocks); the sub-cycle remainder shifts the clock phase */
+            const uint32_t tot = (uint32_t)m->clock_off + lm * reads / rate;
+            st = tot / 7u; m->clock_off = (uint8_t)(tot % 7u);
+        }
+        m->cycles += st; m->frame_cycles += st;
     }
     m->vdp_reg[19] = m->vdp_reg[20] = 0;
     m->vdp_reg[21] = source & 255u;
