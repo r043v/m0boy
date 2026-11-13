@@ -56,9 +56,16 @@ typedef struct {
     /* what the display shows this frame */
     unsigned active_width, active_height;
     int active_started;
+    /* the VCE-vsync model (TurboNyma): the display registers sampled at each
+     * VSW entry and at the vsync edge, the phase re-armed by the edge, and
+     * the edge's line step skipped (the HuC6270's VSync semantics) */
+    uint8_t vsync_model, vsync_skip;
+    int vsw_c, vds_c, vdw_c, vcr_c;
 } vdc_t;
 
 void vdc_reset(vdc_t *v);
+/* the VCE's vsync edge: the phase machine re-arms (the TurboNyma model) */
+void vdc_vsync(vdc_t *v);
 /* the CPU's access: at 0-3 within the VDC's window */
 uint8_t vdc_read(vdc_t *v, unsigned at);
 void vdc_write(vdc_t *v, unsigned at, uint8_t value);

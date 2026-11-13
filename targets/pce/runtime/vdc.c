@@ -432,6 +432,8 @@ void vdc_reset(vdc_t *v) {
     v->burst_mode = 1;
     v->bg_y = 0;
     v->vb_test = v->sat_test = 0;
+    v->vsync_model = v->vsync_skip = 0;
+    v->vsw_c = v->vds_c = v->vdw_c = v->vcr_c = 0;
     v->sat_pending = 0;
     v->row_width = 256;
     v->active_width = v->active_height = 0;
@@ -512,11 +514,28 @@ void vdc_write(vdc_t *v, unsigned at, uint8_t value) {
     #undef REGSETP
 }
 
+/* the VCE's vsync edge (TurboNyma's VCE model): the phase machine re-arms
+ * from the live registers as the HuC6270 does at VSync, and the line's
+ * still-pending phase step is skipped — the real chip samples the registers
+ * at the vsync and at each VSW entry, so a mid-cycle write lands next cycle */
+void vdc_vsync(vdc_t *v) {
+    v->vsw_c = (int)M_vdc_VSW;
+    v->vds_c = (int)M_vdc_VDS;
+    v->vdw_c = (int)M_vdc_VDW;
+    v->vcr_c = (int)M_vdc_VCR;
+    v->vphase = VP_VSW;
+    v->vcounter = v->vsw_c + 1;
+    v->vsync_skip = 1;
+}
+
 void vdc_line(vdc_t *v, unsigned line) {
     if (v->dma_dv && --v->dma_lines == 0) { v->dma_dv = 0; v->status |= VDCS_DV; }
     v->row_width = (unsigned)(((v->hdr & 0x7F) + 1) * 8);
 
-    if (line == 0) { /* the frame's start: the phase machine rewinds */
+    int skip = 0;
+    if (v->vsync_model && v->vsync_skip) { v->vsync_skip = 0; skip = 1; }   /* the vsync edge undid this line's step */
+
+    if (line == 0 && !v->vsync_model) { /* the frame's start: the phase machine rewinds */
         v->vphase = VP_VSW;
         v->vcounter = M_vdc_VSW + 1;
         v->rcr_count = 0;
@@ -527,45 +546,61 @@ void vdc_line(vdc_t *v, unsigned line) {
         v->active_height = (unsigned)(M_vdc_VDW + 1);
         if (v->active_height > 242) v->active_height = 242;
     } else {
-        v->vcounter--;
-        if (v->vcounter <= 0) {
-            v->vphase = (v->vphase + 1) & 3;
-            switch (v->vphase) {
-            case VP_VDS: v->vcounter = M_vdc_VDS + 2; break;
-            case VP_VDW:
-                v->vcounter = M_vdc_VDW + 1;
-                v->rcr_count = 0;
-                v->burst_mode = !(v->cr & 0xC0);
-                v->vb_test = 1;
-                v->sat_test = 1;
-                break;
-            case VP_VCR: v->vcounter = M_vdc_VCR; break;
-            case VP_VSW: v->vcounter = M_vdc_VSW + 1; break;
+        if (line == 0) { /* the vsync model: the phase came from the edge; the frame's latches reset as the rewind did */
+            v->rcr_count = 0;
+            v->bg_y = v->byr;
+            v->active_started = 0;
+            v->active_width = v->row_width;
+            v->active_height = (unsigned)(M_vdc_VDW + 1);
+            if (v->active_height > 242) v->active_height = 242;
+        }
+        if (!skip) {   /* the vsync edge undid this line's step: no phase step, no rcr count, the tests already ran */
+            v->vcounter--;
+            if (v->vcounter <= 0) {
+                v->vphase = (v->vphase + 1) & 3;
+                switch (v->vphase) {
+                case VP_VDS: v->vcounter = (v->vsync_model ? v->vds_c : (int)M_vdc_VDS) + 2; break;
+                case VP_VDW:
+                    v->vcounter = (v->vsync_model ? v->vdw_c : (int)M_vdc_VDW) + 1;
+                    v->rcr_count = 0;
+                    v->burst_mode = !(v->cr & 0xC0);
+                    v->vb_test = 1;
+                    v->sat_test = 1;
+                    break;
+                case VP_VCR: v->vcounter = v->vsync_model ? v->vcr_c : (int)M_vdc_VCR; break;
+                case VP_VSW:
+                    v->vcounter = (int)M_vdc_VSW + 1;
+                    if (v->vsync_model) {   /* the registers sampled at the VSW entry, as the HuC6270 does */
+                        v->vsw_c = (int)M_vdc_VSW; v->vds_c = (int)M_vdc_VDS;
+                        v->vdw_c = (int)M_vdc_VDW; v->vcr_c = (int)M_vdc_VCR;
+                    }
+                    break;
+                }
             }
-        }
-        v->rcr_count++;
+            if (line != 0) v->rcr_count++;
 
-        /* the SATB DMA and the vblank flag land at the first line after
-         * the active area, where the display would start */
-        if (v->vphase != VP_VDW && v->sat_test) {
-            v->sat_test = 0;
-            if (v->sat_pending || (v->dcr & 0x10)) {
-                v->sat_pending = 0;
-                run_sat_dma(v);
-            } else {
-                v->burst_mode = 1;
+            /* the SATB DMA and the vblank flag land at the first line after
+             * the active area, where the display would start */
+            if (v->vphase != VP_VDW && v->sat_test) {
+                v->sat_test = 0;
+                if (v->sat_pending || (v->dcr & 0x10)) {
+                    v->sat_pending = 0;
+                    run_sat_dma(v);
+                } else {
+                    v->burst_mode = 1;
+                }
             }
-        }
-        if (v->vphase != VP_VDW && v->vb_test) {
-            v->vb_test = 0;
-            if (v->cr & 0x08) { v->status |= VDCS_VD; { extern int pce_trace; extern unsigned pce_cur_line; if (pce_trace) fprintf(stderr, "V VD ln=%u\n", pce_cur_line); } }
-        }
+            if (v->vphase != VP_VDW && v->vb_test) {
+                v->vb_test = 0;
+                if (v->cr & 0x08) { v->status |= VDCS_VD; { extern int pce_trace; extern unsigned pce_cur_line; if (pce_trace) fprintf(stderr, "V VD ln=%u\n", pce_cur_line); } }
+            }
 
-        if (v->vphase == VP_VDW && !v->burst_mode)
-            fetch_sprites(v);
+            if (v->vphase == VP_VDW && !v->burst_mode)
+                fetch_sprites(v);
 
-        if ((int)v->rcr_count == (int)v->rcr - 0x40 && (v->cr & 0x04))
-            v->status |= VDCS_RR;
+            if ((int)v->rcr_count == (int)v->rcr - 0x40 && (v->cr & 0x04))
+                v->status |= VDCS_RR;
+        }
     }
 
     /* the row: composed where the active area would start; the BYR latch

@@ -23,13 +23,16 @@
 extern void pce_trace_step(uint16_t pc);
 extern void pce_trace_dyn(uint16_t pc);
 extern void pce_trace_regs(uint8_t a, uint8_t x, uint8_t y, uint8_t s, uint8_t p, uint32_t cyc);
+extern void pce_trace_wram_write(uint16_t at, uint8_t v);
 #define PCE_TRACE_REGS(a,x,y,s,p,c) pce_trace_regs(a,x,y,s,p,c)
 #define PCE_TRACE_HOOK(pc) pce_trace_step(pc)
 #define PCE_DYN_HOOK(pc) pce_trace_dyn(pc)
+#define PCE_TRACE_WW(at, v) pce_trace_wram_write((at), (v))
 #else
 #define PCE_TRACE_HOOK(pc) ((void)0)
 #define PCE_TRACE_REGS(a,x,y,s,p,c) ((void)0)
 #define PCE_DYN_HOOK(pc) ((void)0)
+#define PCE_TRACE_WW(at, v) ((void)0)
 #endif
 
 /* the hot state — PC, the stack pointer, the registers and the bus's
@@ -45,7 +48,7 @@ static uint8_t rd_out(huc6280_t *cpu, uint16_t at) {
     const uint8_t *rd_b_ = rbase_[rd_at_ >> 13]; \
     rd_b_ ? rd_b_[rd_at_ & 0x1FFFu] : (cpu->cycles = until - (uint32_t)budget, pce_bus_read(rd_at_)); }))
 #define wr(cpu, at, v) do { uint16_t wr_at_ = (at); uint8_t *wr_b_ = wbase_[wr_at_ >> 13]; \
-    if (wr_b_) wr_b_[wr_at_ & 0x1FFFu] = (v); else { cpu->cycles = until - (uint32_t)budget; pce_bus_write(wr_at_, (v)); } } while (0)
+    if (wr_b_) { wr_b_[wr_at_ & 0x1FFFu] = (v); PCE_TRACE_WW(wr_at_, (v)); } else { cpu->cycles = until - (uint32_t)budget; pce_bus_write(wr_at_, (v)); } } while (0)
 #define push(cpu, v) do { wr(cpu, (uint16_t)(0x2100u | s_), (v)); s_--; } while (0)
 #define pop(cpu) (__extension__({ s_++; rd(cpu, (uint16_t)(0x2100u | s_)); }))
 
