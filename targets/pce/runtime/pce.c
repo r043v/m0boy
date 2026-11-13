@@ -134,14 +134,16 @@ static void vdc_wait(void) {
     if (pce_trace) fprintf(stderr, "WAIT now=%llu end=%llu\n", (unsigned long long)now, (unsigned long long)machine.sat_end);
     pce_stat_waits++; machine.cpu.steal += (uint32_t)((machine.sat_end - now + unit - 1) / unit);
 }
-unsigned pce_mys_off = 980, pce_mys_w = 90;   /* a VRAM commit is held in this window of each line (fitted on TurboNyma traces) */
+unsigned pce_mys_off = 1, pce_mys_w = 0;   /* 1: the mystery window is derived from the HuC6270 (16 dot clocks busy, starting 48 dot clocks after the hsync begins at x=1128); else [mys_off-1, +mys_w] masters, fitted */
+unsigned pce_sat_waits = 1;   /* 0: the SATB DMA window holds no access (the reference's WS:sat never fired on Tonma's boot) */
 static void vdc_park(void) {
     if (!pce_vdc_waits) return;
     const uint64_t now = now_master();
-    if (now < machine.sat_end) machine.vdc_pending = 1;
-    else if (pce_mys_off) {   /* the HuC6270 holds a VRAM commit for 16 dot clocks, 48 clocks after the hsync starts */
+    if (pce_sat_waits && now < machine.sat_end) machine.vdc_pending = 1;
+    else if (pce_mys_off) {   /* the HuC6270 holds a VRAM commit written during the mystery phase: 16 dot clocks busy after 48, from the hsync start at x=1128; commits when the phase exits */
         const uint64_t r = vdc_master_per_cycle;
-        (void)r; const uint64_t ws = machine.line_master + (pce_mys_off - 1), we = ws + pce_mys_w;
+        const uint64_t ws = pce_mys_w ? machine.line_master + (pce_mys_off - 1) : machine.line_master + 1128 + 48 * r;
+        const uint64_t we = ws + (pce_mys_w ? pce_mys_w : 16 * r);
         if (now >= ws && now < we) { machine.sat_end = we; machine.vdc_pending = 1; }
     }
 }
