@@ -217,7 +217,7 @@ static void vdp_control(MdFull *m, uint16_t v) {
     m->vdp_addr = (m->vdp_first & 0x3fffu) | ((v & 3u) << 14);
     m->vdp_code = (uint8_t)((m->vdp_first >> 14) | ((v >> 2) & 0x3cu));
     m->vdp_pending = 0;
-    if (m->vdp_code & 0x20u) vdp_dma(m);
+    if ((m->vdp_code & 0x20u) && (m->vdp_reg[1] & 0x10u)) vdp_dma(m);   /* DMA enable bit: with it clear the command only sets the address */
 }
 
 void md_full_write8(MdFull *m, uint32_t addr, uint8_t v) {
