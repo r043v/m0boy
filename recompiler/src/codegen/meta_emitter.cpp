@@ -197,13 +197,15 @@ std::string cond_expr(uint8_t op) {
     }
 }
 
-/* One executed-RAM-code variant (--ram-code): the bytes at ram_addr and the
- * instruction starts that ran.  It is compiled as a pseudo bank numbered
- * ROM banks + its index, so every table keyed by (bank, addr) holds it. */
+/* One executed-RAM-code variant (--ram-code / --rtcode): the bytes at
+ * ram_addr and the instruction starts that ran.  It is compiled as a pseudo
+ * bank numbered ROM banks + its index, so every table keyed by (bank, addr)
+ * holds it. */
 struct RamVariant {
     uint16_t addr = 0;
     std::vector<uint8_t> bytes;
     std::map<uint16_t, bool> starts; /* absolute address -> entered non-sequentially */
+    uint64_t run_hits = 0; /* observed execution count of an --rtcode run (heat) */
     uint16_t end() const { return static_cast<uint16_t>(addr + bytes.size()); }
 };
 
@@ -368,6 +370,7 @@ public:
 
     bool load_coverage(MetaTargetStats& stats, std::string& error);
     bool load_ram_code(MetaTargetStats& stats, std::string& error);
+    bool load_rtcode(MetaTargetStats& stats, std::string& error);
     void build();
     std::string emit_code();
     std::string emit_rom() const;
@@ -505,6 +508,7 @@ bool Generator::load_coverage(MetaTargetStats& stats, std::string& error) {
     }
     stats.covered = cov.size();
     if (!load_ram_code(stats, error)) return false;
+    if (!load_rtcode(stats, error)) return false;
     for (size_t v = 0; v < ram_.size(); v++) {
         const uint16_t bank = static_cast<uint16_t>(rom_.bank_count() + v);
         bool first = true;
@@ -512,6 +516,7 @@ bool Generator::load_coverage(MetaTargetStats& stats, std::string& error) {
             const uint32_t k = key(bank, a);
             cov[k] |= static_cast<uint8_t>(1 | ((entered || first) ? 2 : 0));
             played.insert(k);
+            if (first && ram_[v].run_hits) hits[k] += ram_[v].run_hits;
             hits[k] += 1;
             first = false;
         }
@@ -547,8 +552,10 @@ bool Generator::load_coverage(MetaTargetStats& stats, std::string& error) {
 
     std::vector<Ins> all;
     for (const auto& [k, flags] : cov) {
-        /* proven data never executed: leave it to the ROM reads entirely */
-        if (data.count(k) && !(flags & 1)) {
+        /* Proven data stays data unless a play session executed it as code:
+         * the executed bit of a speculative line (--meta-static's flag 4)
+         * must not override deepeel's proven-data records. */
+        if (data.count(k) && !played.count(k)) {
             stats.data_skipped++;
             continue;
         }
@@ -700,6 +707,99 @@ bool Generator::load_ram_code(MetaTargetStats& stats, std::string& error) {
             }
             for (const auto& [a, entered] : starts) same->starts[a] |= entered;
         }
+    }
+    return true;
+}
+
+/* --rtcode: deepeel's runtime-code archive, rtcode v1 lines
+ * `pc bytes hits rom_index producer` (rom_index/producer are -1 when the
+ * run attaches to no ROM source / no producer).  One line per distinct
+ * instruction run deepeel observed executing from RAM.  A line's bytes are
+ * whole instructions, so the entries are the instruction starts its own
+ * walk yields (the line's pc first — it was observed as entered); operand
+ * bytes are not entries.  Contiguous lines merge into one variant.  The
+ * dispatch gates at run time on the exact bytes, so an unmatched variant
+ * costs one compare.  Only WRAM ($C000-$DFFF) and HRAM ($FF80-$FFFE) are
+ * accepted — those are the RAM the dispatch can compare with the variant's
+ * bytes; a VRAM run is a transfer artifact, not code.  A malformed or
+ * out-of-range line counts in stats.rtcode_skipped, never silently
+ * compiled. */
+bool Generator::load_rtcode(MetaTargetStats& stats, std::string& error) {
+    struct Run {
+        unsigned addr = 0;
+        std::vector<uint8_t> bytes;
+        uint64_t hits = 0;
+        std::vector<uint16_t> starts; /* absolute instruction starts */
+    };
+    std::vector<Run> runs;
+    for (const fs::path& path : opt_.rtcode_files) {
+        std::ifstream f(path);
+        if (!f) {
+            error = "cannot read rtcode file " + path.string();
+            return false;
+        }
+        std::string line;
+        while (std::getline(f, line)) {
+            if (line.empty() || line[0] == '#') continue;
+            std::istringstream in(line);
+            std::string pcs, hexb;
+            long long hits = 0, rom_index = -1, producer = -1;
+            if (!(in >> pcs >> hexb >> hits)) {
+                stats.rtcode_skipped++;
+                continue;
+            }
+            in >> rom_index >> producer; /* optional columns, kept for later attribution */
+            unsigned addr = 0;
+            const bool shape_ok =
+                !hexb.empty() && hexb.size() % 2 == 0 && hits >= 0 &&
+                std::sscanf(pcs.c_str(), "%x", &addr) == 1;
+            const size_t n = hexb.size() / 2;
+            std::vector<uint8_t> bytes(n);
+            bool ok = shape_ok;
+            for (size_t i = 0; i < n && ok; i++)
+                ok = std::sscanf(hexb.c_str() + 2 * i, "%2hhx", &bytes[i]) == 1;
+            const bool wram = addr >= 0xC000u && addr + n <= 0xE000u;
+            const bool hram = addr >= 0xFF80u && addr + n <= 0xFFFFu;
+            if (!ok || !(wram || hram)) {
+                stats.rtcode_skipped++;
+                continue;
+            }
+            Run run;
+            run.addr = addr;
+            run.bytes = std::move(bytes);
+            run.hits = static_cast<uint64_t>(hits);
+            for (unsigned o = 0; o < run.bytes.size();) {
+                run.starts.push_back(static_cast<uint16_t>(addr + o));
+                unsigned len = op_length(run.bytes[o]);
+                if (!len) len = 1;
+                o += len;
+            }
+            runs.push_back(std::move(run));
+        }
+    }
+    std::stable_sort(runs.begin(), runs.end(),
+                     [](const Run& a, const Run& b) { return a.addr < b.addr; });
+    for (size_t i = 0; i < runs.size(); i++) {
+        Run run = std::move(runs[i]);
+        while (i + 1 < runs.size() && runs[i + 1].addr == run.addr + run.bytes.size()) {
+            run.bytes.insert(run.bytes.end(), runs[i + 1].bytes.begin(), runs[i + 1].bytes.end());
+            run.hits += runs[i + 1].hits;
+            for (uint16_t s : runs[i + 1].starts) run.starts.push_back(s);
+            i++;
+        }
+        RamVariant* same = nullptr;
+        for (RamVariant& v : ram_)
+            if (v.addr == run.addr && v.bytes == run.bytes) same = &v;
+        if (!same) {
+            ram_.emplace_back();
+            same = &ram_.back();
+            same->addr = static_cast<uint16_t>(run.addr);
+            same->bytes = std::move(run.bytes);
+        }
+        for (uint16_t s : run.starts) same->starts[s] = true;
+        same->run_hits += run.hits;
+        stats.rtcode_runs++;
+        stats.rtcode_bytes += same->bytes.size();
     }
     return true;
 }
@@ -1021,6 +1121,14 @@ void Generator::build() {
         if (in.flow == Flow::Call || in.flow == Flow::CallCond) {
             if (Ins* ret = find(in.bank, in.next())) ret->sw_case = ret->label = true;
         }
+        /* A HALT returns from its region (gbl_halt) and the dispatcher
+         * re-enters at the instruction after it once the interrupt is
+         * served; without an entry there every wake falls back to the
+         * interpreter — a per-scanline halt loop costs one fallback per
+         * line. */
+        if (in.flow == Flow::Halt) {
+            if (Ins* n = find(in.bank, in.next())) n->sw_case = n->label = true;
+        }
         if (in.flow == Flow::Jump || in.flow == Flow::JumpCond || in.flow == Flow::Call ||
             in.flow == Flow::CallCond) {
             int bank_check;
@@ -1049,6 +1157,11 @@ void Generator::build() {
             m->label = true;
         }
     }
+    /* --meta-all-entries: every compiled instruction is a dispatch entry, so
+     * any covered pc — an interrupt unwind, a return landing mid-region —
+     * enters compiled code instead of falling back to the interpreter. */
+    if (opt_.all_entries)
+        for (Ins& in : ins_) in.sw_case = in.label = true;
     for (auto& reg : regions_) {
         Ins& first = ins_[reg.front()];
         first.label = true;

@@ -50,6 +50,13 @@ struct MetaTargetOptions {
      * enters the compiled code, so code that was rewritten never runs a
      * stale translation (it falls back to the interpreter). */
     std::vector<std::filesystem::path> ram_code_files;
+    /* deepeel's runtime-code archive (rtcode v1, `--rtcode FILE` of memscan:
+     * one line per distinct instruction run executed from RAM, `pc bytes
+     * hits rom_index producer`).  Converted to the same variants as
+     * --ram-code: contiguous runs merge, the entries are the instruction
+     * starts each run's own byte walk yields.  VRAM runs are refused: the
+     * dispatch only compares WRAM/HRAM. */
+    std::vector<std::filesystem::path> rtcode_files;
     bool emit_comments = true;
     std::string compiler = "gcc"; ///< firmware C/C++ compiler: gcc or clang
     bool thumb = false;        ///< experimental register-IR / Thumb-1 lowering
@@ -80,6 +87,14 @@ struct MetaTargetOptions {
      * behind a bank table compile without a play session having run
      * there; the budget ranks them with the static analysis's candidates */
     bool sweep = false;
+    /* --meta-all-entries: every compiled instruction becomes a dispatch
+     * entry (and its region's switch case).  An unwinding run — an interrupt
+     * return, a call/ret mismatch, a HALT exit — re-enters gbl_exec at
+     * whatever pc it stopped on; without this, a covered pc reached only
+     * mid-region falls back to the interpreter even though its translation
+     * exists.  Cost: one dispatch row and one label per instruction (a PC
+     * build can afford it; a console's flash budget cannot). */
+    bool all_entries = false;
 };
 
 struct MetaTargetStats {
@@ -96,6 +111,9 @@ struct MetaTargetStats {
     size_t ram_variants = 0;     ///< RAM code variants compiled (--ram-code)
     size_t ram_instructions = 0; ///< ... and the instructions they hold
     size_t ram_skipped = 0;      ///< variants refused (outside WRAM/HRAM, or malformed)
+    size_t rtcode_runs = 0;      ///< rtcode v1 runs read (--rtcode)
+    size_t rtcode_bytes = 0;     ///< ... and the code bytes they hold
+    size_t rtcode_skipped = 0;   ///< runs refused (VRAM, or malformed)
     size_t budget_instructions = 0;
     bool stream = false;         ///< ROM streamed from the SD card
     std::string stream_file;     ///< its 8.3 name on the card

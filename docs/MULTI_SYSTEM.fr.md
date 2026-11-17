@@ -244,6 +244,51 @@ Vérifié sur la fixture deepeel `wramexec` (routine de 6 octets copiée ROM→W
 instructions interprétées 5 → 2. Sur *Super Mario Land*, l'outil n'observe aucun
 code RAM naturel : aucune variante.
 
+#### Code Game Boy en RAM (--rtcode, archive deepeel)
+
+`--rtcode FICHIER` lit directement l'archive du code à l'exécution que deepeel
+exporte (`explore --rtcode FICHIER`, rtcode v1 : une ligne `pc octets hits
+rom_index producteur` par run d'instructions distinct exécuté depuis la RAM ;
+`rom_index`/`producteur` à -1 sans rattachement ROM). Les runs contigus fusionnent
+en une variante ; les entrées sont les départs d'instruction de la marche d'octets
+de chaque run (son `pc` d'abord — il a été observé comme entré), pas chaque octet.
+Les runs VRAM sont refusés (comptés dans `rtcode_skipped`) : le dispatch ne
+comparait que WRAM/HRAM. `--ram-code` reste accepté ; deepeel ne produit plus ce
+format, l'archive rtcode est son produit.
+
+#### Entrées de dispatch : le natif complet sans table géante
+
+Une reprise d'exécution en plein milieu d'une région couverte — retour
+d'interruption, RET désaligné, sortie de HALT — ré-entre par `gbl_exec` au pc
+courant : un pc couvert mais sans case retombe dans l'interpréteur bien que sa
+traduction existe. Trois mécanismes le corrigent, du plus fin au plus brut :
+
+- **Après HALT automatique.** L'instruction qui suit un HALT est désormais
+  toujours une entrée : `gbl_halt` rend la main au dispatch et le retour
+  d'interruption atterrit exactement là. Sans cette entrée, une boucle
+  d'attente par trame de balayage coûte un repli interpréteur par ligne
+  (Kirby : 3 M de pas sur deux pc, 0x20E3/0x20E5, à elle seule).
+- **Boucle de retour (feedback).** Le harnais hôte enregistre les pc
+  réellement interprétés (`--coverage FICHIER` du binaire `_profile`, flag 3 =
+  exécuté + entré). Re-générer avec ce fichier en `--coverage` supplémentaire
+  les compile et en fait des entrées — preuve par exécution réelle, jamais du
+  deviné. Une itération suffit en pratique (Kirby : 2 M → 2 880 pas par
+  600 trames, plus aucun pc ROM interprété).
+- **`--meta-all-entries`** fait de chaque instruction compilée une entrée :
+  correct mais lourd (une ligne de table et un case par instruction — Kirby
+  153 221 entrées, un binaire de 11 Mo contre 2,3 Mo pour la même couverture
+  par les deux mécanismes ci-dessus). À réserver aux budgets flash où la
+  table doit être découpée autrement — sur console, le retour de HALT et le
+  feedback coûtent presque rien.
+
+Le résidu interprété restant est du code hors ROM (pc ≥ $8000) dont les octets
+ne matchent aucune variante enregistrée : le dispatch refuse par conception
+de faire tourner une traduction périmée. `--meta-static` compile de plus le
+code probable non observé en session ; les enregistrements de données prouvées
+de deepeel (flag 8) restent des données tant qu'aucune session réelle ne les a
+exécutées — le bit « exécuté » d'une ligne spéculative (flag 4) ne les
+surmonte pas.
+
 Le mode `auto` reconnaît `.sg` et `.gb/.gbc/.sgb`, sans distinction de casse.
 Les extensions inconnues et les dossiers conservent le choix Game Boy
 historique. Pour un fichier `.bin` SG-1000, il faut donc indiquer `--system

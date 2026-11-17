@@ -187,6 +187,9 @@ void print_usage(const char* program) {
     std::cout << "  --coverage <file>     gbl coverage profile for --target meta (repeatable)\n";
     std::cout << "  --ram-code <file>     deepeel's executed-RAM-code variants (Game Boy WRAM/HRAM): compiled\n"
                  "                        and entered only while the RAM holds the recorded bytes\n";
+    std::cout << "  --rtcode <file>       deepeel's runtime-code archive (rtcode v1: `pc bytes hits\n"
+                 "                        rom_index producer`): executed RAM-code runs, converted to the\n"
+                 "                        same variants (--ram-code's format, without the bridge script)\n";
     std::cout << "  --coverage-map <file> deepeel's memory map (.map): every code range seeds the\n"
                  "                        SG-1000/GG/SMS/MSX walk (computed dispatch into a\n"
                  "                        switched bank is compiled, not interpreted)\n";
@@ -203,6 +206,9 @@ void print_usage(const char* program) {
     std::cout << "  --vectrex-sweep       Vectrex: the cartridge swept for JSR/JMP extended targets\n";
     std::cout << "  --megadrive-sweep     Mega Drive: the ROM swept for JSR/JMP absolute long targets\n";
     std::cout << "  --meta-sweep          Game Boy: every bank's CALL/JP abs targets offered as speculative entries\n";
+    std::cout << "  --meta-all-entries    Every compiled instruction becomes a dispatch entry: a covered pc\n"
+                 "                        reached mid-region (interrupt unwind, mismatched return) runs\n"
+                 "                        compiled instead of falling back to the interpreter\n";
     std::cout << "  --bios <file>         Vectrex: the system ROM (4 or 8 KiB) a META firmware embeds\n";
     std::cout << "  --full-boot           Vectrex: keep the BIOS intro\n";
     std::cout << "  --meta-static         Add the code found by static analysis (no play session needed)\n";
@@ -1843,6 +1849,7 @@ static int g_meta_stream = -1;                  /* --meta-stream auto|on|off */
 static std::vector<fs::path> g_rom_profiles;    /* --rom-profile FILE */
 static fs::path g_rom_plan;                     /* --rom-plan FILE (Game Boy too) */
 static std::vector<fs::path> g_ram_code;        /* --ram-code FILE (repeatable) */
+static std::vector<fs::path> g_rtcode;          /* --rtcode FILE (repeatable) */
 static size_t g_meta_resident = 0;              /* --meta-rom-resident-kib */
 static bool g_meta_pack = false;                /* --meta-pack */
 static bool g_cgb = false;                      /* --cgb: CGB mode for Game Boy, pc target */
@@ -1870,9 +1877,10 @@ static int run_meta_target(const char* argv0, const std::string& rom_path,
                            const std::vector<fs::path>& coverage_paths, bool precise,
                            bool static_coverage, size_t bytes_per_instruction,
                            bool emit_comments, m0boy::TargetId target_id, bool thumb, const std::string& compiler,
-                           bool sweep) {
+                           bool sweep, const std::vector<fs::path>& rtcode_files, bool all_entries) {
     gbrecomp::MetaTargetOptions options;
     options.sweep = sweep;
+    options.all_entries = all_entries;
     options.pokitto = target_id == m0boy::TargetId::pokitto;
     options.espboy = target_id == m0boy::TargetId::espboy;
     options.pc = target_id == m0boy::TargetId::pc;
@@ -1899,6 +1907,7 @@ static int run_meta_target(const char* argv0, const std::string& rom_path,
                              : fs::path(output_dir);
     options.coverage_files = coverage_paths;
     options.ram_code_files = g_ram_code;
+    options.rtcode_files = rtcode_files;
     options.bytes_per_instruction = bytes_per_instruction;
     options.code_budget_bytes = g_meta_code_budget;
     options.stream = g_meta_stream;
@@ -1983,6 +1992,11 @@ static int run_meta_target(const char* argv0, const std::string& rom_path,
               << (stats.data_skipped ? "  proven data:        " + std::to_string(stats.data_skipped) +
                                              " coverage records left as data (cov flag 8)\n"
                                      : "")
+              << (stats.rtcode_runs ? "  rtcode:             " + std::to_string(stats.rtcode_runs) + " runs, " +
+                    std::to_string(stats.rtcode_bytes) + " code bytes" +
+                    (stats.rtcode_skipped ? ", " + std::to_string(stats.rtcode_skipped) +
+                          " skipped (VRAM/malformed)" : "") + "\n"
+                    : "")
               << (stats.rom_profile_source.empty() ? ""
                       : "  ROM read profile:   " + stats.rom_profile_source + "\n")
               << "  dispatch entries:   " << stats.dispatch_entries << "\n"
@@ -2098,6 +2112,7 @@ int main(int argc, char* argv[]) {
     bool vectrex_sweep = false;
     bool megadrive_sweep = false;
     bool meta_sweep = false;
+    bool meta_all_entries = false;
     bool meta_static = false;
     size_t meta_bpi = 20;
     bool meta_bpi_set = false;
@@ -2266,6 +2281,10 @@ int main(int argc, char* argv[]) {
             if (i + 1 < argc) {
                 g_ram_code.emplace_back(argv[++i]);
             }
+        } else if (arg == "--rtcode") {
+            if (i + 1 < argc) {
+                g_rtcode.emplace_back(argv[++i]);
+            }
         } else if (arg == "--ram-image") {
             if (i + 1 < argc) {
                 ram_image = argv[++i];
@@ -2305,6 +2324,8 @@ int main(int argc, char* argv[]) {
             megadrive_sweep = true;
         } else if (arg == "--meta-sweep") {
             meta_sweep = true;
+        } else if (arg == "--meta-all-entries") {
+            meta_all_entries = true;
         } else if (arg == "--bios") {
             if (i + 1 >= argc) {
                 std::cerr << "Error: --bios requires a file\n";
@@ -2907,10 +2928,11 @@ int main(int argc, char* argv[]) {
     if (target != "desktop") { /* every wired console of the Game Boy pipeline */
         return run_meta_target(argv[0], rom_path, output_dir, output_prefix, meta_dir,
                                coverage_paths, meta_precise, meta_static, meta_bpi, emit_comments,
-                               *m0boy::parse_target(target), meta_thumb, meta_compiler, meta_sweep);
+                               *m0boy::parse_target(target), meta_thumb, meta_compiler, meta_sweep,
+                               g_rtcode, meta_all_entries);
     }
-    if (!coverage_paths.empty() || !coverage_map.empty() || !ram_image.empty() || !g_ram_code.empty() || meta_compiler != "gcc" || meta_thumb || meta_precise || meta_static || meta_sweep || !meta_dir.empty()) {
-        std::cerr << "Error: --coverage, --coverage-map, --ram-image, --ram-code, --meta-compiler, --meta-thumb, --meta-precise, --meta-static, --meta-sweep and --meta-dir require a console target (meta, pokitto, espboy, pc, odroid, aka)\n";
+    if (!coverage_paths.empty() || !coverage_map.empty() || !ram_image.empty() || !g_ram_code.empty() || !g_rtcode.empty() || meta_compiler != "gcc" || meta_thumb || meta_precise || meta_static || meta_sweep || meta_all_entries || !meta_dir.empty()) {
+        std::cerr << "Error: --coverage, --coverage-map, --ram-image, --ram-code, --rtcode, --meta-compiler, --meta-thumb, --meta-precise, --meta-static, --meta-sweep, --meta-all-entries and --meta-dir require a console target (meta, pokitto, espboy, pc, odroid, aka)\n";
         return 1;
     }
     if (!emit_android_project && (!android_package.empty() || !android_app_name.empty())) {
