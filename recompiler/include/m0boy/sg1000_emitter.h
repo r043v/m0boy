@@ -66,6 +66,7 @@ struct EmitStats {
     size_t swept = 0;      ///< instructions added by the speculative sweep
     size_t data_zones = 0; ///< inferred data zones (>= 512 bytes)
     size_t data_bytes = 0; ///< ROM bytes inside those zones
+    size_t ramps = 0;      ///< profiled instructions left out: runs of 00 (NOP) or FF (RST 38) padding
     std::vector<uint32_t> locations; ///< every compiled instruction (Loc), ascending
 };
 

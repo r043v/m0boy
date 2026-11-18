@@ -692,6 +692,7 @@ bool generate(const fs::path& path, const GenerateOptions& o, GenerateStats& sta
         stats.data_bytes = es.data_bytes;
         stats.regions = es.regions;
         stats.entries = es.entries;
+        stats.ramps = es.ramps;
         stats.cart_ram = cart_ram;
 
         const bool pow2 = rom_size && !(rom_size & (rom_size - 1));

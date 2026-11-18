@@ -860,6 +860,43 @@ call/ret par instruction z80 tuerait l'exécution), mais en resserrant la
 fusion des régions. Ne pas confondre avec les gotos eux-mêmes : ils sont la
 traduction normale du flux z80 et ne coûtent rien.
 
+### Rampes, régions et sauts entre régions (mesures 2026-11-18)
+
+Trois changements de l'émetteur z80, mesurés sur Ristar GG (même profil,
+353 008 instructions, clang Release, `.text` du binaire hôte) :
+
+- **Rampes de remplissage laissées à l'interpréteur.** Un octet `$FF`
+  (rst $38) ou `$00` joué au milieu d'une série d'au moins 16 `$FF` ou 33
+  `$00` identiques en ROM n'est pas émis ; la ligne `padding ramps` de
+  `m0recomp` en donne le compte. Ces rampes, jouées par les chemins
+  d'exploration, coûtaient une entrée de dispatch par octet. Sur Ristar,
+  24 150 instructions sont retirées ; les entrées de dispatch passent de
+  59 899 à 39 014, le C de 24,9 à 20,4 Mo et `.text` de 9,7 à 7,7 Mo. Le
+  `run_hash` est inchangé (d7d8a133 sur 600 trames, d22e7adf sur 3 000
+  trames bouton tenu).
+- **Sauts entre régions en appel terminal.** Un saut vers une autre région
+  devient `SG_TAIL(r_N)` : `__attribute__((musttail))` sous clang (la pile C
+  ne grandit plus le long d'une chaîne de sauts), et l'ancien
+  appel-puis-retour ailleurs (gcc ARM). Taille et vitesse sont inchangées,
+  le hachage aussi. Le mode `--meta-precise` reste égal à l'interpréteur
+  (656c8caa sur 600 trames).
+- **Écartés après mesure :**
+  - *Régions taillées sur le graphe de flot* plutôt que par proximité
+    d'adresse. Résultat : 6 474 régions au lieu de 2 221, 72 000 entrées au
+    lieu de 39 000 (quel que soit le plafond : 100, 400 ou 1 000
+    instructions) et `.text` de 11,7 Mo au lieu de 7,7. Une routine coupée
+    au plafond, et chaque flux d'instructions qui se chevauche, sort par le
+    dispatch, là où la proximité garde un goto.
+  - *A, F, BC, DE et HL dans une copie locale à la région*, recopiée vers
+    `machine.cpu` aux sorties et autour des appels. Le hachage est identique,
+    mais `.text` passe de 7,7 à 12,0 Mo et l'exécution est 3 à 5 % plus
+    lente. Il y a 16 653 appels de région et environ 20 000 appels de helpers
+    ALU (`sg_adc`, `sg_cp`…) qui lisent ces registres, et chaque appel paie
+    deux copies. Ce gain ne viendra qu'avec des helpers ALU en ligne qui
+    prennent et rendent leurs valeurs. Le profil montre de toute façon que
+    les régions ne font qu'environ 19 % du temps hôte, contre 45 % pour le
+    rendu des tuiles.
+
 Le frontal commun `gm0`, sur sa [branche `z80`](https://github.com/r043v/gm0/tree/z80), charge directement les cartouches `.sg` dans le noyau
 Z80/TMS9918A/PSG, sans seconde émulation Cortex-M0 sur PC. Il partage les
 filtres F8, l’échelle F10, le plein écran F11, les manettes, F5, le titre et le

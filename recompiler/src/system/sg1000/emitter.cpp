@@ -380,6 +380,30 @@ private:
         if (a < 0x400 && opt_.fixed_kib) return a < rom_.size();
         return (static_cast<size_t>(page_of(l)) << opt_.bank_shift) < rom_.size();
     }
+    /* Inside a long run of FF (RST 38) or 00 (NOP) bytes of ROM: padding.
+     * An explorer that forks both sides of every branch walks into those
+     * ramps (one RST 38 after another, each a call and a return site); real
+     * code never runs sixteen RST 38 in a row, and 33 NOPs is a delay no
+     * game needs compiled.  The interpreter still runs them if they ever
+     * play.  Same thresholds as deepeel's coverage filter. */
+    bool ramp(Loc l) const {
+        const uint16_t a = addr_of(l);
+        if (a >= 0xc000 || !in_rom(l)) return false;
+        const uint8_t v = rom_at(l);
+        if (v != 0x00 && v != 0xff) return false;
+        const unsigned need = v == 0xff ? 16 : 33;
+        const int s = slot_of(a);
+        unsigned n = 1;
+        for (unsigned k = 1; k < need && n < need; k++, n++) {
+            const uint16_t b = static_cast<uint16_t>(a - k);
+            if (b > a || slot_of(b) != s || rom_at((l & 0xffff0000u) | b) != v) break;
+        }
+        for (unsigned k = 1; k < need && n < need; k++, n++) {
+            const uint16_t b = static_cast<uint16_t>(a + k);
+            if (b < a || b >= 0xc000 || slot_of(b) != s || rom_at((l & 0xffff0000u) | b) != v) break;
+        }
+        return n >= need;
+    }
     /* Constant reads that can be folded: unbanked ROM, or the fixed first KiB */
     bool rom_const(uint16_t a) const {
         if (opt_.msx && !opt_.banked) return a >= opt_.rom_start && a < rom_.size();
@@ -526,7 +550,11 @@ bool Emitter::decode(Loc loc, Ins& in) {
 }
 
 void Emitter::plan() {
-    /* Regions: runs of nearby instructions. */
+    /* Regions: runs of nearby instructions.  (Regions grown along the
+     * control-flow graph instead were tried on Ristar: 72 k dispatch entries
+     * instead of 39 k and 50 % more machine code, whatever the cap — a
+     * routine split at the cap, and every overlapping instruction stream,
+     * leaves through the dispatcher, where address proximity keeps a goto.) */
     const Ins* prev = nullptr;
     for (auto& [a, in] : ins_) {
         /* banked: one slot (and page) per region */
@@ -696,9 +724,9 @@ void Emitter::transfer(std::ostringstream& o, const Ins& from, uint16_t target, 
     const Ins* t = find(dest.loc);
     if (t && t->region == from.region && dest.guard_slot < 0) { o << "    goto " << lab(dest.loc) << ";\n"; return; }
     o << "    Z.pc = " << hex(target) << ";";
-    if (t) {
+    if (t) { /* a jump, not a call: the target region replaces this frame (SG_TAIL, sg_gen.h) */
         if (dest.guard_slot >= 0) o << " if (" << guard(dest) << ")";
-        o << " " << region_name(t->region) << "();";
+        o << " SG_TAIL(" << region_name(t->region) << ");";
     }
     o << " return;\n";
 }
@@ -1070,7 +1098,7 @@ void Emitter::emit_ins(std::ostringstream& o, Ins& in, const Ins* following) {
                   << " break; }\n";
             }
             o << "        ADV(21, " << unsigned(d.refresh) << ");\n"
-              << "        if (EVT() && sg_event(" << hex(in.addr) << ")) return;\n    }\n";
+              << "        SYNC(" << hex(in.addr) << ");\n    }\n";
             stats_->native++;
             break;
         }
@@ -1148,6 +1176,7 @@ void Emitter::emit_region(std::ostringstream& o, int r) {
     o << "    switch (Z.pc) {\n";
     for (Loc a : reg) if (ins_[a].sw_case) o << "    case " << hex(addr_of(a)) << ": goto " << lab(a) << ";\n";
     o << "    default: return;\n    }\n";
+    std::ostringstream body;
     /* an instruction with no label after an exit is text GCC would throw
      * away: do not emit it (the next label always restarts a live path) */
     bool falls_in = true;
@@ -1156,13 +1185,13 @@ void Emitter::emit_region(std::ostringstream& o, int r) {
         const Ins* following = k + 1 < reg.size() ? &ins_[reg[k + 1]] : nullptr;
         if (!falls_in && !in.label) continue;
         /* an Ei/Ret/Jump... ends the straight line: the next one needs a label */
-        emit_ins(o, in, following);
+        emit_ins(body, in, following);
         /* Flow::Ei inlines the instruction after it (EI;RET...): the run
          * never falls into it */
         falls_in = in.flow != Flow::Ei && in.falls();
     }
-    flush(o);
-    o << "}\n";
+    flush(body);
+    o << body.str() << "}\n";
 }
 
 std::string Emitter::run(const std::vector<HotLoc>& hot, EmitStats& stats) {
@@ -1187,7 +1216,10 @@ std::string Emitter::run(const std::vector<HotLoc>& hot, EmitStats& stats) {
         ins_[a] = in;
         work.push_back(a);
     };
-    for (const HotLoc& h : hot) add(h.loc, true, h.hits);
+    for (const HotLoc& h : hot) {
+        if (ramp(h.loc)) { stats.ramps++; continue; }
+        add(h.loc, true, h.hits);
+    }
     /* Sites this hot expand the memory and stack helpers inline (sg_gen.h):
      * the body is the helper's, the call itself is the cost on a Cortex-M0+;
      * within a factor of the hottest execution count, flash permitting. */

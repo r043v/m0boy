@@ -219,6 +219,20 @@ SG_HELPER unsigned sg_op(const z80_decoded_t *d) { return z80_execute(&Z, d); }
 #endif
 #define ENTER() do { if (SG_SP() < sg_stack_limit) return; } while (0)
 
+/* A jump to another region: that region replaces the frame (no C stack
+ * growth, no return through this one) where the compiler guarantees a tail
+ * call; elsewhere a call then a return, the same behaviour. */
+#if defined(__clang__) && defined(__has_attribute)
+#if __has_attribute(musttail)
+#define SG_MUSTTAIL 1
+#endif
+#endif
+#ifdef SG_MUSTTAIL
+#define SG_TAIL(f) do { __attribute__((musttail)) return f(); } while (0)
+#else
+#define SG_TAIL(f) do { f(); return; } while (0)
+#endif
+
 #define F_C 0x01
 #define F_PV 0x04
 #define F_Z 0x40

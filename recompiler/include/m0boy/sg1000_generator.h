@@ -36,6 +36,7 @@ struct GenerateStats {
     size_t swept = 0;          ///< instructions added by the speculative sweep
     size_t data_zones = 0;     ///< inferred data zones (>= 512 bytes)
     size_t data_bytes = 0;     ///< ROM bytes inside those zones
+    size_t ramps = 0;          ///< profiled padding instructions left to the interpreter
     bool cart_ram = false;
     size_t streamed_pages = 0; ///< Game Gear pages left on the SD card
     size_t pool_sectors = 0;   ///< Game Gear sectors of those pages kept in flash

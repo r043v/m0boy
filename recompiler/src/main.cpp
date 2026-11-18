@@ -2734,6 +2734,7 @@ int main(int argc, char* argv[]) {
                   << stats.speculative << " reached statically, " << stats.swept << " swept)\n"
                   << "  static sweep:       " << stats.data_zones << " data zone(s), " << stats.data_bytes << " ROM byte(s)\n"
                   << "  regions:            " << stats.regions << ", " << stats.entries << " entries\n"
+                  << (stats.ramps ? "  padding ramps:      " + std::to_string(stats.ramps) + " played instruction(s) of 00/FF runs left to the interpreter\n" : std::string())
                   << (stats.cart_ram ? (gamegear ? (target == "desktop" ? "  cartridge RAM:      32 KiB, 16 KiB window at 8000-BFFF\n"
                                                                             : target == "espboy" ? "  cartridge RAM:      8 KiB in RAM, saved in flash\n"
                                                                             : "  cartridge RAM:      32 KiB in the save file on the SD card\n")
