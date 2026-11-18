@@ -39,7 +39,7 @@ m0boy recompiles Game Boy ROMs into native firmwares for the Gamebuino META
 - `recompiler/src/system/console_project.cpp`: what the SG-1000, PICO-8 and
   NES generators write alike for a console (shared frontend, audio driver,
   `gbl_config.h`/`gbl_profile.h`, META and Pokitto build projects).
-- `recompiler/`: `gbrecomp`, from gb-recompiled. The M0 backend is
+- `recompiler/`: `m0recomp`, from gb-recompiled. The M0 backend is
   `recompiler/src/codegen/meta_emitter.cpp` (`--target meta`, `--target pokitto`).
 - `targets/meta/runtime/`: the `gbl` runtime shared by both consoles; every
   optimisation switch, per console, is in `gbl_profile.h` (one switch, one

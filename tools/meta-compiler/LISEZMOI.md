@@ -8,12 +8,12 @@ Voir l'en-tête de `compile.mjs` pour le fonctionnement détaillé.
     node tools/meta-compiler/web.mjs [port]     # défaut 8642, écoute 127.0.0.1
 
 Une page locale : on glisse un `.gb`/`.gbc`, le serveur le convertit avec
-le pipeline existant (`compile.mjs`, donc gbrecomp + PIO — mêmes profils,
+le pipeline existant (`compile.mjs`, donc m0recomp + PIO — mêmes profils,
 même cache d'icônes, mêmes décisions) et le navigateur reçoit le `.zip`
 du répertoire de jeu complet, prêt à déposer sur la carte SD ou dans
 l'émulateur (`tools/meta-emu-sdl`, version wasm comprise).
 
-- Le `.bin` exige la cross-compilation ARM (gbrecomp + pio) : la conversion
+- Le `.bin` exige la cross-compilation ARM (m0recomp + pio) : la conversion
   tourne sur la machine locale, pas dans le navigateur ; rien ne sort de
   `127.0.0.1`.
 - Un `.gb` par conversion ; les demandes sont traitées en série.
@@ -21,6 +21,6 @@ l'émulateur (`tools/meta-emu-sdl`, version wasm comprise).
   racine, avec son entrée de dossier, `.gbrmeta.json` compris — prêt à
   déposer sur la carte SD, dans l'émulateur (`tools/meta-emu-sdl`,
   version wasm comprise) ou à partager tel quel.
-- Prérequis : les mêmes que `compile.mjs` (gbrecomp compilé dans
+- Prérequis : les mêmes que `compile.mjs` (m0recomp compilé dans
   `build/bin`, pio dans le PATH) — la page affiche un bandeau s'il en
   manque.

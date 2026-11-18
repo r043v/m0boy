@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end check of `gbrecomp --target meta` on a synthetic ROM.
+"""End-to-end check of `m0recomp --target meta` on a synthetic ROM.
 
 The ROM is generated here (seeded) and stresses what the compact emitter
 optimizes: random ALU/CB/flag sequences whose full register and F state is
@@ -347,7 +347,7 @@ def build_host(project: Path, name: str = "build", cflags: str = "") -> Path:
 
 def deepeel_png(path: Path, chunks: dict[str, str]) -> None:
     """A minimal deepeel map PNG: a 1x1 image and zTXt chunks (deepeel_cov,
-    deepeel_rom, ...), the container `gbrecomp --coverage` accepts."""
+    deepeel_rom, ...), the container `m0recomp --coverage` accepts."""
     import struct
     import zlib
 
@@ -375,7 +375,7 @@ def parse(out: str) -> dict[str, str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--gbrecomp", required=True)
+    ap.add_argument("--m0recomp", required=True)
     ap.add_argument("--seed", type=int, default=1989)
     ap.add_argument("--keep", action="store_true")
     args = ap.parse_args()
@@ -390,7 +390,7 @@ def main() -> int:
         common = ["--output-prefix", "e2e"]
 
         boot = tmp / "boot"
-        run([args.gbrecomp, str(rom), "--target", "meta", "-o", str(boot)] + common)
+        run([args.m0recomp, str(rom), "--target", "meta", "-o", str(boot)] + common)
         bb = build_host(boot)
         cov = tmp / "coverage.txt"
         wram = tmp / "wram.bin"
@@ -417,7 +417,7 @@ def main() -> int:
                             ("precise", ["--meta-precise"]),
                             ("thumb_precise", ["--meta-thumb", "--meta-precise"])):
             proj = tmp / mode
-            out = run([args.gbrecomp, str(rom), "--target", "meta", "--coverage", str(cov),
+            out = run([args.m0recomp, str(rom), "--target", "meta", "--coverage", str(cov),
                        "-o", str(proj)] + common + extra)
             m = re.search(r"compiled:\s+(\d+) instructions", out)
             if not m or int(m.group(1)) < 500:
@@ -443,9 +443,9 @@ def main() -> int:
 
         # --meta-sweep: every bank's CALL/JP abs targets offered as
         # speculative entries compile within the budget, the run unchanged
-        plain_text = run([args.gbrecomp, str(rom), "--target", "meta", "--coverage", str(cov),
+        plain_text = run([args.m0recomp, str(rom), "--target", "meta", "--coverage", str(cov),
                           "-o", str(tmp / "plain")] + common)
-        swept_text = run([args.gbrecomp, str(rom), "--target", "meta", "--coverage", str(cov),
+        swept_text = run([args.m0recomp, str(rom), "--target", "meta", "--coverage", str(cov),
                           "-o", str(tmp / "swept"), "--meta-sweep"] + common)
         count = lambda text: int(re.search(r"compiled:\s+(\d+)", text).group(1))
         assert count(swept_text) >= count(plain_text), (count(plain_text), count(swept_text))
@@ -459,10 +459,10 @@ def main() -> int:
         # read profile when streaming
         png = tmp / "deepeel.map.png"
         deepeel_png(png, {"deepeel_cov": cov.read_text(), "deepeel_rom": "10 1000\n20 5\n"})
-        png_text = run([args.gbrecomp, str(rom), "--target", "meta", "--coverage", str(png),
+        png_text = run([args.m0recomp, str(rom), "--target", "meta", "--coverage", str(png),
                         "-o", str(tmp / "png")] + common)
         assert count(png_text) == count(plain_text), (count(plain_text), count(png_text))
-        png_stream = run([args.gbrecomp, str(rom), "--target", "meta", "--coverage", str(png),
+        png_stream = run([args.m0recomp, str(rom), "--target", "meta", "--coverage", str(png),
                           "--meta-stream", "on", "-o", str(tmp / "png_stream")] + common)
         assert "ROM read profile:   deepeel_rom of deepeel.map.png" in png_stream, png_stream
 
@@ -486,12 +486,12 @@ def main() -> int:
         # in flash and reads the others through a 2-sector cache.  Same
         # results.
         s1 = tmp / "stream1"
-        run([args.gbrecomp, str(rom), "--target", "meta", "--coverage", str(cov), "--meta-stream", "on",
+        run([args.m0recomp, str(rom), "--target", "meta", "--coverage", str(cov), "--meta-stream", "on",
              "-o", str(s1)] + common)
         prof = tmp / "romdata.prof"
         run([str(build_host(s1) / "e2e_profile"), "--frames", str(FRAMES), "--rom-profile-out", str(prof)])
         s2 = tmp / "stream2"
-        gen = run([args.gbrecomp, str(rom), "--target", "meta", "--coverage", str(cov), "--meta-stream", "on",
+        gen = run([args.m0recomp, str(rom), "--target", "meta", "--coverage", str(cov), "--meta-stream", "on",
                    "--rom-profile", str(prof), "--meta-rom-resident-kib", "4", "-o", str(s2)] + common)
         stream_out = run([str(build_host(s2, "build", "-DGBL_STREAM_SECTORS=2") / "e2e_host"),
                           "--frames", str(FRAMES), "--wram-hash-bytes", str(RESULT_BYTES)])
@@ -499,7 +499,7 @@ def main() -> int:
         sm = re.search(r"rom_stream sectors_read (\d+)", stream_out)
         # Same, with the streamed sectors LZSS-packed in flash (--meta-pack).
         s3 = tmp / "packed"
-        pgen = run([args.gbrecomp, str(rom), "--target", "meta", "--coverage", str(cov), "--meta-pack",
+        pgen = run([args.m0recomp, str(rom), "--target", "meta", "--coverage", str(cov), "--meta-pack",
                     "--rom-profile", str(prof), "--meta-rom-resident-kib", "4", "-o", str(s3)] + common)
         packed_bin = str(build_host(s3, "build", "-DGBL_STREAM_SECTORS=2") / "e2e_host")
         packed_out = run([packed_bin,
@@ -521,7 +521,7 @@ def main() -> int:
         lines += ['%x 1' % (c * 16) for c in range(16, 128)]
         hybrid_prof.write_text('\n'.join(lines) + '\n')
         hybrid = tmp / "hybrid"
-        run([args.gbrecomp, str(hybrid_rom), '--target', 'meta', '--coverage', str(cov), '--meta-pack',
+        run([args.m0recomp, str(hybrid_rom), '--target', 'meta', '--coverage', str(cov), '--meta-pack',
              '--meta-precise', '--rom-profile', str(hybrid_prof), '--meta-rom-resident-kib', '4', '-o', str(hybrid)] + common)
         config = (hybrid / 'src/gbl_config.h').read_text()
         assert '#define GBL_ROM_SD 1' in config and '#define GBL_ROM_PACKED 1' in config

@@ -34,14 +34,14 @@ def gm0_check(project, rom, frames=240):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--gbrecomp', required=True)
+    ap.add_argument('--m0recomp', required=True)
     args = ap.parse_args()
     with tempfile.TemporaryDirectory(prefix='espboy_') as tmp:
         root = Path(tmp)
         rom = root / 'synthetic.gb'
         rom.write_bytes(make_rom(1989))
         project = root / 'project'
-        base = [args.gbrecomp, str(rom), '--target', 'espboy', '--output-prefix', 'e2e',
+        base = [args.m0recomp, str(rom), '--target', 'espboy', '--output-prefix', 'e2e',
                 '--meta-static', '--meta-precise', '-o', str(project)]
         run(base)
         assert not (project / 'rom.bin').exists()  # a small ROM is part of the firmware
@@ -95,7 +95,7 @@ def main():
         plain[0x14d] = (-sum(plain[0x134:0x14d]) - 25) & 255
         rom.write_bytes(plain)
         plain_project = root / 'plain'
-        run([args.gbrecomp, str(rom), '--target', 'espboy', '--output-prefix', 'e2e', '--meta-static',
+        run([args.m0recomp, str(rom), '--target', 'espboy', '--output-prefix', 'e2e', '--meta-static',
              '--meta-precise', '-o', str(plain_project)])
         assert 'GBL_BATTERY' not in (plain_project / 'src/gbl_config.h').read_text()
         if pio:
@@ -194,14 +194,14 @@ int main(int argc, char **argv) {
         noise[:512] = large[:512]
         rejected = root / 'incompressible.gb'
         rejected.write_bytes(noise)
-        result = subprocess.run([args.gbrecomp, str(rejected), '--target', 'espboy', '-o', str(root / 'rejected')], text=True, capture_output=True)
+        result = subprocess.run([args.m0recomp, str(rejected), '--target', 'espboy', '-o', str(root / 'rejected')], text=True, capture_output=True)
         assert result.returncode and 'even compressed' in result.stderr, result.stderr
         # Reject SD and architecture-specific paths rather than producing unusable projects.
         for flags in [['--meta-stream', 'on'], ['--meta-thumb']]:
             result = subprocess.run(base + flags, text=True, capture_output=True)
             assert result.returncode and 'ESPboy' in result.stderr
         # Switching consoles must not leave any ESPboy driver or linker script.
-        run([args.gbrecomp, str(rom), '--target', 'meta', '-o', str(project)])
+        run([args.m0recomp, str(rom), '--target', 'meta', '-o', str(project)])
         assert not list((project / 'src').glob('espboy_*'))
         assert not (project / 'espboy.ld').exists()
         assert not (project / 'rom.bin').exists()

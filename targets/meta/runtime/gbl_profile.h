@@ -6,7 +6,7 @@
  * can be flipped independently; a definition on the command line wins
  * (PlatformIO build_flags, the Pokitto Makefile's EXTRA_CFLAGS,
  * m0_estimate.py --cflag).  The profile is chosen by GBL_TARGET_POKITTO,
- * which gbrecomp writes into gbl_config.h for --target pokitto; anything
+ * which m0recomp writes into gbl_config.h for --target pokitto; anything
  * else (the META, the host harness, the tests) gets the META profile.
  *
  * What each switch does is documented where it is defined or used:

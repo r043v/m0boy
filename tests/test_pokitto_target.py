@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""`gbrecomp --target pokitto` on the synthetic ROM of test_meta_target_e2e.
+"""`m0recomp --target pokitto` on the synthetic ROM of test_meta_target_e2e.
 
 The Pokitto build shares the runtime, the generated code and the frontend
 with the Gamebuino META build (targets/common/platform + the Game Boy frontend in targets/meta/platform, the console
@@ -50,7 +50,7 @@ def toolchain() -> str | None:
 
 
 def generate(gbrecomp: str, rom: Path, out: Path, target: str) -> None:
-    run([gbrecomp, str(rom), "--target", target, "--output-prefix", "e2e", "--meta-static", "--meta-thumb", "-o", str(out)])
+    run([m0recomp, str(rom), "--target", target, "--output-prefix", "e2e", "--meta-static", "--meta-thumb", "-o", str(out)])
 
 
 def check_files(out: Path, pokitto: bool) -> None:
@@ -73,7 +73,7 @@ def check_files(out: Path, pokitto: bool) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--gbrecomp", required=True)
+    ap.add_argument("--m0recomp", required=True)
     ap.add_argument("--seed", type=int, default=1989)
     ap.add_argument("--keep", action="store_true")
     args = ap.parse_args()
@@ -84,11 +84,11 @@ def main() -> int:
         rom.write_bytes(make_rom(args.seed))
         out = tmp / "project"
 
-        generate(args.gbrecomp, rom, out, "pokitto")
+        generate(args.m0recomp, rom, out, "pokitto")
         check_files(out, pokitto=True)
-        generate(args.gbrecomp, rom, out, "meta")
+        generate(args.m0recomp, rom, out, "meta")
         check_files(out, pokitto=False)
-        generate(args.gbrecomp, rom, out, "pokitto")
+        generate(args.m0recomp, rom, out, "pokitto")
         check_files(out, pokitto=True)
         print("project files: ok (pokitto, meta, pokitto in one directory)")
 

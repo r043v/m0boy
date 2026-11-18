@@ -151,7 +151,7 @@ def build_host(project):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--gbrecomp", required=True)
+    ap.add_argument("--m0recomp", required=True)
     ap.add_argument("--keep", action="store_true")
     args = ap.parse_args()
 
@@ -165,7 +165,7 @@ def main():
         for mode, extra in (("interp", ["--interp"]), ("precise", ["--meta-precise"]),
                             ("fast", [])):
             p = tmp / f"cgb_{mode}"
-            run([args.gbrecomp, str(romp), "--target", "pc", "--cgb", "-o", str(p),
+            run([args.m0recomp, str(romp), "--target", "pc", "--cgb", "-o", str(p),
                  "--output-prefix", "cgbe"] + extra)
             b = build_host(p)
             out = run([str(b / "cgbe_host"), "--frames", "1500",

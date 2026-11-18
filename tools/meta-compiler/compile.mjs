@@ -40,7 +40,7 @@
  *   (compatible avec l'état écrit par compile.sh : les deux scripts
  *   s'échangent les jeux déjà compilés, les profils et les icônes)
  *
- * Versions : chaque firmware embarque la version de gbrecomp qui l'a produit
+ * Versions : chaque firmware embarque la version de m0recomp qui l'a produit
  * (chaîne « gbrecomp-meta x.y.z » dans le .bin, aussi imprimée au démarrage
  * sur le port USB).  Le script la relit : un firmware déjà à jour (même
  * version, même ROM) est conservé tel quel ; un firmware fait par une autre
@@ -92,7 +92,7 @@
  *   --profiles-dir d   (PROFILES_DIR, <repo>/profiles)
  *   --sessions-dir d   (SESSIONS_DIR, <dossier_roms>/profiles)
  *
- * Prérequis : gbrecomp compilé (build/bin), cmake, ninja, pio (PlatformIO) ;
+ * Prérequis : m0recomp compilé (build/bin), cmake, ninja, pio (PlatformIO) ;
  * ImageMagick ou Pillow pour les icônes.  Téléchargements via fetch intégré
  * de Node (pas besoin de curl/wget).  ink et react sont installés par npm au
  * premier lancement interactif (l'interface texte de secours n'en a pas
@@ -112,7 +112,7 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, '..', '..');
 const IS_WIN = process.platform === 'win32';
 const EXE = IS_WIN ? '.exe' : '';
-const GBRECOMP = path.join(ROOT, 'build', 'bin', `gbrecomp${EXE}`);
+const GBRECOMP = path.join(ROOT, 'build', 'bin', `m0recomp${EXE}`);
 const THUMB_BASE = 'https://thumbnails.libretro.com';
 /* Les jeux sont rangés par plateforme source dans le dossier de sortie
  * (compile.sh : gb, sg, gg, sms ; ce convertisseur ne produit que la GB). */
@@ -233,7 +233,7 @@ function sdSafe(name) {
   return name.replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-/* Version de gbrecomp embarquée dans un firmware (voir meta_main.cpp). */
+/* Version de m0recomp embarquée dans un firmware (voir meta_main.cpp). */
 function firmwareVersion(binFile) {
   let buf;
   try {
@@ -330,7 +330,7 @@ function killActiveChildren() {
 let instance = null;
 
 /* Version de l'édition META (targets/meta/VERSION), celle inscrite dans les
- * firmwares ; un gbrecomp plus ancien ne connaît que --version-json. */
+ * firmwares ; un m0recomp plus ancien ne connaît que --version-json. */
 async function gbrecompVersion() {
   const m = await runTool(GBRECOMP, ['--meta-version']);
   const v = (m.out || '').trim().split(/\r?\n/)[0];
@@ -853,7 +853,7 @@ async function buildGame(game, cfg, curVersion, log) {
   game.compiler = cfg.compiler;
   writeState(gameDir, game);
   const fwVer = firmwareVersion(path.join(gameDir, `${sdName}.BIN`)) || curVersion;
-  log(`[i] Firmware produit par gbrecomp v${fwVer}`);
+  log(`[i] Firmware produit par m0recomp v${fwVer}`);
   return true;
 }
 
@@ -983,7 +983,7 @@ function makeApp(mods, store, onSelected, onDone) {
     if (mode === 'select' || mode === 'confirm') {
       const outdated = [...checked].filter((i) => games[i].todo === 2);
       return h(Box, { flexDirection: 'column' }, [
-        h(Text, { key: 't' }, ` gbrecomp v${store.curVersion} · ${store.cfg.romDir} → ${store.cfg.destDir}`),
+        h(Text, { key: 't' }, ` m0recomp v${store.curVersion} · ${store.cfg.romDir} → ${store.cfg.destDir}`),
         h(Box, { key: 'l', flexDirection: 'column', borderStyle: 'round' }, [
           h(Text, { key: 'h', bold: true }, ` Jeux (${games.length}) — espace : cocher, a : tout, entrée : valider`),
           ...visible.map((g, k) => gameRow(g, start + k, checked.has(start + k))),
@@ -992,7 +992,7 @@ function makeApp(mods, store, onSelected, onDone) {
           ? h(Box, { flexDirection: 'column', borderStyle: 'round' }, [
             h(Text, { key: 'h', bold: true }, ' Firmwares faits par une autre version (ou de version inconnue) :'),
             ...outdated.map((i) => h(Text, { key: i }, `  • ${games[i].dir}  [${games[i].tag}]`)),
-            h(Text, { key: 'q' }, ' Reconstruire avec gbrecomp v'
+            h(Text, { key: 'q' }, ' Reconstruire avec m0recomp v'
               + `${store.curVersion} ? [entrée/o = oui, n = conserver, échap = retour]`),
           ])
           : h(Text, { key: 'f', dimColor: true }, ' q : quitter · Ctrl-C : arrêter'),
@@ -1006,7 +1006,7 @@ function makeApp(mods, store, onSelected, onDone) {
     const logH = Math.max(3, rows - dashRows - 7);
     const tail = store.logLines.slice(-logH);
     return h(Box, { flexDirection: 'column', height: rows }, [
-      h(Text, { key: 't' }, ` gbrecomp v${store.curVersion} · ${store.cfg.romDir} → ${store.cfg.destDir}`
+      h(Text, { key: 't' }, ` m0recomp v${store.curVersion} · ${store.cfg.romDir} → ${store.cfg.destDir}`
         + ` · ${fmtElapsed(Date.now() - store.startedAt)}`
         + (store.aborted ? ' · arrêt demandé (les jeux lancés finissent)' : '')
         + (store.finished ? ' · TERMINÉ' : '')),
@@ -1042,7 +1042,7 @@ function makeApp(mods, store, onSelected, onDone) {
 
 async function basicPick(games, cfg, curVersion) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  console.log(`\nROMs de '${cfg.romDir}' (gbrecomp v${curVersion}) :`);
+  console.log(`\nROMs de '${cfg.romDir}' (m0recomp v${curVersion}) :`);
   games.forEach((g, i) => {
     const extra = g.dir !== g.base ? `  <== ${g.base}` : '';
     console.log(` ${String(i + 1).padStart(2)}. ${g.dir.padEnd(28)} [${g.tag}]${extra}`);
@@ -1077,7 +1077,7 @@ async function basicPick(games, cfg, curVersion) {
   if (outdated.length > 0) {
     console.log('\nFirmware(s) fait(s) par une autre version (ou de version inconnue) :');
     for (const i of outdated) console.log(`  - ${games[i].dir}  [${games[i].tag}]`);
-    const o = (await rl.question(`Reconstruire avec gbrecomp v${curVersion} ? [O/n] `)).trim();
+    const o = (await rl.question(`Reconstruire avec m0recomp v${curVersion} ? [O/n] `)).trim();
     if (/^n/i.test(o)) {
       kept = outdated;
       sel = sel.filter((i) => games[i].todo !== 2);
@@ -1092,7 +1092,7 @@ async function basicPick(games, cfg, curVersion) {
 async function main() {
   const cfg = parseArgs(process.argv.slice(2));
   if (!fs.existsSync(GBRECOMP)) {
-    fail(`gbrecomp introuvable : compile d'abord l'outil (cmake -G Ninja -B build . && ninja -C build).`);
+    fail(`m0recomp introuvable : compile d'abord l'outil (cmake -G Ninja -B build . && ninja -C build).`);
   }
   fs.mkdirSync(cfg.destDir, { recursive: true });
   const curVersion = await gbrecompVersion();

@@ -28,7 +28,7 @@ détectées au démarrage et lors de leur branchement. Les captures `--ppm` et
 
 ```bash
 tools/pce/build_pc_binaries.sh                       # raiden-linux + raiden.exe + SDL2.dll
-build/bin/gbrecomp --system pce "Raiden (USA).pce" --target pc -o out/raiden_pc
+build/bin/m0recomp --system pce "Raiden (USA).pce" --target pc -o out/raiden_pc
 cmake -G Ninja -S out/raiden_pc -B out/raiden_pc/build && ninja -C out/raiden_pc/build
 out/raiden_pc/build/Raiden__USA__pc --frames 300 --ppm shot.ppm
 # frames=300 pc=4e2f run_hash=14af7372  (le harness donne le même)

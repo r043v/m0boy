@@ -136,7 +136,7 @@ def build_host(project):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--gbrecomp", required=True)
+    ap.add_argument("--m0recomp", required=True)
     ap.add_argument("--keep", action="store_true")
     args = ap.parse_args()
 
@@ -151,7 +151,7 @@ def main():
             wrom = tmp / f"rtc_w_{label}.gb"
             wrom.write_bytes(make_rom(writer=True, ram_code=ram_code))
             wp = tmp / f"rtc_w_{label}_proj"
-            run([args.gbrecomp, str(wrom), "--target", "meta", "-o", str(wp),
+            run([args.m0recomp, str(wrom), "--target", "meta", "-o", str(wp),
                  "--output-prefix", "rtcw"])
             wb = build_host(wp)
 
@@ -173,7 +173,7 @@ def main():
             for mode, extra in (("interp", ["--interp"]), ("precise", ["--meta-precise"]),
                                 ("fast", [])):
                 p = tmp / f"rtc_r_{label}_{mode}"
-                run([args.gbrecomp, str(rrom), "--target", "meta", "-o", str(p),
+                run([args.m0recomp, str(rrom), "--target", "meta", "-o", str(p),
                      "--output-prefix", "rtcr"] + extra)
                 b = build_host(p)
                 out = run([str(b / "rtcr_host"), "--frames", "700",
@@ -190,7 +190,7 @@ def main():
 
             # Persistence: the reader against the writer's .SAV keeps H=3, M=20.
             p = tmp / f"rtc_r_{label}_saved"
-            run([args.gbrecomp, str(rrom), "--target", "meta", "-o", str(p),
+            run([args.m0recomp, str(rrom), "--target", "meta", "-o", str(p),
                  "--output-prefix", "rtcr"])
             b = build_host(p)
             out = run([str(b / "rtcr_host"), "--frames", "700", "--save", str(sav),

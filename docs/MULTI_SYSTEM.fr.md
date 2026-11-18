@@ -99,7 +99,7 @@ lesquelles les firmwares Game Boy s’exécutent.
 - `recompiler/src/system/sg1000/`, `include/m0boy/sg1000*.h` : cartouche
   SG-1000, recompilation Z80 → C (`emitter.cpp`) et génération des projets.
 - `m0boy_frontends` : chargement et métadonnées des consoles d’origine.
-- `gbrecomp_core` : analyse, IR et générateurs Game Boy existants.
+- `m0recomp_core` : analyse, IR et générateurs Game Boy existants.
 - `targets/meta/` : cœur Game Boy (runtime `gbl`, frontend `platform/gb_main.cpp`). `targets/common/platform/` : frontend commun à toutes les consoles (`m0_*`). `targets/consoles/<console>/` : pilotes de chaque console.
 - `targets/sg1000/runtime/` : runtime SG-1000 commun au code recompilé et à
   l’interpréteur Z80 de repli (bus, événements, TMS9918A, SN76489,
@@ -121,7 +121,7 @@ lesquelles les firmwares Game Boy s’exécutent.
   SG-1000.
 
 Les anciens includes `recompiler/rom.h` et `recompiler/decoder.h`, le namespace
-`gbrecomp` et l’exécutable `gbrecomp` restent utilisables. Le nouvel exécutable
+`m0recomp` et l’exécutable `m0recomp` restent utilisables. Le nouvel exécutable
 `m0recomp` utilise exactement la même CLI. `compile.sh` traite aussi les
 `.sg` ; le frontend Node reste limité au Game Boy.
 

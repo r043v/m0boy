@@ -2,7 +2,7 @@
  * The option menu's palettes, shared by the consoles' display pipelines
  * (meta_display.h).
  *
- * Vert (the DMG green) is palette 0 and the default.  When gbrecomp found
+ * Vert (the DMG green) is palette 0 and the default.  When m0recomp found
  * the title in the Game Boy Color boot ROM's compatibility table it
  * carries that palette in gbl_config.h (GBL_PALETTE_GBC, resolved at
  * conversion time — the boot ROM's own colouring, four colours) and it

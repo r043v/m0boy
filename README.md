@@ -39,7 +39,7 @@ The AKA wiring follows the official Gamebuino_AKA_lib (`docs/AKA.fr.md`); it
 can be exercised without hardware in `tools/AKA_Emulator` (a real ESP32-S3
 emulator) and in gm0 (an experimental application machine). ODROID-GO is not
 emulated: its device checks remain manual. Which system may generate for which
-console comes from the capability matrix (`gbrecomp --list-systems`,
+console comes from the capability matrix (`m0recomp --list-systems`,
 `--list-targets`).
 
 ## Quick start: `m0boy ROM [target]`
@@ -58,7 +58,7 @@ memory map (converted inside the `m0boy` executable); the other systems use the 
 Output in `<name>.m0boy/`: `<name>-<target>-release.tar.gz` (executable and
 README) and `<name>-<target>-source.tar.gz` (the generated project, deepeel's map PNG and the
 coverage it was built from). `--out DIR`, `--no-deepeel`, `--jobs N` are optional;
-other options go straight to `gbrecomp`.
+other options go straight to `m0recomp`.
 
 ## What runs where
 
@@ -139,7 +139,7 @@ has not been compared with a console (see the Mega Drive notes).
 | M0+ source: a META firmware (`--system meta`) | — | — | — | — | ✅ | — | ✅ |
 | M0+ source: a Pokitto firmware (`--system pokitto`) | — | — | — | — | — | — | ✅ |
 
-✅ = the capability matrix allows generation (`gbrecomp --list-systems`); — = refused. A check is a statement about generation, not about playability: what has been run, on what, and with which evidence label (checked on the host, gm0, device, estimate) is in each system's notes and in `docs/META_STATUS_2026-09-30.md`. The Mega Drive is no longer a META target.
+✅ = the capability matrix allows generation (`m0recomp --list-systems`); — = refused. A check is a statement about generation, not about playability: what has been run, on what, and with which evidence label (checked on the host, gm0, device, estimate) is in each system's notes and in `docs/META_STATUS_2026-09-30.md`. The Mega Drive is no longer a META target.
 
 SNES (`--system snes`): the 65816 is recompiled to C with a context walk, with
 a per-line PPU/HDMA/IRQ, an SPC700 interpreter and BRR DSP, DSP-1, SuperFX and
@@ -461,7 +461,7 @@ card; `EMU_INPUT` scripts buttons (`frame:keys:frames,...`).
 
 | Path | Content |
 |---|---|
-| `recompiler/` | `m0recomp` (also `gbrecomp`): Game Boy backend, Z80 recompiler (`src/system/sg1000/`), PICO-8 front end (`src/system/pico8/`), ROM storage planning |
+| `recompiler/` | `m0recomp` (also `m0recomp`): Game Boy backend, Z80 recompiler (`src/system/sg1000/`), PICO-8 front end (`src/system/pico8/`), ROM storage planning |
 | `targets/meta/runtime/` | the Game Boy runtime shared by the three consoles; per-console switches in `gbl_profile.h` |
 | `targets/common/platform/` | the frontend every console shares (`m0_*`: menu, saves, states, SD card, FAT, pad) |
 | `targets/meta/platform/` | the Game Boy frontend (`gb_main.cpp`, saves, streaming, display modes) |

@@ -31,7 +31,7 @@ enum {
     META_MODE_COUNT
 };
 
-/* The menu's palettes: Vert (DMG) first and by default; when gbrecomp
+/* The menu's palettes: Vert (DMG) first and by default; when m0recomp
  * found the game in the Game Boy Color boot ROM's compatibility table it
  * emits GBL_PALETTE_GBC (the four 0xRRGGBB the boot ROM would have
  * loaded, through gbl_config.h) and that palette comes second.  The 12

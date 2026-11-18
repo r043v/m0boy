@@ -1,6 +1,6 @@
 # Gamebuino META target (`--target meta`)
 
-`gbrecomp --target meta` turns a DMG ROM into a PlatformIO project for the
+`m0recomp --target meta` turns a DMG ROM into a PlatformIO project for the
 [Gamebuino META](https://gamebuino.com) (ATSAMD21G18A: Cortex-M0+ at 48 MHz,
 32 KiB RAM, 256 KiB flash with a 16 KiB loader, 160×128 ST7735 display, DAC
 speaker). It is a separate, compact backend: the desktop runtime and emitter
@@ -84,11 +84,11 @@ See [the design and validation notes](../../docs/THUMB_REGISTER_IR.fr.md).
 ## Workflow
 
 ```bash
-# 0. Build gbrecomp (repository root)
+# 0. Build m0recomp (repository root)
 cmake -G Ninja -B build . && ninja -C build
 
 # 1. Interpreter-only project + host tools
-./build/bin/gbrecomp game.gb --target meta -o output/game_meta
+./build/bin/m0recomp game.gb --target meta -o output/game_meta
 cmake -G Ninja -S output/game_meta/host -B output/game_meta/host/build
 ninja -C output/game_meta/host/build
 
@@ -104,7 +104,7 @@ ninja -C output/game_meta/host/build
   --input logs/game-1.input --coverage logs/game-1.cov
 
 # 3. Compile the covered code (several --coverage files are merged)
-./build/bin/gbrecomp game.gb --target meta --coverage logs/game-1.cov \
+./build/bin/m0recomp game.gb --target meta --coverage logs/game-1.cov \
   -o output/game_meta
 
 # 4. Firmware
@@ -124,7 +124,7 @@ what a full deepeel campaign writes, so its map drives the compilation with
 no m0boy-side discovery:
 
     deepeel explore game.gb --play --tas ... --cov game.cov
-    ./build/bin/gbrecomp game.gb --target meta --coverage game.cov --output output/game_meta
+    ./build/bin/m0recomp game.gb --target meta --coverage game.cov --output output/game_meta
 
 Super Mario Land (World), cov of the deepeel TAS campaign (42 706 records):
 6 963 compiled instructions in 74 regions, interpreter-only 0.
@@ -177,7 +177,7 @@ kept across power-off), from fgb's menu where they apply on the META:
 | Etat, Sauver l'etat, Charger l'etat | save states, slot 1 to 10 (shown only when the state file is on the card, see below) |
 | Volume | 0 to 8; 4 (default) is the former level, half the DAC's range, 8 the whole range |
 | Ecran | display mode (below) |
-| Palette | Vert (default), GBC (only when gbrecomp recognised the title: the Game Boy Color boot ROM's palette for this game, resolved at conversion time — the table lives in the converter, the firmware embeds the four colours), Gris, Pocket, Ambre, Bleu: every mode but SMOOTH, whose 4 KiB colour tables are built at compile time for the first one. TBLEND's ½-weight table is built from the palette in RAM (1 KiB in the union of mode buffers, or 16 colours without `META_MERGE_MODES`). The boot ROM's 12 generic palettes are in every firmware too (its 30 base palettes and the (OBJ0, OBJ1, BG) triplets, `GBL_GBC_BASE`/`GBL_GBC_COMBOS` in `gbl_config.h`): a direction held at power-on, plus A and/or B, picks one like on the GBC — until sprites get palettes of their own, only the BG third shows |
+| Palette | Vert (default), GBC (only when m0recomp recognised the title: the Game Boy Color boot ROM's palette for this game, resolved at conversion time — the table lives in the converter, the firmware embeds the four colours), Gris, Pocket, Ambre, Bleu: every mode but SMOOTH, whose 4 KiB colour tables are built at compile time for the first one. TBLEND's ½-weight table is built from the palette in RAM (1 KiB in the union of mode buffers, or 16 colours without `META_MERGE_MODES`). The boot ROM's 12 generic palettes are in every firmware too (its 30 base palettes and the (OBJ0, OBJ1, BG) triplets, `GBL_GBC_BASE`/`GBL_GBC_COMBOS` in `gbl_config.h`): a direction held at power-on, plus A and/or B, picks one like on the GBC — until sprites get palettes of their own, only the BG third shows |
 | Images | frame skip: Auto (default: when emulation falls a frame behind, up to `META_MAX_SKIP` frames in a row are not rendered), Aucun, 1 sur 2/3/4 (one frame rendered in two, three, four) |
 | Vitesse | Normale, or Rapide: no frame limit (fgb's Synchronization off) |
 | Processeur | 70 MHz (the META's default, `META_OVERCLOCK`) or 48 MHz (below; the Pokitto runs 72) |
@@ -698,7 +698,7 @@ no zlib library is linked into firmware.
 
 ## Pokitto (`--target pokitto`)
 
-`gbrecomp --target pokitto` writes the same project for the
+`m0recomp --target pokitto` writes the same project for the
 [Pokitto](https://www.pokitto.com) (LPC11U68: Cortex-M0+, 48 MHz nominal —
 the datasheet rates the chip to 50 MHz, PokittoLib's own SystemInit uses
 SYSPLLCTRL 0x23 = 48; the menu's « Processeur » offers the 72 MHz _OSCT=2
@@ -837,8 +837,8 @@ Every firmware embeds the version of the edition that produced it
 console has its own version file, bumped independently: the META's lives in
 `targets/meta/VERSION` (the release archive's CMake project and zip name take
 it), the Pokitto's in `targets/consoles/pokitto/VERSION`. The recompiler
-stamps the target console's (`GBL_GEN_VERSION`), `gbrecomp --meta-version` and
-`gbrecomp --pokitto-version` print them. Bump a console's version when
+stamps the target console's (`GBL_GEN_VERSION`), `m0recomp --meta-version` and
+`m0recomp --pokitto-version` print them. Bump a console's version when
 the runtime, the frontend or the generated code change what its firmwares
 do. `compile.sh` (per `TARGET`) and `tools/meta-compiler` compare it with the string
 read back from each .bin (or `.gbrmeta.json` when the .bin has none): a firmware that is current

@@ -4,7 +4,7 @@
  * on reçoit un .zip contenant le répertoire entier du jeu pour la META
  * (<Jeu>/<Jeu>.bin, ICON.BMP, TITLESCREEN.BMP, .SAV, .GB le cas échéant).
  *
- * Le gros du travail (recompilation gbrecomp + cross-compilation PIO) ne
+ * Le gros du travail (recompilation m0recomp + cross-compilation PIO) ne
  * peut pas tourner dans un navigateur : ce serveur pilote l'existant
  * (compile.mjs) sur une copie temporaire de la ROM et renvoie le résultat
  * zippé.  Tout se passe sur la machine locale ; aucune dépendance npm.
@@ -12,11 +12,11 @@
  * Usage :
  *   node tools/meta-compiler/web.mjs [port]
  *   (défaut 8642, GB_WEB_PORT pour surcharger ; écoute sur 127.0.0.1)
- * Prérequis : les mêmes que compile.mjs (gbrecomp compilé, pio).
+ * Prérequis : les mêmes que compile.mjs (m0recomp compilé, pio).
  *
  * API :
  *   GET  /                    la page (glisser un .gb)
- *   GET  /api/health          { gbrecomp, pio }
+ *   GET  /api/health          { m0recomp, pio }
  *   POST /api/convert?name=X.gb   corps = ROM brute -> { id }
  *   GET  /api/job/<id>        { state: queued|running|done|error, lines, game }
  *   GET  /api/job/<id>/zip    le zip du répertoire de jeu
@@ -32,7 +32,7 @@ import { fileURLToPath } from 'node:url';
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, '..', '..');
 const EXE = process.platform === 'win32' ? '.exe' : '';
-const GBRECOMP = path.join(ROOT, 'build', 'bin', `gbrecomp${EXE}`);
+const GBRECOMP = path.join(ROOT, 'build', 'bin', `m0recomp${EXE}`);
 const PORT = Number(process.env.GB_WEB_PORT) || (Number(process.argv[2]) || 8642);
 const MAX_ROM = 64 * 1024 * 1024;
 const WORK = path.join(os.tmpdir(), 'gb-meta-web');
@@ -149,7 +149,7 @@ function runJob(id) {
   queueTail = queueTail.then(() => new Promise((resolve) => {
     if (job.state !== 'queued') { resolve(); return; }
     job.state = 'running';
-    job.lines.push('[i] Conversion démarrée (gbrecomp + pio, quelques minutes au premier build)…');
+    job.lines.push('[i] Conversion démarrée (m0recomp + pio, quelques minutes au premier build)…');
     const dir = jobDir(id);
     const child = spawn(process.execPath,
       [path.join(SCRIPT_DIR, 'compile.mjs'), path.join(dir, 'roms'), path.join(dir, 'meta'),
@@ -282,7 +282,7 @@ let jobId = null, lastState = null, timer = null;
 
 fetch('/api/health').then(r => r.json()).then(h => {
   const miss = [];
-  if (!h.gbrecomp) miss.push('gbrecomp compilé (ninja -C build)');
+  if (!h.m0recomp) miss.push('m0recomp compilé (ninja -C build)');
   if (!h.pio) miss.push('pio dans le PATH');
   if (miss.length) { banner.textContent = '⚠ Il manque : ' + miss.join(' + ');
                      banner.style.display = 'block'; }
@@ -421,6 +421,6 @@ cleanOldJobs();
 server.listen(PORT, '127.0.0.1', () => {
   const h = health();
   log(`convertisseur web : http://127.0.0.1:${PORT}/`);
-  if (!h.gbrecomp) log('[!] gbrecomp absent : compile d\'abord (ninja -C build)');
+  if (!h.m0recomp) log('[!] m0recomp absent : compile d\'abord (ninja -C build)');
   if (!h.pio) log('[!] pio absent de PATH : les conversions échoueront');
 });

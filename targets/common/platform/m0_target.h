@@ -3,7 +3,7 @@
  *
  * The frontend sources in this directory are shared by the consoles the
  * gbl runtime runs on; this header is the one place that tells them which
- * console they are built for.  gbrecomp writes GBL_TARGET_POKITTO into
+ * console they are built for.  m0recomp writes GBL_TARGET_POKITTO into
  * gbl_config.h for --target pokitto; without it the build is for the
  * Gamebuino META.  Every console-dependent choice of the shared files is a
  * META_* switch below, tested with #if; the console's own drivers (display,

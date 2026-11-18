@@ -19,7 +19,7 @@ import json,sys,pathlib,os
 name=pathlib.Path(sys.argv[0]).name;args=sys.argv[1:]
 with open('calls.jsonl','a') as f:f.write(json.dumps([name,args])+'\\n')
 def value(flag,default=None):return args[args.index(flag)+1] if flag in args else default
-if name=='gbrecomp':
+if name=='m0recomp':
  if args and args[0].endswith('-version'):print('0.8.1');sys.exit()
  out=pathlib.Path(value('-o'));(out/'src').mkdir(parents=True,exist_ok=True);(out/'host').mkdir(exist_ok=True)
  (out/'src/gbl_config.h').write_text('')
@@ -38,8 +38,8 @@ elif name in ('pio','ninja','make'):
  print('flash: 42; RAM: 32; Flash: 42')
 elif name=='nproc':print('4')
 '''
-    for name in ('gbrecomp', 'sg1000_host', 'cmake', 'ninja', 'make', 'pio', 'nproc'):
-        path = root / ('build/bin' if name in ('gbrecomp', 'sg1000_host') else 'commands') / name
+    for name in ('m0recomp', 'sg1000_host', 'cmake', 'ninja', 'make', 'pio', 'nproc'):
+        path = root / ('build/bin' if name in ('m0recomp', 'sg1000_host') else 'commands') / name
         path.write_text(tool)
         path.chmod(0o755)
     for directory in ('gb', 'sg'):
@@ -89,7 +89,7 @@ elif name=='nproc':print('4')
     rebuilt = run('roms/sg', TARGET='meta')
     assert 'Réussis : 1' in rebuilt and 'Déjà à jour : 1' in rebuilt, rebuilt
     (second/'coverage-20261022-120000.cov').unlink()
-    generations = [args for name,args in calls if name=='gbrecomp' and '-o' in args]
+    generations = [args for name,args in calls if name=='m0recomp' and '-o' in args]
     sg = [args for args in generations if '--system' in args]
     assert len(sg)==4, sg  # two SG cartridges, both destinations
     assert all(args[args.index('--system')+1]=='sg1000' for args in sg)
@@ -118,7 +118,7 @@ elif name=='nproc':print('4')
     (root/'calls.jsonl').write_text('')
     output=run(PACK='1')  # SG ignores GB packing, already-built SG stays cached
     calls=[json.loads(line) for line in (root/'calls.jsonl').read_text().splitlines()]
-    assert not any(name=='gbrecomp' and '--system' in args for name,args in calls), calls
+    assert not any(name=='m0recomp' and '--system' in args for name,args in calls), calls
     assert 'Déjà à jour : 2' in output
     # Explicit SG directory; AUTO profile uses the SG host, not GB profiling tools.
     (root/'calls.jsonl').write_text('')
@@ -142,7 +142,7 @@ elif name=='nproc':print('4')
     assert len(list((root/'roms/meta/gb').glob('*.zip')))==1
     assert len(list((root/'roms/meta/sg').glob('*.zip')))==2
     assert len(list((root/'roms/pokitto/sg').glob('*.zip')))==2
-    assert all('--coverage' in args for name,args in calls if name=='gbrecomp' and '--system' in args)
+    assert all('--coverage' in args for name,args in calls if name=='m0recomp' and '--system' in args)
     # Corrected automatic profiles are cached only for the same revision and
     # requested counts/durations. Hand-recorded profiles must survive refresh.
     stores=list((root/'profiles/sg').glob('*'))

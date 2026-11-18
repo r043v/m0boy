@@ -60,7 +60,7 @@
  *                         cartridge RAM larger than 2 KiB.
  * GBL_ROM_PACKED          The streamed part of the ROM comes from LZSS-
  *                         compressed flash instead of the SD card (set by the
- *                         generator: gbrecomp --meta-pack).
+ *                         generator: m0recomp --meta-pack).
  * GBL_UNPACK_ASM          Decode those sectors with the Thumb-1 decoder
  *                         (gbl_core_asm.S); default on for Cortex-M0+.
  * GBL_STREAM_SECTORS      512-byte sectors cached for a streamed ROM

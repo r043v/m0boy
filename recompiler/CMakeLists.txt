@@ -42,7 +42,7 @@ target_link_libraries(m0boy_frontends PUBLIC m0boy_common)
 set_target_properties(m0boy_frontends PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Existing Game Boy analysis, IR and emitters retain their public API.
-add_library(gbrecomp_core STATIC
+add_library(m0recomp_core STATIC
     src/code_scan.cpp
     src/system/gameboy/analyzer.cpp
     src/system/gameboy/bank_tracker.cpp
@@ -73,9 +73,9 @@ add_library(gbrecomp_core STATIC
     src/target_info.cpp
 )
 
-target_link_libraries(gbrecomp_core PUBLIC m0boy_frontends m0boy_cpu_sm83 m0boy_cpu_z80 m0boy_z80_runtime m0boy_rom_storage)
+target_link_libraries(m0recomp_core PUBLIC m0boy_frontends m0boy_cpu_sm83 m0boy_cpu_z80 m0boy_z80_runtime m0boy_rom_storage)
 
-target_include_directories(gbrecomp_core
+target_include_directories(m0recomp_core
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         # the SM83 cycle table shared with the runtime (gbl_cycles.h)
@@ -86,9 +86,9 @@ target_include_directories(gbrecomp_core
 # in targets/meta/VERSION (the one source for the repository and the release
 # archive), the Pokitto's in targets/consoles/pokitto/VERSION.  The meta
 # emitter stamps the target console's into gbl_config.h so a firmware records
-# which gbrecomp produced it; compile.sh and tools/meta-compiler read it back
-# from firmware.bin and compare it with `gbrecomp --meta-version` or
-# `gbrecomp --pokitto-version`.
+# which m0recomp produced it; compile.sh and tools/meta-compiler read it back
+# from firmware.bin and compare it with `m0recomp --meta-version` or
+# `m0recomp --pokitto-version`.
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/../targets/consoles/espboy/VERSION" GBRECOMP_ESPBOY_VERSION LIMIT_COUNT 1)
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/../targets/meta/VERSION" GBRECOMP_META_VERSION LIMIT_COUNT 1)
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/../targets/consoles/pokitto/VERSION" GBRECOMP_POKITTO_VERSION LIMIT_COUNT 1)
@@ -102,7 +102,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/../targets/consoles/pc/VERSION"
     "${CMAKE_CURRENT_SOURCE_DIR}/../targets/consoles/odroid/VERSION"
     "${CMAKE_CURRENT_SOURCE_DIR}/../targets/consoles/aka/VERSION")
-target_compile_definitions(gbrecomp_core PRIVATE
+target_compile_definitions(m0recomp_core PRIVATE
     GBRECOMP_VERSION="${PROJECT_VERSION}"
     GBRECOMP_META_VERSION="${GBRECOMP_META_VERSION}"
     GBRECOMP_POKITTO_VERSION="${GBRECOMP_POKITTO_VERSION}"
@@ -113,28 +113,29 @@ target_compile_definitions(gbrecomp_core PRIVATE
 )
 
 # Enable position-independent code for shared library support
-set_target_properties(gbrecomp_core PROPERTIES
+set_target_properties(m0recomp_core PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
 # Platform-specific settings
 if(APPLE)
-    target_compile_definitions(gbrecomp_core PRIVATE GB_PLATFORM_MACOS)
+    target_compile_definitions(m0recomp_core PRIVATE GB_PLATFORM_MACOS)
 elseif(WIN32)
-    target_compile_definitions(gbrecomp_core PRIVATE GB_PLATFORM_WINDOWS)
+    target_compile_definitions(m0recomp_core PRIVATE GB_PLATFORM_WINDOWS)
 else()
-    target_compile_definitions(gbrecomp_core PRIVATE GB_PLATFORM_LINUX)
+    target_compile_definitions(m0recomp_core PRIVATE GB_PLATFORM_LINUX)
 endif()
 
-# m0recomp is the system-neutral entry point; gbrecomp stays available for
+# m0recomp is the system-neutral entry point (formerly gbrecomp); it is also
 # compile.sh, the Node frontend and existing generated-project tests.
-add_library(m0boy_cli OBJECT src/main.cpp)
-target_link_libraries(m0boy_cli PRIVATE gbrecomp_core m0boy_cpu_z80)
-add_executable(m0recomp $<TARGET_OBJECTS:m0boy_cli>)
-add_executable(gbrecomp $<TARGET_OBJECTS:m0boy_cli>)
-target_link_libraries(m0recomp PRIVATE gbrecomp_core m0boy_cpu_z80 m0boy_cpu_6502 m0boy_cpu_huc6280 m0boy_cpu_m0plus)
-target_link_libraries(gbrecomp PRIVATE gbrecomp_core m0boy_cpu_z80 m0boy_cpu_6502 m0boy_cpu_huc6280 m0boy_cpu_m0plus)
-target_compile_definitions(m0boy_cli PRIVATE
+# libm0recomp: the whole command line as m0recomp_main() (include/m0boy/m0recomp.h)
+add_library(m0recomp_lib STATIC src/main.cpp)
+set_target_properties(m0recomp_lib PROPERTIES OUTPUT_NAME m0recomp POSITION_INDEPENDENT_CODE ON)
+target_include_directories(m0recomp_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(m0recomp_lib PUBLIC m0recomp_core m0boy_cpu_z80 m0boy_cpu_6502 m0boy_cpu_huc6280 m0boy_cpu_m0plus)
+add_executable(m0recomp src/m0recomp_cli.cpp)
+target_link_libraries(m0recomp PRIVATE m0recomp_lib)
+target_compile_definitions(m0recomp_lib PRIVATE
     GBRECOMP_DEFAULT_RUNTIME_DIR="${PROJECT_SOURCE_DIR}/runtime"
     GBRECOMP_DEFAULT_META_DIR="${PROJECT_SOURCE_DIR}/targets/meta"
     GBRECOMP_VERSION="${PROJECT_VERSION}"
@@ -149,7 +150,17 @@ target_compile_definitions(m0boy_cli PRIVATE
 # m0boy: the one-argument front end (ROM [target] -> release + source archive)
 find_package(ZLIB REQUIRED)
 add_executable(m0boy src/m0boy_main.cpp)
-target_link_libraries(m0boy PRIVATE ZLIB::ZLIB)
+target_link_libraries(m0boy PRIVATE ZLIB::ZLIB m0recomp_lib)
+# libdeepeel (the sibling checkout): linked in, so `m0boy ROM` needs no deepeel executable
+set(DEEPEEL_DIR "${PROJECT_SOURCE_DIR}/../memscan" CACHE PATH "deepeel checkout (libdeepeel); empty to run an external deepeel")
+if(DEEPEEL_DIR AND EXISTS "${DEEPEEL_DIR}/CMakeLists.txt" AND NOT TARGET deepeel_lib)
+    set(M0BOY_DIR "${PROJECT_SOURCE_DIR}" CACHE PATH "" FORCE)
+    add_subdirectory("${DEEPEEL_DIR}" "${CMAKE_BINARY_DIR}/deepeel" EXCLUDE_FROM_ALL)
+endif()
+if(TARGET deepeel_lib)
+    target_link_libraries(m0boy PRIVATE deepeel_lib)
+    target_compile_definitions(m0boy PRIVATE M0BOY_HAVE_DEEPEEL=1)
+endif()
 
 # PICO-8: the cartridge reader and the Lua 5.2 (PICO-8 flavour, fix32 numbers)
 # compiler of femto8 do the front end on the PC; the generated C needs none of
@@ -180,8 +191,8 @@ if(EXISTS "${FEMTO8_DIR}/src/lua/lparser.c")
     target_link_libraries(p8c PRIVATE m0boy_p8c)
 endif()
 
-# gbrecomp_core compiles PICO-8 projects when the front end is there
+# m0recomp_core compiles PICO-8 projects when the front end is there
 if(TARGET m0boy_p8c)
-    target_link_libraries(gbrecomp_core PUBLIC m0boy_p8c)
-    target_compile_definitions(gbrecomp_core PRIVATE M0BOY_PICO8=1)
+    target_link_libraries(m0recomp_core PUBLIC m0boy_p8c)
+    target_compile_definitions(m0recomp_core PRIVATE M0BOY_PICO8=1)
 endif()

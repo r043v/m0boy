@@ -25,7 +25,7 @@ import wave
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-GBRECOMP = ROOT / "build" / "bin" / "gbrecomp"
+GBRECOMP = ROOT / "build" / "bin" / "m0recomp"
 
 # ---- a two-pass HuC6280 assembler, just what the exercise card needs ----
 

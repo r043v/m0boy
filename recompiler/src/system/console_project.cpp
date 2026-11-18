@@ -60,9 +60,9 @@ void write_audio(const Templates& t, TargetId target, const fs::path& src, const
 
 void write_config(TargetId target, const fs::path& src) {
     /* One version stamp for every frontend: the target console runtime's
-     * version, compiled into gbrecomp from the VERSION files
+     * version, compiled into m0recomp from the VERSION files
      * (targets/meta/VERSION, consoles/<console>/VERSION) by CMake — one
-     * table, m0boy::consoles.  gbrecomp --meta-version/--pokitto-version
+     * table, m0boy::consoles.  m0recomp --meta-version/--pokitto-version
      * print it and compile.sh reads it back from firmware.bin. */
     write(src / "gbl_config.h", "#pragma once\n#define GBL_TARGET_POKITTO " + std::to_string(target == TargetId::pokitto) +
                                 (target == TargetId::espboy ? "\n#define GBL_TARGET_ESPBOY 1" : "") +

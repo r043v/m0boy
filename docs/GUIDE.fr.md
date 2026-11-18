@@ -1,6 +1,6 @@
-# gbrecomp pour Gamebuino META et Pokitto
+# m0recomp pour Gamebuino META et Pokitto
 
-`gbrecomp` transforme une ROM Game Boy (DMG) en firmware natif pour la
+`m0recomp` transforme une ROM Game Boy (DMG) en firmware natif pour la
 Gamebuino META. Le code du jeu est recompilé en C puis compilé pour la
 console : ce n'est ni un JIT ni un émulateur classique. Le code déjà vu
 pendant une partie de profilage est traduit, et un petit interpréteur
@@ -64,7 +64,7 @@ exécute le reste.
 
 ## Nouveautés de la version 0.5.0
 
-- Pokitto : `gbrecomp --target pokitto` et `TARGET=pokitto ./compile.sh`
+- Pokitto : `m0recomp --target pokitto` et `TARGET=pokitto ./compile.sh`
   (jeux dans `roms/pokitto/<Jeu>/`). Même runtime, même code généré et
   même menu que la META ; pilotes LPC11U68 écrits à la main (sans mbed ni
   PokittoLib), build `make` avec arm-none-eabi-gcc seul. Image 1:1 au
@@ -110,7 +110,7 @@ exécute le reste.
   assembleur Thumb-1 : quelques pour cent de plus sur les jeux qui en
   dépendent (estimations), émulation identique.
 - Les firmwares faits avec la 0.2.0 sont proposés à la reconstruction par
-  `compile.sh` et le convertisseur Node (`gbrecomp --meta-version` donne
+  `compile.sh` et le convertisseur Node (`m0recomp --meta-version` donne
   la version courante).
 
 ## Nouveautés de la version 0.2.0
@@ -154,7 +154,7 @@ Dans les exemples, remplace `tetris` et `roms/gb/tetris.gb` par ton jeu.
 ```bash
 # Tout en une commande : ./compile.sh  (voir plus bas)
 # a) Projet interpréteur seul et outils PC
-./build/bin/gbrecomp roms/gb/tetris.gb --target meta --output-prefix tetris -o out/tetris
+./build/bin/m0recomp roms/gb/tetris.gb --target meta --output-prefix tetris -o out/tetris
 cmake -G Ninja -S out/tetris/host -B out/tetris/host/build
 ninja -C out/tetris/host/build
 
@@ -165,7 +165,7 @@ ninja -C out/tetris/host/build
     --coverage out/tetris.cov --record-input out/tetris.input
 
 # c) Régénérer avec la couverture (autant de --coverage que de parties)
-./build/bin/gbrecomp roms/gb/tetris.gb --target meta --output-prefix tetris \
+./build/bin/m0recomp roms/gb/tetris.gb --target meta --output-prefix tetris \
     --coverage out/tetris.cov -o out/tetris
 
 # d) Compiler le firmware (vérifie les lignes RAM et Flash du rapport)
@@ -469,7 +469,7 @@ Les états sont dans le fichier `<NOM>.STA` (Game Boy) ou `<NOM>.ST8`
 `.bin` (10 emplacements) : copie-le sur la carte avec le jeu. Sur l'ESPboy,
 ils sont dans la flash de la console. Sans lui,
 les lignes d'état n'apparaissent pas. Un état ne se recharge qu'avec le
-firmware qui l'a écrit (une nouvelle version de gbrecomp le refuse).
+firmware qui l'a écrit (une nouvelle version de m0recomp le refuse).
 Les choix ne sont pas gardés à l'extinction.
 
 Modes d'affichage (les 144 lignes Game Boy sur les 128 de la META) :

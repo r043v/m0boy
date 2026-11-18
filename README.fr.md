@@ -40,7 +40,7 @@ on peut l'essayer sans matériel dans `tools/AKA_Emulator` (un vrai émulateur
 d'ESP32-S3) et dans gm0 (machine d'application expérimentale). L'ODROID-GO
 n'est pas émulé : ses vérifications sur l'appareil restent manuelles. Quel
 système peut générer pour quelle console vient de la matrice de capacités
-(`gbrecomp --list-systems`, `--list-targets`).
+(`m0recomp --list-systems`, `--list-targets`).
 
 ## Démarrage rapide : `m0boy ROM [cible]`
 
@@ -58,7 +58,7 @@ l'archive de code à l'exécution de deepeel, la famille Z80 son profil et sa ca
 Sortie dans `<nom>.m0boy/` : `<nom>-<cible>-release.tar.gz` (exécutable et README)
 et `<nom>-<cible>-source.tar.gz` (le projet généré, le PNG de carte de deepeel et la couverture utilisée).
 `--out DIR`, `--no-deepeel`, `--jobs N` sont facultatifs ; les autres options vont
-telles quelles à `gbrecomp`.
+telles quelles à `m0recomp`.
 
 ## Ce qui tourne où
 
@@ -78,7 +78,7 @@ telles quelles à `gbrecomp`.
 | Source M0+ : un firmware META (`--system meta`) | — | — | — | — | ✅ | — | ✅ |
 | Source M0+ : un firmware Pokitto (`--system pokitto`) | — | — | — | — | — | — | ✅ |
 
-✅ = la matrice de capacités autorise la génération (`gbrecomp --list-systems`) ; — = refusé. Une coche dit que le projet se génère, pas que le jeu est jouable : ce qui a été exécuté, sur quoi et avec quelle étiquette de preuve (vérifié sur l'hôte, gm0, console, estimé) est dans les notes de chaque système et dans `docs/META_STATUS_2026-09-30.md`. Le Mega Drive n'est plus une cible META.
+✅ = la matrice de capacités autorise la génération (`m0recomp --list-systems`) ; — = refusé. Une coche dit que le projet se génère, pas que le jeu est jouable : ce qui a été exécuté, sur quoi et avec quelle étiquette de preuve (vérifié sur l'hôte, gm0, console, estimé) est dans les notes de chaque système et dans `docs/META_STATUS_2026-09-30.md`. Le Mega Drive n'est plus une cible META.
 
 SNES (`--system snes`) : le 65816 est recompilé en C avec une marche de
 contextes, un PPU/HDMA/IRQ par ligne, un interpréteur SPC700 et un DSP BRR ;
@@ -379,7 +379,7 @@ comme carte SD ; `EMU_INPUT` scripte les boutons (`image:touches:durée,...`).
 
 | Chemin | Contenu |
 |---|---|
-| `recompiler/` | `m0recomp` (aussi `gbrecomp`) : backend Game Boy, recompilateur Z80 (`src/system/sg1000/`), front-end PICO-8 (`src/system/pico8/`), plan de stockage des ROM |
+| `recompiler/` | `m0recomp` (aussi `m0recomp`) : backend Game Boy, recompilateur Z80 (`src/system/sg1000/`), front-end PICO-8 (`src/system/pico8/`), plan de stockage des ROM |
 | `targets/meta/runtime/` | le runtime Game Boy commun aux trois consoles ; réglages par console dans `gbl_profile.h` |
 | `targets/common/platform/` | le frontend commun à toutes les consoles (`m0_*` : menu, sauvegardes, états, carte SD, FAT, touches) |
 | `targets/meta/platform/` | le frontend Game Boy (`gb_main.cpp`, sauvegardes, streaming, modes d'écran) |

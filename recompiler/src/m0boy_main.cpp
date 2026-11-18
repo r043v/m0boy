@@ -2,12 +2,17 @@
 //
 // One executable, no helper script: it finds the console from the file, looks
 // for deepeel's coverage beside the ROM (or runs deepeel to make it), turns that
-// coverage into what the generators read, runs gbrecomp, builds the project for
+// coverage into what the generators read, runs m0recomp, builds the project for
 // the target (the host PC by default) and writes
 //   <out>/<name>-<target>-release.tar.gz   executable (or firmware) + README
 //   <out>/<name>-<target>-source.tar.gz    generated C project + coverage used
 // deepeel's map PNG is kept in <out>/ (and in the source archive).
 #include <zlib.h>
+
+#include "m0boy/m0recomp.h"
+#ifdef M0BOY_HAVE_DEEPEEL
+#include "deepeel.h"
+#endif
 
 #include <algorithm>
 #include <cstdint>
@@ -66,6 +71,42 @@ int run(const std::vector<std::string>& args, std::string* capture = nullptr, bo
     waitpid(pid, &st, 0);
     return WIFEXITED(st) ? WEXITSTATUS(st) : 128;
 }
+// Runs a library entry point (m0recomp_main, deepeel_main) in a forked child: the engines keep
+// process-wide state and may call exit(), so each run is isolated; no executable is involved.
+using EntryFn = int (*)(int, char**);
+int run_fn(EntryFn fn, const std::string& label, std::vector<std::string> args, std::string* capture = nullptr) {
+    args.insert(args.begin(), label);
+    std::string line;
+    for (auto& a : args) line += (line.empty() ? "" : " ") + a;
+    if (!capture) say(line);
+    int pipefd[2] = {-1, -1};
+    if (capture && pipe(pipefd) != 0) die("pipe failed");
+    fflush(nullptr);
+    pid_t pid = fork();
+    if (pid < 0) die("fork failed");
+    if (pid == 0) {
+        if (capture) { dup2(pipefd[1], 1); close(pipefd[0]); close(pipefd[1]); }
+        std::vector<char*> av;
+        for (auto& a : args) av.push_back(const_cast<char*>(a.c_str()));
+        av.push_back(nullptr);
+        int rc = fn((int)args.size(), av.data());
+        fflush(nullptr);
+        _exit(rc);
+    }
+    if (capture) {
+        close(pipefd[1]);
+        char buf[4096]; ssize_t n;
+        while ((n = read(pipefd[0], buf, sizeof buf)) > 0) capture->append(buf, (size_t)n);
+        close(pipefd[0]);
+    }
+    int st = 0;
+    waitpid(pid, &st, 0);
+    return WIFEXITED(st) ? WEXITSTATUS(st) : 128;
+}
+int m0recomp_call(const std::vector<std::string>& a, std::string* capture = nullptr) {
+    return run_fn(m0recomp_main, "m0recomp", a, capture);
+}
+
 void must(const std::vector<std::string>& args, bool quiet = false) {
     int rc = run(args, nullptr, quiet);
     if (rc) die("failed (" + std::to_string(rc) + "): " + args[0]);
@@ -98,10 +139,10 @@ fs::path find_tool(const char* name, const char* env) {
 
 std::string lower(std::string s) { for (auto& c : s) c = (char)tolower((unsigned char)c); return s; }
 
-std::string detect_system(const fs::path& gbrecomp, const fs::path& rom, const std::string& forced) {
+std::string detect_system(const fs::path& rom, const std::string& forced) {
     if (!forced.empty()) return forced;
     std::string out;
-    run({gbrecomp.string(), rom.string(), "--info"}, &out);
+    m0recomp_call({rom.string(), "--info"}, &out);
     std::stringstream ss(out); std::string line;
     while (std::getline(ss, line)) if (line.rfind("system=", 0) == 0) return line.substr(7);
     die("cannot tell which console " + rom.filename().string() + " is for");
@@ -257,7 +298,7 @@ void make_tar(const fs::path& out, const std::vector<std::pair<fs::path, std::st
 }
 
 void usage() {
-    std::cerr << "usage: m0boy ROM [target] [--out DIR] [--jobs N] [--no-deepeel] [--system S] [-- gbrecomp options]\n"
+    std::cerr << "usage: m0boy ROM [target] [--out DIR] [--jobs N] [--no-deepeel] [--system S] [-- m0recomp options]\n"
                  "  target: pc (default: this machine), meta, pokitto, espboy, odroid, aka\n"
                  "  writes <ROM stem>.m0boy/<name>-<target>-release.tar.gz and -source.tar.gz\n";
 }
@@ -289,9 +330,7 @@ int main(int argc, char** argv) {
     if (jobs == 0) jobs = std::max(1u, std::thread::hardware_concurrency() > 1 ? std::thread::hardware_concurrency() - 1 : 1);
     if (target.empty()) target = "pc";
 
-    fs::path gbrecomp = find_tool("gbrecomp", "M0BOY_CLI");
-    if (gbrecomp.empty()) die("gbrecomp not found beside m0boy");
-    std::string system = detect_system(gbrecomp, rom, forced);
+    std::string system = detect_system(rom, forced);
     std::string name = rom.stem().string();
     fs::path out = out_arg.empty() ? rom.parent_path() / (name + ".m0boy") : fs::absolute(out_arg);
     fs::create_directories(out);
@@ -311,13 +350,21 @@ int main(int argc, char** argv) {
     static const std::set<std::string> covered = {"gameboy", "nes", "pce", "megadrive", "sg1000", "gg", "sms", "msx"};
     if (have) say("coverage found: " + cov.string());
     else if (!no_deepeel && covered.count(system)) {
+        std::vector<std::string> dargs = {rom.string(), "--out", ddir.string(), "--jobs", std::to_string(jobs)};
+        int rc = -1;
+#ifdef M0BOY_HAVE_DEEPEEL
+        say("no coverage beside the ROM: running deepeel (built in) into " + ddir.string() + "/");
+        rc = run_fn(deepeel_main, "deepeel", dargs);
+#else
         fs::path deepeel = find_tool("deepeel", "DEEPEEL");
-        if (deepeel.empty()) say("no coverage beside the ROM and no deepeel binary found (DEEPEEL=/path): static walk only");
-        else {
+        if (!deepeel.empty()) {
             say("no coverage beside the ROM: running deepeel into " + ddir.string() + "/");
-            must({deepeel.string(), rom.string(), "--out", ddir.string(), "--jobs", std::to_string(jobs)});
-            have = locate(ddir, cov, png, rt);
-        }
+            dargs.insert(dargs.begin(), deepeel.string());
+            rc = run(dargs);
+        } else say("no coverage beside the ROM and no deepeel available (build with DEEPEEL_DIR or set DEEPEEL=/path): static walk only");
+#endif
+        if (rc > 0) die("deepeel failed (" + std::to_string(rc) + ")");
+        if (rc == 0) have = locate(ddir, cov, png, rt);
     }
 
     fs::path project = out / "project";
@@ -326,7 +373,7 @@ int main(int argc, char** argv) {
     std::string prefix = lower(name).substr(0, 24);
     for (auto& c : prefix) if (!isalnum((unsigned char)c)) c = '_';
     if (prefix.empty()) prefix = "game";
-    std::vector<std::string> gen = {gbrecomp.string(), rom.string(), "--system", system, "--target", target,
+    std::vector<std::string> gen = {rom.string(), "--system", system, "--target", target,
                                     "--output-prefix", prefix, "-o", project.string(), "-j", std::to_string(jobs)};
     if (!png.empty()) { std::error_code e2; fs::copy_file(png, out / png.filename(), fs::copy_options::overwrite_existing, e2); }
     if (have && (system == "sg1000" || system == "gg" || system == "sms" || system == "msx")) {
@@ -346,7 +393,7 @@ int main(int argc, char** argv) {
         gen.push_back("--meta-static");
     }
     gen.insert(gen.end(), extra.begin(), extra.end());
-    must(gen);
+    if (int rc = m0recomp_call(gen)) die("m0recomp failed (" + std::to_string(rc) + ")");
 
     fs::path rel = out / (name + "-" + target + "-release");
     fs::remove_all(rel, ec);

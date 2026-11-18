@@ -83,7 +83,7 @@ typedef struct {
 } gbl_bank_table;
 extern const gbl_bank_table gbl_tables[];
 /* Executed RAM code (WRAM $C000-$DFFF, HRAM $FF80-$FFFE) compiled from a
- * recorded variant (gbrecomp --ram-code).  The dispatch enters a variant's
+ * recorded variant (m0recomp --ram-code).  The dispatch enters a variant's
  * table only while the RAM still holds exactly `bytes`; any other content
  * (rewritten, not yet copied) runs in the interpreter.  Absent from a
  * project without variants: gbl_core.c defines empty weak defaults. */

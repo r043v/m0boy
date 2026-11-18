@@ -26,7 +26,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-GBRECOMP = ROOT / "build" / "bin" / "gbrecomp"
+GBRECOMP = ROOT / "build" / "bin" / "m0recomp"
 
 # reset at $8000: no NMI, backdrop $22, tile 1 at $2000, sprite 0 over it,
 # rendering on, idle

@@ -3,7 +3,7 @@
 #include <array>
 
 /* Set by recompiler/CMakeLists.txt from the VERSION files (targets/meta/VERSION,
- * targets/consoles/<console>/VERSION) so a firmware records which gbrecomp
+ * targets/consoles/<console>/VERSION) so a firmware records which m0recomp
  * produced it; compile.sh and tools/meta-compiler read it back. */
 #ifndef GBRECOMP_META_VERSION
 #define GBRECOMP_META_VERSION "unknown"

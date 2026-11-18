@@ -8,7 +8,7 @@ sur un jeu commercial ou une console réelle n'a encore été mesuré.
 ```bash
 cmake -G Ninja -B build . -DBUILD_TESTS=ON
 ninja -C build
-./build/bin/gbrecomp jeu.gb --target meta --coverage jeu.cov --meta-thumb -o output/jeu
+./build/bin/m0recomp jeu.gb --target meta --coverage jeu.cov --meta-thumb -o output/jeu
 # Même option avec --target pokitto.
 ```
 

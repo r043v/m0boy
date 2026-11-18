@@ -2,7 +2,7 @@
 
 GCC reste le choix par défaut des firmwares. Clang peut remplacer le compilateur C/C++
 pour la Gamebuino META et la Pokitto, sans changer le fonctionnement de
-`gbrecomp`, de la couverture ou du runtime.
+`m0recomp`, de la couverture ou du runtime.
 
 ## Build CMake natif
 
@@ -25,11 +25,11 @@ Ce choix natif est indépendant du compilateur des firmwares ARM.
 ## Projet individuel
 
 ```bash
-./build/bin/gbrecomp jeu.gb --target meta --coverage jeu.cov \
+./build/bin/m0recomp jeu.gb --target meta --coverage jeu.cov \
     --meta-compiler clang -o output/jeu
 pio run -d output/jeu
 
-./build/bin/gbrecomp jeu.gb --target pokitto --coverage jeu.cov \
+./build/bin/m0recomp jeu.gb --target pokitto --coverage jeu.cov \
     --meta-compiler clang -o output/jeu_pokitto
 make -C output/jeu_pokitto
 ```

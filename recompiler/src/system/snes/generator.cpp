@@ -297,7 +297,7 @@ bool generate(const fs::path& cartridge, const GenerateOptions& o, GenerateStats
               (native ? std::string("The cartridge's 65C816 code recompiled to C (src/snes_gen.c) on the\n"
                                     "5A22/PPU/APU runtime, the interpreter for the rest.  A profile: host/build/" + o.name +
                                     "_host --interp --coverage cov.txt\n"
-                                    "(then gbrecomp --system snes ... --coverage cov.txt).\n\n")
+                                    "(then m0recomp --system snes ... --coverage cov.txt).\n\n")
                       : std::string("The cartridge interpreted on the 5A22/PPU/APU runtime.\n\n")) +
               "Build: cmake -G Ninja -S host -B host/build && ninja -C host/build\n"
               "Run: host/build/" + o.name + "_host --frames N [--interp] [--coverage f] [--input script.txt] "

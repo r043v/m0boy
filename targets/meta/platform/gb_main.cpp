@@ -93,7 +93,7 @@ extern "C" {
 #define GBL_GEN_VERSION "unknown"
 #endif
 /* One contiguous string, kept in flash: compile.sh reads it back from
- * firmware.bin to tell which gbrecomp produced this firmware
+ * firmware.bin to tell which m0recomp produced this firmware
  * ("gbrecomp-meta x.y.z", "gbrecomp-pokitto x.y.z"). */
 static const char gbl_gen_version[] __attribute__((used)) =
     "gbrecomp-" M0_TARGET_NAME " " GBL_GEN_VERSION;

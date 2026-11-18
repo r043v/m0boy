@@ -1,4 +1,4 @@
-/* Helpers for code emitted by gbrecomp --target meta. */
+/* Helpers for code emitted by m0recomp --target meta. */
 #ifndef GBL_GEN_H
 #define GBL_GEN_H
 

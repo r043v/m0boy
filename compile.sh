@@ -344,7 +344,7 @@ if [ "$TARGET" = espboy ]; then
 fi
 PIO_ENV="$TARGET"
 # m0recomp is the console-neutral CLI; keep the historical binary as fallback.
-GBRECOMP="./build/bin/gbrecomp"
+GBRECOMP="./build/bin/m0recomp"
 [ -x ./build/bin/m0recomp ] && GBRECOMP="./build/bin/m0recomp"
 # Profils (parties enregistrées, carte de la ROM, builds, runs gm0) : un
 # dossier par ROM, commun à toutes les consoles cibles,
@@ -357,12 +357,12 @@ ICON_CACHE="$DEST_DIR/.cache/icons"
 THUMB_BASE="https://thumbnails.libretro.com"
 
 if [ ! -x "$GBRECOMP" ]; then
-  echo "gbrecomp introuvable : compile d'abord l'outil (cmake -G Ninja -B build . && ninja -C build)."
+  echo "m0recomp introuvable : compile d'abord l'outil (cmake -G Ninja -B build . && ninja -C build)."
   exit 1
 fi
 # Version de l'édition de la console (targets/meta/VERSION pour la META,
 # targets/consoles/pokitto/VERSION pour la Pokitto), celle inscrite dans
-# les firmwares « gbrecomp-<console> x.y.z » ; un gbrecomp plus ancien ne
+# les firmwares « gbrecomp-<console> x.y.z » ; un m0recomp plus ancien ne
 # connaît que --version-json.
 CUR_VERSION=$("$GBRECOMP" --"$TARGET"-version 2>/dev/null | head -n1)
 case "$CUR_VERSION" in
@@ -522,7 +522,7 @@ profile_build() { # $1 dossier, $2 zip, $3 ELF ou "", $4 journal, $5... clé=val
   echo "[i] Jouer dans gm0 / enrichir le profil : $store/play.sh"
 }
 
-# Version de gbrecomp embarquée dans un firmware (voir gb_main.cpp) :
+# Version de m0recomp embarquée dans un firmware (voir gb_main.cpp) :
 # « gbrecomp-meta x.y.z » ou « gbrecomp-pokitto x.y.z ».
 firmware_version() {
   grep -aoE "(gbrecomp-$TARGET|m0boy-sg1000-$TARGET|m0boy-gg-$TARGET|m0boy-pico8-$TARGET) [0-9A-Za-z._+-]{1,32}" "$1" 2>/dev/null \
@@ -1625,8 +1625,8 @@ PY
   if [ "$TARGET" = pokitto ]; then fw_ver=$(firmware_version "$game_dir/$game_name.bin")
   elif [ "$TARGET" = espboy ] || [ "$TARGET" = aka ]; then fw_ver=$(firmware_version "$game_dir/firmware.bin")
   else fw_ver=$(firmware_version "$game_dir/$sd_name.BIN"); fi
-  [ -n "$fw_ver" ] || fw_ver="$CUR_VERSION (pas de marqueur : gbrecomp trop ancien)"
-  echo "[i] Firmware produit par gbrecomp v$fw_ver"
+  [ -n "$fw_ver" ] || fw_ver="$CUR_VERSION (pas de marqueur : m0recomp trop ancien)"
+  echo "[i] Firmware produit par m0recomp v$fw_ver"
   if [ "$SOURCE" = 1 ]; then
     if [ "$TARGET" = pokitto ]; then
       export_source "$out_dir" "$game_dir" "" "make COMPILER=$FIRMWARE_COMPILER EXTRA_CFLAGS='$(printf '%s\n' $extra_flags | awk '!seen[$0]++' | tr '\n' ' ' | sed 's/ $//')'" || return 1
@@ -1741,7 +1741,7 @@ for ((i = 0; i < n; i++)); do
 done
 
 if [ "$interactive" = 1 ]; then
-  echo; echo "ROMs de '$SRC_DIR' (gbrecomp v$CUR_VERSION) :"
+  echo; echo "ROMs de '$SRC_DIR' (m0recomp v$CUR_VERSION) :"
   for ((i = 0; i < n; i++)); do
     extra=""
     [ "${R_clean[i]}" != "${R_base[i]%.*}" ] && extra="  <== ${R_base[i]}"
@@ -1782,7 +1782,7 @@ if [ "$interactive" = 1 ]; then
       [ "${R_status[i]}" = 2 ] && echo "  - ${R_clean[i]}  [${R_ver[i]}]"
     done
     if [ -n "${CHOICE_UPD:-}" ]; then o="$CHOICE_UPD"
-    else read -r -p "Reconstruire avec gbrecomp v$CUR_VERSION ? [O/n] " o; fi
+    else read -r -p "Reconstruire avec m0recomp v$CUR_VERSION ? [O/n] " o; fi
     case "$o" in n|N*)
       rest=()
       for i in ${SEL[@]+"${SEL[@]}"}; do

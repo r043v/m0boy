@@ -1,6 +1,6 @@
-# m0boy: gbrecomp (the recompiler) and the Cortex-M0+ targets, Gamebuino
+# m0boy: m0recomp (the recompiler) and the Cortex-M0+ targets, Gamebuino
 # META and Pokitto.  `cmake -G Ninja -B build . && ninja -C build` gives
-# build/bin/gbrecomp, which compile.sh uses.
+# build/bin/m0recomp, which compile.sh uses.
 cmake_minimum_required(VERSION 3.20)
 include("${CMAKE_CURRENT_SOURCE_DIR}/targets/meta/host/prefer_compiler.cmake")
 m0boy_select_host_compiler(C CXX)
@@ -244,7 +244,7 @@ if(BUILD_TESTS)
     target_compile_definitions(test_megadrive_vdp PRIVATE MD_FULL_VDP=1)
     add_test(NAME megadrive_pc_vdp COMMAND test_megadrive_vdp)
     add_executable(test_register_ir tests/test_register_ir.cpp)
-    target_link_libraries(test_register_ir PRIVATE gbrecomp_core)
+    target_link_libraries(test_register_ir PRIVATE m0recomp_core)
     add_test(NAME meta_register_ir_semantics COMMAND test_register_ir)
     add_test(NAME meta_register_ir_native
         COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_register_ir_native.py"
@@ -412,54 +412,54 @@ set(GBL_COMMON_DIR "${CMAKE_CURRENT_SOURCE_DIR}/targets/common")
 
     add_test(NAME meta_target_end_to_end
         COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_meta_target_e2e.py"
-                --gbrecomp "$<TARGET_FILE:gbrecomp>")
+                --m0recomp "$<TARGET_FILE:m0recomp>")
     set_tests_properties(meta_target_end_to_end PROPERTIES TIMEOUT 600)
 
     # MBC3 RTC: register semantics, machine-time advance and .SAV persistence.
     add_test(NAME meta_rtc_e2e
         COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_meta_rtc_e2e.py"
-                --gbrecomp "$<TARGET_FILE:gbrecomp>")
+                --m0recomp "$<TARGET_FILE:m0recomp>")
     set_tests_properties(meta_rtc_e2e PROPERTIES TIMEOUT 600)
 
     # CGB mode: palettes, VRAM banks, GDMA, attributes, double speed; the
     # precise/fast builds print the interpreter's run_hash in colour mode.
     add_test(NAME meta_cgb_e2e
         COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_meta_cgb_e2e.py"
-                --gbrecomp "$<TARGET_FILE:gbrecomp>")
+                --m0recomp "$<TARGET_FILE:m0recomp>")
     set_tests_properties(meta_cgb_e2e PROPERTIES TIMEOUT 600)
 
     # ESPboy: raw/partly packed flash images, precise runtime parity, no SD.
     add_test(NAME meta_espboy_target
         COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_espboy_target.py"
-                --gbrecomp "$<TARGET_FILE:gbrecomp>")
+                --m0recomp "$<TARGET_FILE:m0recomp>")
     set_tests_properties(meta_espboy_target PROPERTIES TIMEOUT 300)
 
     # PC (SDL2): the firmware is built and run head first on the CI machine;
     # the build is skipped when SDL2 is missing.
     add_test(NAME meta_pc_target
         COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_pc_target.py"
-                "$<TARGET_FILE:gbrecomp>")
+                "$<TARGET_FILE:m0recomp>")
     set_tests_properties(meta_pc_target PROPERTIES TIMEOUT 600)
 
     # ODROID-GO and Gamebuino AKA: project ownership and host parity; the
     # real ESP32 build runs when ODROID_PIO / AKA_PIO points at pio.
     add_test(NAME meta_odroid_target
         COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_odroid_target.py"
-                "$<TARGET_FILE:gbrecomp>")
+                "$<TARGET_FILE:m0recomp>")
     set_tests_properties(meta_odroid_target PROPERTIES TIMEOUT 600)
     add_test(NAME meta_aka_target
         COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_aka_target.py"
-                "$<TARGET_FILE:gbrecomp>")
+                "$<TARGET_FILE:m0recomp>")
     set_tests_properties(meta_aka_target PROPERTIES TIMEOUT 600)
     add_test(NAME sega_aka_target
         COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_sega_aka_target.py"
-                "$<TARGET_FILE:gbrecomp>")
+                "$<TARGET_FILE:m0recomp>")
     set_tests_properties(sega_aka_target PROPERTIES TIMEOUT 600)
 
     # Pokitto firmware also links when arm-none-eabi-gcc exists.
     add_test(NAME meta_pokitto_target
         COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_pokitto_target.py"
-                --gbrecomp "$<TARGET_FILE:gbrecomp>")
+                --m0recomp "$<TARGET_FILE:m0recomp>")
     set_tests_properties(meta_pokitto_target PROPERTIES TIMEOUT 300)
 
     add_executable(test_meta_fat_check "${GBL_META_DIR}/tests/fat_check.c"

@@ -20,7 +20,7 @@ set -euo pipefail
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 rom=${1:-"$repo/roms/pce/Raiden (USA).pce"}
-recompiler=${M0RECOMP:-"$repo/build/bin/gbrecomp"}
+recompiler=${M0RECOMP:-"$repo/build/bin/m0recomp"}
 m0search=${M0SEARCH:-"$repo/tools/profile/m0search.py"}
 rom=$(realpath "$rom")
 
