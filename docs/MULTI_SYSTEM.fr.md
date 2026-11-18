@@ -829,6 +829,37 @@ et la [carte des ports SG-1000](https://www.smspower.org/Development/IOPortMapSG
 
 ## Jouer sur PC
 
+### Options de compilation des projets PC (mesures 2026-11-18)
+
+Le code généré (`<jeu>_gen.c`) est du C plat : les instructions z80 sont des
+étiquettes, les sauts des gotos, une fonction par région et un `switch (Z.pc)`
+pour y entrer. La taille du binaire dépend surtout du compilateur et de son
+réglage — mesurés sur Ristar GG (512 Ko de ROM, 353 008 instructions, 2 228
+régions, dont une de 9 754 gotos) :
+
+| compilation | texte du gen.c | firmware complet | temps de compilation |
+|---|---|---|---|
+| gcc -O3 | 10,8 Mo | 11,9 Mo | ~2× les autres |
+| gcc -O2 | 9,2 Mo | — | 3 min 27 |
+| gcc -Os | 7,6 Mo | — | 3 min 07 |
+| **clang -Os (MinSizeRel)** | **6,7 Mo** | **9,4 Mo** | **1 min 47** |
+
+Vérifié bit-exact : le même `run_hash` (5492e49d), les mêmes cycles et la même
+trame rendue que gcc -O3, hôte comme firmware. clang -Os est donc le réglage
+conseillé des builds PC (`cmake -DCMAKE_BUILD_TYPE=MinSizeRel` + clang) :
+−38 % de code généré, deux fois plus rapide à compiler. Le reste se décompose
+en tables de dispatch (~1,2 Mo pour 60 401 entrées), la ROM embarquée
+(0,5 Mo — le jeu lit ses données de niveaux/tuiles/musique dans le tableau
+`sg_rom` à l'exécution, elle n'est pas retirable) et le frontal (SDL2, VDP,
+PSG). L'interpréteur de repli ne pèse que 0,07 Mo.
+
+La piste de réduction restante est dans l'émetteur : quelques régions
+monstres (la plus grosse, 643 Ko dans une seule fonction, sort mal d'un
+optimiseur) gagneraient à être découpées — jamais par instruction (un
+call/ret par instruction z80 tuerait l'exécution), mais en resserrant la
+fusion des régions. Ne pas confondre avec les gotos eux-mêmes : ils sont la
+traduction normale du flux z80 et ne coûtent rien.
+
 Le frontal commun `gm0`, sur sa [branche `z80`](https://github.com/r043v/gm0/tree/z80), charge directement les cartouches `.sg` dans le noyau
 Z80/TMS9918A/PSG, sans seconde émulation Cortex-M0 sur PC. Il partage les
 filtres F8, l’échelle F10, le plein écran F11, les manettes, F5, le titre et le
