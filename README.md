@@ -42,6 +42,24 @@ emulated: its device checks remain manual. Which system may generate for which
 console comes from the capability matrix (`gbrecomp --list-systems`,
 `--list-targets`).
 
+## Quick start: `m0boy ROM [target]`
+
+```bash
+./m0boy game.gg              # PC release (this machine) + source archive
+./m0boy game.gb pokitto      # another console: project (+ firmware when the toolchain exists)
+```
+
+Only the ROM is required. The source console comes from the file, the target
+defaults to `pc`. Coverage is looked up beside the ROM (`<name>.deepeel/` or
+`<name>.cov`); when absent, `deepeel` is run on the ROM (it resumes an earlier
+analysis by itself; set `DEEPEEL=/path/to/deepeel` if it is not on `PATH`). The
+Game Boy reads deepeel's runtime-code archive, the Z80 family its profile and
+memory map (`tools/deepeel2m0boy.py`); the other systems use the static walk.
+Output in `<name>.m0boy/`: `<name>-<target>-release.tar.gz` (executable and
+README) and `<name>-<target>-source.tar.gz` (the generated project and the
+coverage it was built from). `--out DIR`, `--no-deepeel`, `--jobs N` are optional;
+other options go straight to `gbrecomp`.
+
 ## What runs where
 
 An experimental PC Engine interpreter generates desktop harness projects

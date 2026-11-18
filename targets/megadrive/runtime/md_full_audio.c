@@ -78,7 +78,9 @@ static void audio_emit(MdFull *m, int left, int right) {
  * position is tracked in audio_next, so a sample emits without any
  * division or 64-bit product — the FM step adds a constant span. */
 static void audio_run(MdFull *m, uint64_t until) {
+#if defined(MD_PERF)
     if (m->no_audio) return;
+#endif
     while (m->audio_time + FM_MASTER <= until) {
         int fm[2];
         MD_PERF_ADD(m, p_ym);
@@ -109,7 +111,9 @@ static uint64_t z80_time(const MdFull *m) { return m->sound_cpu.cycles * 15u; }
 
 static void z80_run(MdFull *m, uint64_t until) {
     z80_t *z = &m->sound_cpu;
+#if defined(MD_PERF)
     if (m->no_z80) return;
+#endif
     const uint64_t target = until / 15u;
     if (!m->z80_reset || m->z80_bus || z->fault) {
         if (z->cycles < target) z->cycles = target;
