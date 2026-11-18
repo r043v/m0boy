@@ -11,6 +11,7 @@
 #include "m0boy/pico8_generator.h"
 #include "m0boy/nes_generator.h"
 #include "m0boy/pce_generator.h"
+#include "m0boy/ngp_generator.h"
 #include "m0boy/snes_generator.h"
 #include "m0boy/megadrive_generator.h"
 #include "m0boy/vectrex_generator.h"
@@ -2875,6 +2876,41 @@ int m0recomp_main(int argc, char* argv[]) {
                       << "  regions:            " << stats.regions << ", " << stats.entries << " entries\n"
                       << (pce_sweep ? "  sweep:              the card's JSR/JMP targets outside the walk are compiled too\n" : "")
                       << (meta_precise ? "  mode:               precise (budget checked after every instruction)\n" : "");
+        return 0;
+    }
+    /* Neo Geo Pocket: the interpreter pipeline (the TLCS-900H -> C emitter
+     * follows); the desktop harness and the PC's SDL2 window, after the
+     * PCE's plan. */
+    if (source.id == m0boy::SystemId::ngp) {
+        if (!source.supports(*m0boy::parse_target(target))) {
+            return refuse_target(source, *m0boy::parse_target(target), target);
+        }
+        if (analyze_only || meta_thumb || g_meta_pack ||
+            g_meta_stream != -1 || !g_rom_profiles.empty() || g_meta_resident ||
+            emit_android_project || !native_patch_manifest_path.empty() ||
+            !symbol_file_path.empty() || !annotation_file_path.empty() ||
+            specific_bank > 0 || !manual_entry_points.empty() || !trace_file_path.empty() ||
+            meta_precise || nes_interp || pce_sweep || g_meta_code_budget || meta_bpi_set) {
+            std::cerr << "Error: unsupported Neo Geo Pocket option; use --target\n";
+            return 1;
+        }
+        m0boy::ngp::GenerateOptions options;
+        options.target = *m0boy::parse_target(target);
+        options.name = output_prefix.empty() ? sanitize_prefix(fs::path(rom_path).stem().string()) : output_prefix;
+        if (options.name.empty() || sanitize_prefix(options.name) != options.name) {
+            std::cerr << "Error: invalid Neo Geo Pocket output prefix\n";
+            return 1;
+        }
+        options.output = output_dir.empty() ? fs::path(options.name + "_ngp_" + target) : fs::path(output_dir);
+        options.meta_templates = resolve_meta_dir(argv[0], meta_dir);
+        std::string error;
+        m0boy::ngp::GenerateStats stats;
+        if (!m0boy::ngp::generate(rom_path, options, stats, error)) {
+            std::cerr << "Error: " << error << "\n";
+            return 1;
+        }
+        std::cout << "Generated Neo Geo Pocket project for " << target << ": " << options.output << "\n"
+                  << "  mode:               interpreter (the TLCS-900H emitter follows later)\n";
         return 0;
     }
     /* SNES, phase 1: the 65C816's interpreter and recompiler on the

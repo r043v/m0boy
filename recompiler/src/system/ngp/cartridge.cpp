@@ -7,6 +7,7 @@
 #include "m0boy/ngp_generator.h"
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 

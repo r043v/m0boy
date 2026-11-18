@@ -121,6 +121,8 @@ struct ngp_t {
     uint8_t sq_volume_left[4], sq_volume_right[4];
     uint8_t noise_period_select, noise_tap, noise_shifter, noise_phase;
     uint16_t noise_period_extra;
+    uint16_t sq_acc[3], noise_acc;  /* the chip's own phase accumulators */
+    int32_t psg_runtime;            /* CPU ticks owed to the half-rate chip */
     uint8_t latch_left, latch_right;
     uint8_t dac_left, dac_right;
     /* frame */
@@ -208,6 +210,7 @@ void ngp_z80_irq(void);
 void ngp_z80_nmi(void);
 void ngp_z80_run(uint32_t ticks);
 void ngp_psg_reset(void);
+void ngp_psg_tick(void);
 void ngp_psg_write_left(uint8_t v);
 void ngp_psg_write_right(uint8_t v);
 uint8_t ngp_psg_read_left(void);

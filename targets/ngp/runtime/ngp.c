@@ -287,6 +287,12 @@ void ngp_tick(uint32_t ticks) {
             ngp_test_int_hdma(NGP_INT_TIMER3, 0x13);
         }
     }
+    /* the T6W28 runs at half the CPU clock: one of its ticks per two */
+    machine.psg_runtime += (int32_t)ticks;
+    while (machine.psg_runtime >= 2) {
+        ngp_psg_tick();
+        machine.psg_runtime -= 2;
+    }
     ngp_z80_run(ticks);
     ngp_check_pending();
 }

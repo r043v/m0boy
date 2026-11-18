@@ -20,6 +20,9 @@ void ngp_psg_reset(void) {
     memset(machine.sq_phase, 0, sizeof machine.sq_phase);
     memset(machine.sq_volume_left, 0, sizeof machine.sq_volume_left);
     memset(machine.sq_volume_right, 0, sizeof machine.sq_volume_right);
+    memset(machine.sq_acc, 0, sizeof machine.sq_acc);
+    machine.noise_acc = 0;
+    machine.psg_runtime = 0;
     machine.noise_period_select = 0;
     machine.noise_tap = 13;
     machine.noise_shifter = 0x40;
@@ -74,45 +77,47 @@ static uint16_t noise_feedback(uint16_t shifter, unsigned tap) {
     return (uint16_t)(((a ^ b) << 14) | (shifter >> 1));
 }
 
+/* one chip tick: the squares toggle every stored period, the noise shifts
+ * every period*2.  The phases live on the machine's clock (ngp_tick drives
+ * this at half the CPU rate), so what a session hashes does not depend on
+ * whether anyone listened. */
+void ngp_psg_tick(void) {
+    for (unsigned ch = 0; ch < 3; ch++) {
+        const uint16_t period = machine.sq_period[ch];
+        if (period > 128 && ++machine.sq_acc[ch] >= period) {
+            machine.sq_acc[ch] = 0;
+            machine.sq_phase[ch] ^= 1;
+        }
+    }
+    uint16_t period = machine.noise_period_select < 3 ? noise_periods[machine.noise_period_select] : machine.noise_period_extra;
+    period = (uint16_t)(period * 2);
+    if (!period) period = 16;
+    if (++machine.noise_acc >= period) {
+        machine.noise_acc = 0;
+        if (machine.noise_shifter & 1) machine.noise_phase ^= 1;
+        machine.noise_shifter = noise_feedback(machine.noise_shifter, machine.noise_tap);
+    }
+}
+
+/* the read side: one stereo sample pair per frame, the instantaneous mix of
+ * the phases, the noise and the two DACs */
 unsigned ngp_audio(int16_t *out, unsigned frames, unsigned rate) {
-    /* per output frame the chip advances 3072000/rate chip ticks; the
-     * squares toggle every stored period, the noise shifts every period*2 */
-    const uint32_t dt = 3072000u / (rate ? rate : 44100);
-    uint32_t sq_acc[3] = { 0, 0, 0 }, noise_acc = 0;
+    (void)rate;
     for (unsigned f = 0; f < frames; f++) {
         int32_t psg = 0;
         for (unsigned ch = 0; ch < 3; ch++) {
-            const uint16_t period = machine.sq_period[ch];
-            if (period > 128) {
-                sq_acc[ch] += dt;
-                while (sq_acc[ch] >= period) {
-                    sq_acc[ch] -= period;
-                    machine.sq_phase[ch] ^= 1;
-                }
+            if (machine.sq_period[ch] > 128) {
                 psg += machine.sq_phase[ch] ? machine.sq_volume_left[ch] : -(int32_t)machine.sq_volume_left[ch];
                 psg += machine.sq_phase[ch] ? machine.sq_volume_right[ch] : -(int32_t)machine.sq_volume_right[ch];
             }
         }
-        {
-            uint16_t period = machine.noise_period_select < 3 ? noise_periods[machine.noise_period_select] : machine.noise_period_extra;
-            period = (uint16_t)(period * 2);
-            if (!period) period = 16;
-            noise_acc += dt;
-            while (noise_acc >= period) {
-                noise_acc -= period;
-                if (machine.noise_shifter & 1) machine.noise_phase ^= 1;
-                machine.noise_shifter = noise_feedback(machine.noise_shifter, machine.noise_tap);
-            }
-            psg += machine.noise_phase ? machine.sq_volume_left[3] : -(int32_t)machine.sq_volume_left[3];
-            psg += machine.noise_phase ? machine.sq_volume_right[3] : -(int32_t)machine.sq_volume_right[3];
-        }
-        {
-            const int32_t dac_l = machine.dac_left - 128, dac_r = machine.dac_right - 128;
-            const int32_t l = psg * 43 + dac_l * 115;
-            const int32_t r = psg * 43 + dac_r * 115;
-            out[f * 2] = (int16_t)(l < -32768 ? -32768 : l > 32767 ? 32767 : l);
-            out[f * 2 + 1] = (int16_t)(r < -32768 ? -32768 : r > 32767 ? 32767 : r);
-        }
+        psg += machine.noise_phase ? machine.sq_volume_left[3] : -(int32_t)machine.sq_volume_left[3];
+        psg += machine.noise_phase ? machine.sq_volume_right[3] : -(int32_t)machine.sq_volume_right[3];
+        const int32_t dac_l = machine.dac_left - 128, dac_r = machine.dac_right - 128;
+        const int32_t l = psg * 43 + dac_l * 115;
+        const int32_t r = psg * 43 + dac_r * 115;
+        out[f * 2] = (int16_t)(l < -32768 ? -32768 : l > 32767 ? 32767 : l);
+        out[f * 2 + 1] = (int16_t)(r < -32768 ? -32768 : r > 32767 ? 32767 : r);
     }
     return frames;
 }

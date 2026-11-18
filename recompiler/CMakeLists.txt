@@ -36,6 +36,7 @@ add_library(m0boy_frontends STATIC
     src/system/vectrex/cartridge.cpp
     src/system/snes/cartridge.cpp
     src/system/ngp/cartridge.cpp
+    src/system/ngp/generator.cpp
     src/system/m0plus/firmware.cpp
     src/system/m0plus/generator.cpp
 )

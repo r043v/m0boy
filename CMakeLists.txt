@@ -55,7 +55,7 @@ add_executable(ngp_host targets/ngp/host/ngp_host.c targets/ngp/runtime/ngp.c
     targets/ngp/runtime/ngp_cpu.c targets/ngp/runtime/ngp_gfx.c targets/ngp/runtime/ngp_psg.c
     targets/ngp/runtime/ngp_z80.c targets/ngp/runtime/ngp_bios.c
     targets/sg1000/runtime/z80.c)
-target_include_directories(ngp_host PRIVATE targets/sg1000/runtime targets/common/host)
+target_include_directories(ngp_host PRIVATE targets/ngp/runtime targets/sg1000/runtime targets/common/host)
 
 add_executable(snes_host targets/snes/host/snes_host.c targets/snes/runtime/snes.c
     targets/snes/runtime/snes_cpu.c targets/snes/runtime/snes_ppu.c targets/snes/runtime/snes_smp.c targets/snes/runtime/snes_dsp.c targets/snes/runtime/snes_dsp1.c targets/snes/runtime/snes_fx.c targets/snes/runtime/snes_sa1.c)
