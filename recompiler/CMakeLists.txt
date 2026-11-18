@@ -146,6 +146,11 @@ target_compile_definitions(m0boy_cli PRIVATE
     GBRECOMP_AKA_VERSION="${GBRECOMP_AKA_VERSION}"
 )
 
+# m0boy: the one-argument front end (ROM [target] -> release + source archive)
+find_package(ZLIB REQUIRED)
+add_executable(m0boy src/m0boy_main.cpp)
+target_link_libraries(m0boy PRIVATE ZLIB::ZLIB)
+
 # PICO-8: the cartridge reader and the Lua 5.2 (PICO-8 flavour, fix32 numbers)
 # compiler of femto8 do the front end on the PC; the generated C needs none of
 # it.  femto8 stays a separate checkout (FEMTO8_DIR).

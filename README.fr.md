@@ -45,18 +45,18 @@ système peut générer pour quelle console vient de la matrice de capacités
 ## Démarrage rapide : `m0boy ROM [cible]`
 
 ```bash
-./m0boy jeu.gg               # release PC (cette machine) + archive des sources
-./m0boy jeu.gb pokitto       # autre console : projet (+ firmware si la chaîne d'outils existe)
+build/bin/m0boy jeu.gg               # release PC (cette machine) + archive des sources
+build/bin/m0boy jeu.gb pokitto       # autre console : projet (+ firmware si la chaîne d'outils existe)
 ```
 
-Seule la ROM est requise. La console source vient du fichier, la cible vaut `pc`
+Un seul exécutable, aucun script : seule la ROM est requise. La console source vient du fichier, la cible vaut `pc`
 par défaut. La couverture est cherchée à côté de la ROM (`<nom>.deepeel/` ou
 `<nom>.cov`) ; absente, `deepeel` est lancé sur la ROM (il reprend seul une analyse
 existante ; `DEEPEEL=/chemin/deepeel` s'il n'est pas dans le `PATH`). La Game Boy lit
 l'archive de code à l'exécution de deepeel, la famille Z80 son profil et sa carte
-(`tools/deepeel2m0boy.py`) ; les autres systèmes utilisent la marche statique.
+(convertis dans l'exécutable `m0boy`) ; les autres systèmes utilisent la marche statique.
 Sortie dans `<nom>.m0boy/` : `<nom>-<cible>-release.tar.gz` (exécutable et README)
-et `<nom>-<cible>-source.tar.gz` (le projet généré et la couverture utilisée).
+et `<nom>-<cible>-source.tar.gz` (le projet généré, le PNG de carte de deepeel et la couverture utilisée).
 `--out DIR`, `--no-deepeel`, `--jobs N` sont facultatifs ; les autres options vont
 telles quelles à `gbrecomp`.
 
