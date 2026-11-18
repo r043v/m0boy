@@ -386,6 +386,20 @@ int main(int argc, char** argv) {
             physical_map(raw, mp);
             gen.insert(gen.end(), {"--coverage-map", mp.string()});
         }
+    } else if (have && system == "megadrive") {
+        // deepeel's instruction starts (natural and forced both are code) seed the 68000 walk: one even PC per line
+        fs::path profile = out / (name + ".m0boy.cov");
+        fs::path js = cov; js.replace_extension(".json");
+        std::ifstream jf(js); std::string text((std::istreambuf_iterator<char>(jf)), std::istreambuf_iterator<char>());
+        size_t at = text.find("\"instruction_starts\""), n = 0;
+        std::ofstream po(profile);
+        for (size_t p = at; at != std::string::npos && (p = text.find("\"index\"", p)) != std::string::npos; ) {
+            p += 7; while (p < text.size() && (text[p] == ' ' || text[p] == ':')) p++;
+            unsigned long v = strtoul(text.c_str() + p, nullptr, 10);
+            if (!(v & 1ul) && v + 1 < fs::file_size(rom)) { po << std::hex << v << "\n"; n++; }
+        }
+        say(profile.string() + ": " + std::to_string(n) + " instruction starts from deepeel");
+        if (n) gen.insert(gen.end(), {"--coverage", profile.string()});
     } else if (system == "gameboy") {
         gen.push_back("--meta-static");
         if (!rt.empty()) gen.insert(gen.end(), {"--rtcode", rt.string()});
