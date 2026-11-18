@@ -592,7 +592,11 @@ void vdc_line(vdc_t *v, unsigned line) {
             }
             if (v->vphase != VP_VDW && v->vb_test) {
                 v->vb_test = 0;
-                if (v->cr & 0x08) { v->status |= VDCS_VD; { extern int pce_trace; extern unsigned pce_cur_line; if (pce_trace) fprintf(stderr, "V VD ln=%u\n", pce_cur_line); } }
+                if (v->cr & 0x08) { v->status |= VDCS_VD; 
+#ifdef PCE_TRACE
+                    { extern int pce_trace; extern unsigned pce_cur_line; if (pce_trace) fprintf(stderr, "V VD ln=%u\n", pce_cur_line); }
+#endif
+                 }
             }
 
             if (v->vphase == VP_VDW && !v->burst_mode)

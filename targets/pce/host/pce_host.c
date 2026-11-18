@@ -80,6 +80,8 @@ void pce_trace_step(uint16_t pc) {
     }
 }
 void pce_trace_dyn(uint16_t pc) { if (pce_trace_on) pc_dyn[pc] = 1; }
+void pce_trace_regs(uint8_t a, uint8_t x, uint8_t y, uint8_t s, uint8_t p, uint32_t cyc) { (void)a; (void)x; (void)y; (void)s; (void)p; (void)cyc; }
+void pce_trace_wram_write(uint16_t at, uint8_t v) { (void)at; (void)v; }
 
 /* --explore frames: the coverage-guided player of m0_explore.h (the glue
  * in m0_explore_host.h), from the start or from snapshots that reached

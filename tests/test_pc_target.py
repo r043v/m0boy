@@ -229,7 +229,7 @@ def main():
                 build_dir = project / 'host' / 'build'
                 subprocess.run(['cmake', '-G', 'Ninja', '-S', str(project / 'host'), '-B', str(build_dir),
                                 '-DCMAKE_BUILD_TYPE=Release'], check=True, capture_output=True)
-                subprocess.run(['ninja', '-C', str(build_dir)], check=True, capture_output=True)
+                r = subprocess.run(["ninja", "-C", str(build_dir)], capture_output=True, text=True); print(r.stdout[-1500:]) if r.returncode else None; r.check_returncode()
                 host, = build_dir.glob('*_host')
                 return host
 

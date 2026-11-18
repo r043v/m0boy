@@ -51,8 +51,10 @@ build/bin/m0boy game.gb pokitto      # another console: project (+ firmware when
 
 One executable, no script: only the ROM is required. The source console comes from the file, the target
 defaults to `pc`. Coverage is looked up beside the ROM (`<name>.deepeel/` or
-`<name>.cov`); when absent, `deepeel` is run on the ROM (it resumes an earlier
-analysis by itself; set `DEEPEEL=/path/to/deepeel` if it is not on `PATH`). The
+`<name>.cov`); when absent, deepeel runs on the ROM (it resumes an earlier
+analysis by itself). deepeel and m0recomp are linked into `m0boy` as libraries
+(`libdeepeel`, `libm0recomp`: `deepeel_main()`, `m0recomp_main()`), so no other executable is needed;
+built without the sibling `../memscan` checkout (`-DDEEPEEL_DIR=`), it falls back to a `deepeel` on `PATH` or `DEEPEEL=/path`. The
 Game Boy reads deepeel's runtime-code archive, the Z80 family its profile and
 memory map (converted inside the `m0boy` executable); the other systems use the static walk.
 Output in `<name>.m0boy/`: `<name>-<target>-release.tar.gz` (executable and
