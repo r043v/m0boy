@@ -17,6 +17,7 @@ constexpr std::array cpu_table = {
     CpuDescriptor{CpuId::m6809, "6809", false},      // Vectrex: the recompiler decodes it
     CpuDescriptor{CpuId::m68k, "m68k", false}, // bounded compiler decoder, no --disasm listing yet
     CpuDescriptor{CpuId::w65c816, "w65c816", false}, // SNES 5A22; every byte is a defined opcode
+    CpuDescriptor{CpuId::tlcs900h, "tlcs900h", false}, // Neo Geo Pocket; the runtime decodes it
     CpuDescriptor{CpuId::m0plus, "m0plus", true},
 };
 
@@ -55,6 +56,10 @@ constexpr std::array meta_source_targets = {TargetId::pc, TargetId::aka};
 // budget — the runtime holds ~434 KiB between WRAM, VRAM, A-RAM, the
 // SRAM window and the displayed frame.
 constexpr std::array snes_targets = {TargetId::desktop, TargetId::pc};
+// Neo Geo Pocket: the interpreter on the desktop harness, the PC's SDL2
+// window and the consoles (the 160x152 frame and the ~28 KiB of guest RAM
+// fit every console; the consoles wait on the generator, not the RAM).
+constexpr std::array ngp_targets = {TargetId::desktop, TargetId::pc};
 constexpr std::array<TargetId, 0> no_targets {};
 
 constexpr std::array system_table = {
@@ -95,6 +100,10 @@ constexpr std::array system_table = {
     /* Firmware images, not cartridges.  The reset vector is at the image
      * start; META is linked at 0x4000, Pokitto at zero.  Execution/codegen
      * PC projects include the board emulator. */
+    /* Neo Geo Pocket: 12 KiB of work RAM plus the Z80's 4 KiB, the K2GE's
+     * 19 KiB of VRAM and palettes, the 160x152 frame and the line buffers. */
+    SystemDescriptor{SystemId::ngp, "ngp", CpuId::tlcs900h, 0x0000,
+                     12288, 40960, ngp::inspect, ngp_targets},
     SystemDescriptor{SystemId::meta, "meta", CpuId::m0plus, 0x4004,
                      32768, 32768, m0plus::inspect_meta, meta_source_targets},
     SystemDescriptor{SystemId::pokitto, "pokitto", CpuId::m0plus, 0x0004,
@@ -196,6 +205,7 @@ std::optional<SystemId> detect_system(const std::filesystem::path& path) {
     if (ext == ".vec") return SystemId::vectrex;
     if (ext == ".md" || ext == ".gen") return SystemId::megadrive;
     if (ext == ".sfc" || ext == ".smc" || ext == ".swc") return SystemId::snes;
+    if (ext == ".ngp" || ext == ".ngc" || ext == ".ngd") return SystemId::ngp;
     if (ext == ".rom") { // a MSX ROM starts with "AB"
         std::ifstream file(path, std::ios::binary);
         char header[2] = {};
