@@ -319,7 +319,8 @@ bool generate(const fs::path& cartridge, const GenerateOptions& o, GenerateStats
                   std::string(native ? " ${CMAKE_CURRENT_SOURCE_DIR}/src/pce_gen.c" : "") + gen_parts_pc + ")\n"
                   "target_include_directories(" + o.name + "_pc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)\n"
                   "target_compile_definitions(" + o.name + "_pc PRIVATE PCE_EMBEDDED)\n"
-                  "target_compile_options(" + o.name + "_pc PRIVATE -O2 -w)\n"
+                  "target_compile_options(" + o.name + "_pc PRIVATE -O2 -w -ffunction-sections -fdata-sections)\n"
+                  "target_link_options(" + o.name + "_pc PRIVATE -Wl,--gc-sections -s)\n"
                   "target_link_libraries(" + o.name + "_pc PRIVATE PkgConfig::SDL2 m)\n");
             write(marker, "pc\n");
             write(o.output / "README.md",
