@@ -484,6 +484,7 @@ static int interrupt(MdFull *m) {
     md_push16(m, old);
     m->pc = md_rd32(m, (24u + level) * 4u);
     m->stopped = 0;
+    if (level == 6u && m->phase_on_vint && m->phase_hook) m->phase_hook(m->hook_user, m);   /* sample at the V-int vector, like a Gens exec hook */
     return 1;
 }
 
@@ -543,7 +544,7 @@ void md_full_frame(MdFull *m, int native) {
     for (unsigned line = 0; line < FRAME_LINES && !m->fault; ++line) {
         m->line = (uint16_t)line;
         if (line == 0) m->irq_pending = !m->no_vint0;        /* vertical blank */
-        if (m->phase_hook && line == m->phase_line) {   /* host sampling point: phase_cycle cycles into line phase_line */
+        if (m->phase_hook && !m->phase_on_vint && line == m->phase_line) {   /* host sampling point: phase_cycle cycles into line phase_line */
             run_slice(m, (line ? md_line_end(m, line - 1u) : 0u) + (unsigned)m->phase_cycle, native);
             if (!m->fault) m->phase_hook(m->hook_user, m);
         }
