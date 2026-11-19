@@ -76,14 +76,14 @@ int main(int argc, char **argv) {
     int running = 1;
     static int16_t pcm[44100 / 50 * 4];
     static uint32_t pixels[NGP_SCREEN_H * NGP_SCREEN_W];
-    /* the 4-bit channels spread with *17, the 5-bit frame word widened */
-    static uint32_t lut_r[32], lut_g[32], lut_b[32];
+    /* the frame is rgb565: 5-bit red and blue, 6-bit green */
+    static uint32_t lut_r[32], lut_g[64], lut_b[32];
     if (!lut_b[31]) {
         for (unsigned i = 0; i < 32; i++) {
             lut_r[i] = 0xff000000u | (i * 255u / 31u) << 16;
-            lut_g[i] = (i * 255u / 31u) << 8;
             lut_b[i] = i * 255u / 31u;
         }
+        for (unsigned i = 0; i < 64; i++) lut_g[i] = (i * 255u / 63u) << 8;
     }
     uint64_t deadline = SDL_GetTicks64();
     while (running && (!limit || machine.frames < limit)) {
@@ -105,7 +105,7 @@ int main(int argc, char **argv) {
             const uint16_t *src = ngp_frame();
             for (unsigned i = 0; i < NGP_SCREEN_W * NGP_SCREEN_H; i++) {
                 const uint16_t c = src[i];
-                pixels[i] = lut_r[c >> 11] | lut_g[(c >> 5) & 31u] | lut_b[c & 31u];
+                pixels[i] = lut_r[c >> 11] | lut_g[(c >> 5) & 63u] | lut_b[c & 31u];
             }
             if (!pc_frontend_present(&pc, pixels, NGP_SCREEN_W, NGP_SCREEN_H, NGP_SCREEN_W)) {
                 running = 0;
@@ -125,8 +125,10 @@ int main(int argc, char **argv) {
             const uint16_t *src = ngp_frame();
             for (unsigned i = 0; i < NGP_SCREEN_W * NGP_SCREEN_H && ok; i++) {
                 const uint16_t c = src[i];
-                const uint8_t px[3] = {(uint8_t)(c >> 8 & 0xF8),
-                                       (uint8_t)(c >> 3 & 0xFC), (uint8_t)(c << 3 & 0xF8)};
+                const uint8_t px[3] = {
+                    (uint8_t)(((c >> 11) & 0x1F) * 255 / 31),
+                    (uint8_t)(((c >> 5) & 0x3F) * 255 / 63),
+                    (uint8_t)((c & 0x1F) * 255 / 31)};
                 ok = fwrite(px, 1, 3, file) == 3;
             }
             ok &= fclose(file) == 0;

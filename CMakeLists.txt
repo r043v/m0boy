@@ -97,6 +97,9 @@ if(BUILD_TESTS)
     add_test(NAME snes_native_end_to_end
         COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_snes_e2e.py"
                 "$<TARGET_FILE:m0recomp>")
+    add_test(NAME ngp_end_to_end
+        COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_ngp_e2e.py"
+                "$<TARGET_FILE:m0recomp>")
     add_test(NAME m0plus_native_end_to_end
         COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_m0plus_e2e.py"
                 "$<TARGET_FILE:m0recomp>")
