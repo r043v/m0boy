@@ -54,6 +54,8 @@ typedef struct MdFull {
     uint8_t exact_clock, clock_off;        /* DP_MD_CLOWN_CLOCK=exact: master-clock bookkeeping of the reference (frame 895780, carry in master units) */
     void (*phase_hook)(void *user, const struct MdFull *m); uint16_t phase_line, phase_cycle; uint8_t phase_on_vint; /* optional: called once per frame, phase_cycle cycles into line phase_line */
     uint16_t line_master;                  /* master clocks per line (3420; 3419 with DP_MD_CLOWN_CLOCK, the reference core's 60 Hz frame) */
+    uint32_t gdma_rem; uint8_t gdma_type, gens_dma;   /* DP_MD_GENS_DMA: Gens' per-line DMA drain (words left, destination type) */
+    uint8_t vint_drop;                     /* DP_MD_VINT_DROP: a V-int raised while reg 1 disables it is dropped, not latched (Gens) */
     uint8_t no_vint0;                      /* power-on phase: the first frame's opening V-int never happened */
     uint8_t stopped, fault, irq_pending;   /* irq_pending: vertical interrupt */
     uint8_t hint_pending, hint_counter;
@@ -115,6 +117,7 @@ void md_full_execute(MdFull *m, uint16_t op);
 void md_full_step_interp(MdFull *m);
 void md_full_step_native(MdFull *m);
 void md_full_idle(MdFull *m, unsigned a, unsigned b, uint32_t test_pc, uint32_t branch_pc);
+uint32_t md_full_gens_dma_line(MdFull *m);
 void md_full_frame(MdFull *m, int native);
 void md_full_render(const MdFull *m, uint32_t *pixels, unsigned stride);
 void md_full_render_line(const MdFull *m, unsigned y, uint32_t *row);

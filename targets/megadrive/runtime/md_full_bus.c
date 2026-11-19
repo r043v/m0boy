@@ -38,6 +38,8 @@ void md_full_reset(MdFull *m) {
     m->line_master = getenv("DP_MD_CLOWN_CLOCK") ? (uint16_t)(!strcmp(getenv("DP_MD_CLOWN_CLOCK"), "exact") ? 3419 : atoi(getenv("DP_MD_CLOWN_CLOCK")) > 1 ? atoi(getenv("DP_MD_CLOWN_CLOCK")) : 3419) : 3420u;
     const char *po = getenv("DP_MD_POWERON");
     if (po && !strcmp(po, "gpgx")) { m->frame_cycles = (197u * 3420u + 1004u) / 7u; m->no_vint0 = 1; }
+    m->vint_drop = getenv("DP_MD_VINT_DROP") != NULL;
+    m->gens_dma = getenv("DP_MD_GENS_DMA") != NULL;
 }
 
 static uint8_t pad_read(MdFull *m) {
@@ -68,7 +70,7 @@ static uint8_t pad_read(MdFull *m) {
 static uint16_t vdp_status(const MdFull *m) {
     /* A full NTSC frame is 262 lines; the active display lasts 224. */
     const unsigned line = (m->frame_cycles * 7u / (m->line_master ? m->line_master : 3420u) + 224u) % 262u;
-    return (uint16_t)(0x3400u | (line >= 224 ? 0x0008u : 0u) |
+    return (uint16_t)(0x3400u | (m->gens_dma && m->gdma_rem ? 0x0002u : 0u) | (line >= 224 ? 0x0008u : 0u) |
                       (line >= 224 && m->irq_pending ? 0x0080u : 0u));
 }
 
@@ -162,6 +164,19 @@ static void vdp_store(MdFull *m, uint16_t v) {
     m->vdp_addr = (m->vdp_addr + m->vdp_reg[15]) & 0xffffu;
 }
 
+/* Gens' Update_DMA: one call per line (and once when the DMA starts) removes that line's word budget from the counter and returns
+ * the 68000 stall in cycles: a whole 488-cycle line while unfinished, the proportional part on the last line; VSRAM stalls nothing. */
+static uint32_t gens_update_dma(MdFull *m) {
+    static const uint16_t tab[16] = {83, 167, 166, 83, 102, 205, 204, 102, 8, 16, 15, 8, 9, 18, 17, 9};
+    const int h40 = (m->vdp_reg[12] & 1u) != 0u;
+    const int active = !((int)m->line < 38 || !(m->vdp_reg[1] & 0x40u));
+    const uint32_t rate = tab[(active ? 8 : 0) + h40 * 4 + m->gdma_type];
+    if (m->gdma_rem > rate) { m->gdma_rem -= rate; return (m->gdma_type & 2u) ? 0u : 488u; }
+    const uint32_t rem = m->gdma_rem; m->gdma_rem = 0;
+    return (m->gdma_type & 2u) ? 0u : (uint32_t)(((488ull << 16) / rate * rem) >> 16);
+}
+uint32_t md_full_gens_dma_line(MdFull *m) { return m->gdma_rem ? gens_update_dma(m) : 0u; }
+
 static void vdp_dma(MdFull *m) {
     uint32_t length = (m->vdp_reg[20] << 8) | m->vdp_reg[19];
     if (!length) length = 65536;
@@ -181,7 +196,12 @@ static void vdp_dma(MdFull *m) {
             vdp_store(m, v);
         }
     }
-    if (mode < 2u) {
+    if (mode < 2u && m->gens_dma) {
+        m->gdma_type = (uint8_t)(((m->vdp_code & 0x0fu) == 1u) ? 0u : 1u);
+        m->gdma_rem = length;
+        const uint32_t st = gens_update_dma(m);
+        m->cycles += st; m->frame_cycles += st;
+    } else if (mode < 2u) {
         /* The VDP owns the 68000 bus for the whole transfer: the CPU is frozen for length / rate lines
          * (rate in words per line: blanking vs active display, H40 vs H32; VRAM writes move bytes, so twice the slots). */
         const int h40 = (m->vdp_reg[12] & 0x81u) == 0x81u;
@@ -279,6 +299,7 @@ void md_full_write16(MdFull *m, uint32_t addr, uint16_t v) {
                 uint32_t count = m->vdp_reg[19] | m->vdp_reg[20] << 8;
                 if (!count) count = 65536;
                 m->dma_fill = 0;
+                if (m->gens_dma) { m->gdma_type = 2; m->gdma_rem = count; }
                 while (count--) vdp_store(m, v);
             } else vdp_store(m, v);
             return;

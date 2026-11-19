@@ -544,6 +544,8 @@ void md_full_frame(MdFull *m, int native) {
     for (unsigned line = 0; line < FRAME_LINES && !m->fault; ++line) {
         m->line = (uint16_t)line;
         if (line == 0) m->irq_pending = !m->no_vint0;        /* vertical blank */
+        if (m->gens_dma && m->gdma_rem) { const uint32_t st = md_full_gens_dma_line(m); m->cycles += st; m->frame_cycles += st; }
+        if (line == 0 && m->vint_drop && !(m->vdp_reg[1] & 0x20u)) m->irq_pending = 0;   /* Gens raises the request only while the VDP enables it */
         if (m->phase_hook && !m->phase_on_vint && line == m->phase_line) {   /* host sampling point: phase_cycle cycles into line phase_line */
             run_slice(m, (line ? md_line_end(m, line - 1u) : 0u) + (unsigned)m->phase_cycle, native);
             if (!m->fault) m->phase_hook(m->hook_user, m);
