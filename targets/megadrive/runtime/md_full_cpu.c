@@ -543,6 +543,10 @@ void md_full_frame(MdFull *m, int native) {
     for (unsigned line = 0; line < FRAME_LINES && !m->fault; ++line) {
         m->line = (uint16_t)line;
         if (line == 0) m->irq_pending = !m->no_vint0;        /* vertical blank */
+        if (line == 37u && m->phase_hook) {   /* host sampling point: where a Gens frame ends (38 lines after its V-int line start, less the 128 cycles it enters the V-int late) */
+            run_slice(m, md_line_end(m, 36u) + (unsigned)m->phase_cycle, native);
+            if (!m->fault) m->phase_hook(m->hook_user, m);
+        }
         run_slice(m, md_line_end(m, line), native);
         if (line >= VBLANK_LINES) {
             /* the frontend hook first (the ESP32 one captures the line's
