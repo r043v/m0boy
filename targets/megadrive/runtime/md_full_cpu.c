@@ -549,6 +549,7 @@ void md_full_frame(MdFull *m, int native) {
         if (m->gens_dma && m->gdma_rem) { const uint32_t st = md_full_gens_dma_line(m); m->cycles += st; m->frame_cycles += st; }
         { static int vd = -1; if (vd < 0) vd = getenv("DP_MD_VINT_DELAY") ? atoi(getenv("DP_MD_VINT_DELAY")) : 0;
           if (vd && line == 0 && m->irq_pending) { m->irq_pending = 0; run_slice(m, (uint32_t)vd, native); if (!m->fault) m->irq_pending = 1; } }   /* Gens raises the V-int 128 cycles into its line */
+        { static int vdbg2 = -1; if (vdbg2 < 0) vdbg2 = getenv("DP_MD_VDBG2") != NULL; if (vdbg2 && line == 0) fprintf(stderr, "F f=%u pc=%x sr=%x r1=%x pend=%d\n", (unsigned)m->frames, (unsigned)m->pc, (unsigned)m->sr, m->vdp_reg[1], m->irq_pending); }
         if (line == 0 && m->vint_drop && !(m->vdp_reg[1] & 0x20u)) m->irq_pending = 0;   /* Gens raises the request only while the VDP enables it */
         if (m->phase_hook && !m->phase_on_vint && line == m->phase_line) {   /* host sampling point: phase_cycle cycles into line phase_line */
             run_slice(m, (line ? md_line_end(m, line - 1u) : 0u) + (unsigned)m->phase_cycle, native);
