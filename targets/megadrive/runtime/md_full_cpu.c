@@ -1,3 +1,5 @@
+#include <stdio.h>
+#include <stdlib.h>
 #include <stdlib.h>
 /* 68000 reference interpreter and the line scheduler.  Times come from
  * md_m68k_time.h, semantics from md_m68k_ops.h: the recompiled C uses the
@@ -474,7 +476,7 @@ void md_full_idle(MdFull *m, unsigned a, unsigned b, uint32_t test_pc, uint32_t 
 static int interrupt(MdFull *m) {
     const unsigned mask = (m->sr >> 8) & 7u;
     unsigned level;
-    if (m->irq_pending && (m->vdp_reg[1] & 0x20u) && mask < 6u) { level = 6; m->irq_pending = 0; }
+    if (m->irq_pending && (m->vdp_reg[1] & 0x20u) && mask < 6u) { level = 6; m->irq_pending = 0; { static int vdbg = -1; if (vdbg < 0) vdbg = getenv("DP_MD_VDBG") != NULL; if (vdbg) fprintf(stderr, "VINT f=%u line=%u pc=%x r1=%x\n", (unsigned)m->frames, (unsigned)m->line, (unsigned)m->pc, m->vdp_reg[1]); } }
     else if (m->hint_pending && (m->vdp_reg[0] & 0x10u) && mask < 4u) { level = 4; m->hint_pending = 0; }
     else return 0;
     md_spend(m, 44);
@@ -545,6 +547,8 @@ void md_full_frame(MdFull *m, int native) {
         m->line = (uint16_t)line;
         if (line == 0) m->irq_pending = !m->no_vint0;        /* vertical blank */
         if (m->gens_dma && m->gdma_rem) { const uint32_t st = md_full_gens_dma_line(m); m->cycles += st; m->frame_cycles += st; }
+        { static int vd = -1; if (vd < 0) vd = getenv("DP_MD_VINT_DELAY") ? atoi(getenv("DP_MD_VINT_DELAY")) : 0;
+          if (vd && line == 0 && m->irq_pending) { m->irq_pending = 0; run_slice(m, (uint32_t)vd, native); if (!m->fault) m->irq_pending = 1; } }   /* Gens raises the V-int 128 cycles into its line */
         if (line == 0 && m->vint_drop && !(m->vdp_reg[1] & 0x20u)) m->irq_pending = 0;   /* Gens raises the request only while the VDP enables it */
         if (m->phase_hook && !m->phase_on_vint && line == m->phase_line) {   /* host sampling point: phase_cycle cycles into line phase_line */
             run_slice(m, (line ? md_line_end(m, line - 1u) : 0u) + (unsigned)m->phase_cycle, native);

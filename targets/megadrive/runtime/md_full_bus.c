@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <stdlib.h>
 #include "md_full.h"
 #include <string.h>
@@ -38,6 +39,7 @@ void md_full_reset(MdFull *m) {
     m->line_master = getenv("DP_MD_CLOWN_CLOCK") ? (uint16_t)(!strcmp(getenv("DP_MD_CLOWN_CLOCK"), "exact") ? 3419 : atoi(getenv("DP_MD_CLOWN_CLOCK")) > 1 ? atoi(getenv("DP_MD_CLOWN_CLOCK")) : 3419) : 3420u;
     const char *po = getenv("DP_MD_POWERON");
     if (po && !strcmp(po, "gpgx")) { m->frame_cycles = (197u * 3420u + 1004u) / 7u; m->no_vint0 = 1; }
+    if (po && !strcmp(po, "gens")) { m->frame_cycles = 38u * 488u; m->no_vint0 = 1; }   /* Gens: frame 1 starts at active line 0, its first V-int is at line 224 */
     m->vint_drop = getenv("DP_MD_VINT_DROP") != NULL;
     m->gens_dma = getenv("DP_MD_GENS_DMA") != NULL;
 }
@@ -196,6 +198,8 @@ static void vdp_dma(MdFull *m) {
             vdp_store(m, v);
         }
     }
+    static int vdbg = -1; if (vdbg < 0) vdbg = getenv("DP_MD_VDBG") != NULL;
+    if (vdbg) fprintf(stderr, "DMA f=%u line=%u mode=%u code=%x len=%u src=%x r1=%x\n", (unsigned)m->frames, (unsigned)m->line, mode, m->vdp_code, length, source << 1, m->vdp_reg[1]);
     if (mode < 2u && m->gens_dma) {
         m->gdma_type = (uint8_t)(((m->vdp_code & 0x0fu) == 1u) ? 0u : 1u);
         m->gdma_rem = length;
