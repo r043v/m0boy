@@ -154,7 +154,7 @@ static void sound_store(MdFull *m, uint16_t addr, uint8_t value, uint64_t at) {
 
 static uint8_t sound_load(MdFull *m, uint16_t addr, uint64_t at) {
     if (addr < 0x4000u) return m->zram[addr & 0x1fffu];
-    if (addr < 0x6000u) { audio_run(m, at); return (uint8_t)(m->ym.status | (at < m->ym.busy_until ? 0x80u : 0u)); }
+    if (addr < 0x6000u) { audio_run(m, at); return (uint8_t)(m->ym.status | (!m->gens_dma && at < m->ym.busy_until ? 0x80u : 0u)); }
     return 0xff;
 }
 
