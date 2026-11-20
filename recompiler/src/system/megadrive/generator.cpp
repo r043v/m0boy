@@ -117,6 +117,22 @@ void generate_full_native(const std::vector<uint8_t> &rom, const GenerateOptions
     std::printf("megadrive: %zu instructions in %zu regions, %zu idle loops%s\n",
                 stats.compiled, stats.regions, stats.idle_loops,
                 o.sweep ? ", the ROM's JSR/JMP targets swept" : "");
+    const bool external = pc && o.rom_external;
+    if (external) {
+        /* No cartridge bytes in the project: the executable loads the ROM at run time and checks it against this id. */
+        uint32_t crc = 0xFFFFFFFFu;
+        for (uint8_t byte : rom) {
+            crc ^= byte;
+            for (int k = 0; k < 8; ++k) crc = (crc & 1u) ? 0xEDB88320u ^ (crc >> 1) : crc >> 1;
+        }
+        crc = ~crc;
+        char id[256];
+        std::snprintf(id, sizeof id, "#pragma once\n#define MD_ROM_EXPECT_SIZE %zuu\n#define MD_ROM_EXPECT_CRC32 0x%08xu\n"
+                      "#define MD_ROM_NAME \"%s\"\n", rom.size(), crc, o.name.c_str());
+        write(src / "md_rom_id.h", id);
+        copy_template(tpl / "runtime/md_rom_ext.c", src / "md_rom_ext.c");
+        fs::remove(src / "md_rom.c");
+    } else {
     std::ostringstream data;
     data << "#include <stdint.h>\nconst uint32_t md_rom_size = " << rom.size() << "u;\n"
             "const uint8_t md_rom[] = {\n";
@@ -126,13 +142,15 @@ void generate_full_native(const std::vector<uint8_t> &rom, const GenerateOptions
     }
     data << "\n};\n";
     write(src / "md_rom.c", data.str());
+    }
     if (pc) {
         write(o.output / "CMakeLists.txt",
             "cmake_minimum_required(VERSION 3.20)\nproject(md_native C)\n"
             "set(CMAKE_C_STANDARD 11)\nfind_package(PkgConfig REQUIRED)\n"
             "pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)\n"
             "add_executable(md_pc src/md_full_pc.c src/pc_frontend.c src/md_full_code.c src/md_full_cpu.c "
-            "src/md_full_bus.c src/md_full_video.c src/md_full_audio.c src/md_ym2612.c src/z80.c src/md_rom.c)\n"
+            "src/md_full_bus.c src/md_full_video.c src/md_full_audio.c src/md_ym2612.c src/z80.c " + std::string(external ? "src/md_rom_ext.c" : "src/md_rom.c") + ")\n"
+            + std::string(external ? "target_compile_definitions(md_pc PRIVATE MD_ROM_EXTERNAL=1)\n" : "") +
             "target_compile_options(md_pc PRIVATE -O3)\n"
             "target_link_libraries(md_pc PRIVATE PkgConfig::SDL2 m)\n");
     } else {

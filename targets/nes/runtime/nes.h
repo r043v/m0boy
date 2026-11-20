@@ -55,8 +55,11 @@ typedef struct {
     uint32_t prg_size;
     const uint8_t *chr;
     uint8_t input;         /* the host writes it before each frame */
+    uint8_t input2;        /* the second controller, same bit order (0: nothing pressed) */
     uint8_t shift[2];      /* the controllers' serial shifters */
     uint8_t strobe;
+    uint32_t arm_at;       /* C14: address + 1 whose next CPU read returns arm_val, once (0: none) */
+    uint8_t arm_val;
     uint8_t pad_reads;     /* $4016/$4017 reads since the latch: bit0 pad1, bit1 pad2,
                             * 4-bit counters (the ninth read onward reports 1) */
     uint32_t dots;         /* PPU dots into the current line's CPU slice */

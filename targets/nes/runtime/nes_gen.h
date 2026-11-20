@@ -29,7 +29,11 @@ int32_t nes_gen_enter(int entry, int32_t budget);
 /* 0: everything through the interpreter (the reference) */
 extern int nes_native;
 
+#ifdef M0_ROM_EXTERNAL /* the PC build loads its cartridge at run time (m0_rom_ext.h) */
+extern const uint8_t *nes_prg;
+#else
 extern const uint8_t nes_prg[];
+#endif
 
 #define NES_C (machine.cpu)
 #define NES_RAM (machine.ram)

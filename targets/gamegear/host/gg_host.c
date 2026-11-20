@@ -9,7 +9,13 @@
 #include <string.h>
 #ifdef SG_GENERATED
 #include "sg_config.h"
+#ifdef M0_ROM_EXTERNAL /* the cartridge is loaded at run time (m0_rom_ext.h) */
+#include "m0_rom_ext.h"
+#include "sg_rom_id.h"
+extern const uint8_t *sg_rom;
+#else
 extern const uint8_t sg_rom[];
+#endif
 extern const size_t sg_rom_size;
 sg_fn sg_gen_lookup(uint16_t pc);
 #endif
@@ -231,6 +237,9 @@ static uint32_t run_hash(void) {
 
 static int sms __attribute__((unused));
 int main(int argc, char **argv) {
+#ifdef M0_ROM_EXTERNAL
+    m0_romx_args(&argc, argv);
+#endif
     const char *rom_path = 0, *shot = 0, *cov_path = 0, *wav_path = 0, *ram_out_path = 0;
     int interp = 0;
     for (int i = 1; i < argc; i++) {
@@ -281,6 +290,9 @@ int main(int argc, char **argv) {
     size_t size;
     uint8_t *cart = cart_ram;
 #ifdef SG_GENERATED
+#ifdef M0_ROM_EXTERNAL
+    if (!(sg_rom = m0_romx_load(SG_ROM_EXPECT_SIZE, SG_ROM_EXPECT_CRC32, SG_ROM_NAME))) return 2;
+#endif
     rom = sg_rom; size = sg_rom_size;
     if (rom_path) { fprintf(stderr, "Generated harness already contains its cartridge\n"); return 1; }
     if (!SG_CART_RAM) cart = 0;

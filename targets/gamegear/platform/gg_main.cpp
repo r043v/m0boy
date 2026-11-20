@@ -11,6 +11,10 @@
 #include "gg.h"
 #include "gg_display.h"
 #include "sg_config.h"
+#ifdef M0_ROM_EXTERNAL
+#include "m0_rom_ext.h"
+#include "sg_rom_id.h"
+#endif
 #include "m0_target.h"
 #include "m0_clock.h"
 #include "m0_audio.h"
@@ -44,7 +48,11 @@ static m0_stack_pool stack_pool;
 extern "C" void gg_platform_pool(void) { m0_stack_pool_run(&stack_pool); }
 #endif
 extern "C" {
+#ifdef M0_ROM_EXTERNAL /* the PC build loads its cartridge at run time (see sg_rom_id.h) */
+extern const uint8_t *sg_rom;
+#else
 extern const uint8_t sg_rom[];
+#endif
 extern const size_t sg_rom_size;
 sg_fn sg_gen_lookup(uint16_t pc);
 #if M0_TARGET_POKITTO
@@ -413,6 +421,9 @@ int m0boy_console_main() {
 int main() {
 #endif
     SG_STACK_PAINT();
+#ifdef M0_ROM_EXTERNAL
+    if (!(sg_rom = m0_romx_load(SG_ROM_EXPECT_SIZE, SG_ROM_EXPECT_CRC32, SG_ROM_NAME))) return 2; /* the cartridge, from its file */
+#endif
     SG_PLATFORM_INIT();
 #if GG_CARD
     /* The game's files on the card (meta_card.h, the Game Boy's colours):

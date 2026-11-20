@@ -13,8 +13,15 @@ set -euo pipefail
 #   M0RECOMP=... M0SEARCH=...
 #
 # Livrés dans DOSSIER (défaut output/<slug>-pc, le slug tiré du nom de la
-# ROM) : <slug>-linux, <slug>.exe avec SDL2.dll à côté.  Ils embarquent la
-# ROM : gardez-les dans output/, hors du dépôt et des archives.
+# ROM) : <slug>-linux, <slug>.exe avec SDL2.dll à côté.  Sans RELEASE=1 ils
+# embarquent la ROM : gardez-les dans output/, hors du dépôt et des archives.
+
+# RELEASE=1 : les exécutables livrés n'embarquent pas la ROM (--rom-external) ;
+# ils la cherchent à côté d'eux ou la reçoivent par --rom FICHIER (ou 1er argument),
+# et refusent toute autre ROM (taille + CRC-32).  Le projet interpréteur de
+# recherche, lui, garde la ROM : il ne sort pas de output/.
+RELEASE_ROM_FLAG=""
+if [[ "${RELEASE:-0}" == 1 ]]; then RELEASE_ROM_FLAG="--rom-external"; fi
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 rom=${1:-"$repo/roms/md/Sonic The Hedgehog (USA, Europe).md"}
@@ -49,7 +56,7 @@ build_project() { # $1: nom, $2..: cmake en plus
   local name=$1; shift
   local project="$out/$name/project"
   "$recompiler" --system megadrive "$rom" --target pc \
-    --coverage "$out/search/coverage.merged" -o "$project"
+    --coverage "$out/search/coverage.merged" ${RELEASE_ROM_FLAG:-} -o "$project"
   cmake -G Ninja -S "$project" -B "$project/build" "$@"
   ninja -C "$project/build"
 }

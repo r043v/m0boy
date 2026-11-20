@@ -38,6 +38,10 @@
  */
 #include "gbl.h"
 #include "gbl_config.h"
+#ifdef M0_ROM_EXTERNAL
+#include "m0_rom_ext.h"
+#include "gbl_rom_id.h"
+#endif
 
 #include <setjmp.h>
 #include <stdio.h>
@@ -875,6 +879,10 @@ static void load_inputs(const char *path) {
 }
 
 int main(int argc, char **argv) {
+#ifdef M0_ROM_EXTERNAL
+    m0_romx_args(&argc, argv);
+    if (!(gbl_rom = m0_romx_load(GBL_ROM_EXPECT_SIZE, GBL_ROM_EXPECT_CRC32, GBL_ROM_NAME))) return 2;
+#endif
     unsigned stack_bytes = 256u * 1024u;
     clock_gettime(CLOCK_MONOTONIC, &run_start);
 #ifdef GBL_ROM_TRACE

@@ -32,6 +32,17 @@ tools/megadrive/build_pc_binaries.sh \
   'roms/md/Sonic The Hedgehog (USA, Europe).md'
 ```
 
+**ROM non embarquée (releases)** : `--rom-external` à la génération PC, ou
+`RELEASE=1 tools/megadrive/build_pc_binaries.sh`, ne met aucun octet de la
+cartouche dans `src/` (pas de `md_rom.c`) : l'exécutable charge la ROM à
+l'exécution, par `--rom FICHIER` (ou premier argument), sinon en cherchant à
+côté de l'exécutable puis dans le répertoire courant un fichier
+`.md/.gen/.bin/.smd/.rom` dont la taille et le CRC-32 sont ceux de la ROM pour
+laquelle le projet a été généré (`md_rom_id.h`) ; toute autre ROM est refusée.
+Le C recompilé (`md_full_code.c`) reste dérivé de la ROM : sa diffusion relève
+du même jugement que celle d'un désassemblage. Sortie identique à la version
+embarquée (mêmes hashes sur 60 trames de Streets of Rage).
+
 Les fichiers livrés sont `output/<slug>-pc/<slug>-linux` et
 `output/<slug>-pc/<slug>.exe` (le slug vient du nom de la ROM), avec
 `SDL2.dll` à côté du `.exe`. Le binaire

@@ -24,7 +24,11 @@
 #define SG_IO_OUT sg1000_out
 #endif
 
+#ifdef M0_ROM_EXTERNAL /* loaded at run time (m0_rom_ext.h) */
+extern const uint8_t *sg_rom;
+#else
 extern const uint8_t sg_rom[];
+#endif
 
 /* The entry tables of sg_gen.c (32-bit words only): in flash on the ESP8266,
  * whose constants are otherwise copied to its 80 KiB of RAM (Ristar's 2564

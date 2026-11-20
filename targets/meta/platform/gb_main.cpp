@@ -76,6 +76,10 @@
 extern "C" {
 #include "gbl.h"
 #include "gbl_config.h"
+#ifdef M0_ROM_EXTERNAL
+#include "m0_rom_ext.h"
+#include "gbl_rom_id.h"
+#endif
 #include "gbl_options.h"
 }
 #if GBL_CACHE_DYN
@@ -778,6 +782,9 @@ extern "C" int m0boy_console_main(void); /* the console file's setup() calls it 
 int m0boy_console_main(void) {
 #else
 int main(void) {
+#ifdef M0_ROM_EXTERNAL
+    if (!(gbl_rom = m0_romx_load(GBL_ROM_EXPECT_SIZE, GBL_ROM_EXPECT_CRC32, GBL_ROM_NAME))) return 2; /* the cartridge, from its file */
+#endif
 #endif
 #if !M0_TARGET_ESPBOY && !M0_TARGET_PC && !M0_TARGET_ESP32
     { /* stack_never_used: paint the free RAM, 128 bytes below this frame */

@@ -1,6 +1,7 @@
 /* SG-1000 project generation: the recompiled code (emitter.cpp), the
  * cartridge image, the runtime and, for META/Pokitto, the console drivers
  * shared with the Game Boy frontend. */
+#include "m0boy/rom_external.h"
 #include <cctype>
 #include "m0boy/sg1000_generator.h"
 #include "m0boy/console_project.h"
@@ -814,6 +815,15 @@ bool generate(const fs::path& path, const GenerateOptions& o, GenerateStats& sta
                << "#define SG_TRACK_R " << (track_r ? 1 : 0) << " /* the ROM reads the refresh counter (LD A,R), or the build is precise */\n"
                << "#define SG_ROM_READS_R " << (reads_r ? 1 : 0) << "\n"
                << "#define SG_PANEL_SWAP " << (swap_panel ? 1 : 0) << " /* META SPI: high byte first */\n" << esp_id;
+        /* --rom-external (PC, desktop harness): the plain-ROM layout only; no cartridge bytes in the project, the
+         * executable loads them (m0_rom_ext.h) and checks them against this id */
+        const bool ext_rom = g_rom_external && (o.target == TargetId::pc || o.target == TargetId::desktop) &&
+                             !streamed && !msx_packed && !cart_on_card;
+        if (ext_rom) {
+            config << "#define M0_ROM_EXTERNAL 1\n";
+            write(src / "sg_rom_id.h", rom_id_header("SG", rom.data(), rom.size(), o.name));
+            copy_template(o.meta_templates.parent_path() / "common/runtime/m0_rom_ext.h", src / "m0_rom_ext.h");
+        }
         write(src / "sg_config.h", config.str());
         std::ostringstream data;
         data << "#include <stdint.h>\n#include <stddef.h>\n"
@@ -883,6 +893,10 @@ bool generate(const fs::path& path, const GenerateOptions& o, GenerateStats& sta
             for (auto byte : rom) data << (count++ % 32 ? "" : "\n") << unsigned(byte) << ",";
             data << "\n};\nconst size_t sg_rom_size = sizeof(sg_rom);\n";
         }
+        if (ext_rom)
+            write(src / "sg_rom.c", "#include <stdint.h>\n#include <stddef.h>\nconst uint8_t *sg_rom; /* set at start-up from the ROM file */\n"
+                                    "const size_t sg_rom_size = " + std::to_string(rom_size) + ";\n");
+        else
         write(src / "sg_rom.c", data.str());
         if (esp) { /* ROM pages 1 and up, raw, for spi_flash_read */
             const auto image = o.output / "rom.bin";

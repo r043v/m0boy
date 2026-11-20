@@ -21,12 +21,13 @@ static const struct { char tag[8]; uint32_t version; const volatile void *frame,
 
 uint8_t nes_bus_read(uint16_t at) {
     nes_t *nes = &machine;
+    if (nes->arm_at == (uint32_t)at + 1u) { nes->arm_at = 0; return nes->arm_val; }
     if (at < 0x2000) return nes->ram[at & 0x7FF];
     if (at < 0x4000) return nes_ppu_read(&nes->ppu, at & 7);
     if (at == 0x4015) return nes_apu_read(&nes->apu);
     if (at == 0x4016 || at == 0x4017) {
         const unsigned pad = at & 1;
-        if (nes->strobe) return (uint8_t)(nes->input & 1);
+        if (nes->strobe) return (uint8_t)((pad ? nes->input2 : nes->input) & 1);
         const unsigned nib = pad * 4;
         /* on the official controllers the ninth read onward reports 1 (the
          * shifter is empty, the inverter holds the line high) — the SMB
@@ -77,7 +78,7 @@ void nes_bus_write(uint16_t at, uint8_t value) {
     if (at == 0x4016) {
         if ((value & 1) && !nes->strobe) {
             nes->shift[0] = nes->input;
-            nes->shift[1] = 0;
+            nes->shift[1] = nes->input2;
             nes->pad_reads = 0;   /* the latch restarts the serial frame */
         }
         nes->strobe = value & 1;
@@ -213,7 +214,7 @@ void nes_frame(void) {
     nes_t *nes = &machine;
     nes->frames++;
     /* the strobe takes the pads' state once, at the frame's start */
-    if (nes->strobe) { nes->shift[0] = nes->input; }
+    if (nes->strobe) { nes->shift[0] = nes->input; nes->shift[1] = nes->input2; }
     nes->line = 0;
     nes_frame_rest();
 }

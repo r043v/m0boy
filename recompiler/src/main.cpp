@@ -3,6 +3,7 @@
  * @brief GameBoy Recompiler CLI entry point
  */
 
+#include "m0boy/rom_external.h"
 #include "m0boy/system.h"
 #include "m0boy/m0plus_generator.h"
 #include "m0boy/sg1000.h"
@@ -205,6 +206,7 @@ void print_usage(const char* program) {
     std::cout << "  --nes-sweep           NES: the PRG swept the same way (pairs with --meta-code-budget)\n";
     std::cout << "  --frame-hz <n>        NES: the build's display rate (60 default; the option menu switches 50/60 at run time)\n";
     std::cout << "  --vectrex-sweep       Vectrex: the cartridge swept for JSR/JMP extended targets\n";
+    std::cout << "  --rom-external        PC projects (all systems): do not embed the ROM; the executable loads it at run time (--rom FILE or next to it)\n";
     std::cout << "  --megadrive-sweep     Mega Drive: the ROM swept for JSR/JMP absolute long targets\n";
     std::cout << "  --meta-sweep          Game Boy: every bank's CALL/JP abs targets offered as speculative entries\n";
     std::cout << "  --meta-all-entries    Every compiled instruction becomes a dispatch entry: a covered pc\n"
@@ -2112,6 +2114,7 @@ int m0recomp_main(int argc, char* argv[]) {
     bool nes_sweep = false;
     bool vectrex_sweep = false;
     bool megadrive_sweep = false;
+    bool megadrive_rom_external = false;
     bool meta_sweep = false;
     bool meta_all_entries = false;
     bool meta_static = false;
@@ -2323,6 +2326,9 @@ int m0recomp_main(int argc, char* argv[]) {
             vectrex_sweep = true;
         } else if (arg == "--megadrive-sweep") {
             megadrive_sweep = true;
+        } else if (arg == "--rom-external") {
+            megadrive_rom_external = true;
+            m0boy::g_rom_external = true;
         } else if (arg == "--meta-sweep") {
             meta_sweep = true;
         } else if (arg == "--meta-all-entries") {
@@ -2627,6 +2633,7 @@ int m0recomp_main(int argc, char* argv[]) {
         options.compiler = meta_compiler;
         options.coverage = coverage_paths;
         options.sweep = megadrive_sweep;
+        options.rom_external = megadrive_rom_external;
         std::string error;
         if (!m0boy::megadrive::generate(rom_path, options, error)) {
             std::cerr << "Error: " << error << "\n";

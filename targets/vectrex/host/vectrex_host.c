@@ -252,7 +252,15 @@ static void explore(void) {
   m0xh_run(&xh, &m, explore_locations, explore_play, explore_again);
 }
 #endif
+#ifdef M0_ROM_EXTERNAL
+#include "m0_rom_ext.h"
+#include "vx_rom_id.h"
+#endif
 int main(int argc, char **argv) {
+#ifdef M0_ROM_EXTERNAL
+  m0_romx_args(&argc, argv);
+  if (!(vectrex_cart = m0_romx_load(VX_ROM_EXPECT_SIZE, VX_ROM_EXPECT_CRC32, VX_ROM_NAME))) return 2;
+#endif
   const char *bios = 0, *ppm = 0, *wav = 0, *coverage = 0, *input_path = 0,
              *record_path = 0, *save_state = 0, *load_state = 0;
   int frames = 0, full_boot = 0, interp = 0;

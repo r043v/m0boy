@@ -52,9 +52,17 @@
 #include "m0_card.h"
 #endif
 extern "C" {
+#ifdef M0_ROM_EXTERNAL /* the PC build loads its cartridge at run time (m0_rom_ext.h) */
+extern const uint8_t *nes_prg;
+#else
 extern const uint8_t nes_prg[];
+#endif
 #if !NES_CHR_RAM
+#ifdef M0_ROM_EXTERNAL
+extern const uint8_t *nes_chr;
+#else
 extern const uint8_t nes_chr[];
+#endif
 #endif
 }
 
@@ -282,7 +290,21 @@ static void frame(void *) {
     SG_PACE_FRAME(deadline, skip_video, skipped_run, NES_MAX_SKIP);
 }
 
+#ifdef M0_ROM_EXTERNAL
+#include "m0_rom_ext.h"
+#include "nes_rom_id.h"
+#endif
 int main() {
+#ifdef M0_ROM_EXTERNAL
+    {
+        const uint8_t *image = m0_romx_load(NES_ROM_EXPECT_SIZE, NES_ROM_EXPECT_CRC32, NES_ROM_NAME);
+        if (!image) return 2;
+        nes_prg = image;
+#if !NES_CHR_RAM
+        nes_chr = image + NES_PRG_SIZE;
+#endif
+    }
+#endif
     SG_PLATFORM_INIT();
 #if NES_CHR_RAM
     nes_init(nes_prg, NES_PRG_SIZE, 0, 0, NES_VERTICAL_MIRROR); /* the game uploads its CHR */

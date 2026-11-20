@@ -7,6 +7,7 @@
 #define M0BOY_MD_M68K_OPS_H
 #include "md_full.h"
 #include "md_m68k_time.h"
+#include <stdlib.h>
 #if defined(MD_PERF)
 /* one counting of the emitted code per executed instruction (the
  * interpreter's md_full_execute already does m->instructions++): the
@@ -232,6 +233,8 @@ static inline void md_exception(MdFull *m, unsigned vector, uint32_t pc) {
 }
 
 /* ---- Multiply and divide (with their data-dependent time) ------------- */
+/* Gens' Starscream core times DIVU/DIVS as constants (133 / 150 plus the effective address), overflow included. */
+static inline int md_star_div(void) { static int f = -1; if (f < 0) f = getenv("DP_MD_STAR_DIV") != NULL; return f; }
 static inline void md_mulu(MdFull *m, unsigned reg, uint16_t src) {
     md_spend(m, md_m68k_mulu_cycles(src));
     m->d[reg] = (uint32_t)(uint16_t)m->d[reg] * src;
@@ -246,7 +249,7 @@ static inline void md_muls(MdFull *m, unsigned reg, uint16_t src) {
 static inline int md_divu(MdFull *m, unsigned reg, uint16_t src, uint32_t next) {
     if (!src) { md_spend(m, 38); md_exception(m, 5, next); return 0; }
     const uint32_t dividend = m->d[reg];
-    md_spend(m, md_m68k_divu_cycles(dividend, src));
+    md_spend(m, md_star_div() ? 133u : md_m68k_divu_cycles(dividend, src));
     const uint32_t q = dividend / src, r = dividend % src;
     if (q > 0xffffu) m->sr = (uint16_t)((m->sr & ~MD_C) | MD_V | MD_N);
     else { m->d[reg] = r << 16 | q; md_logic(m, q, 2); }
@@ -255,7 +258,7 @@ static inline int md_divu(MdFull *m, unsigned reg, uint16_t src, uint32_t next) 
 static inline int md_divs(MdFull *m, unsigned reg, uint16_t src, uint32_t next) {
     if (!src) { md_spend(m, 38); md_exception(m, 5, next); return 0; }
     const int32_t dividend = (int32_t)m->d[reg], divisor = (int16_t)src;
-    md_spend(m, md_m68k_divs_cycles(dividend, (int16_t)divisor));
+    md_spend(m, md_star_div() ? 150u : md_m68k_divs_cycles(dividend, (int16_t)divisor));
     if (dividend == INT32_MIN && divisor == -1) { m->sr = (uint16_t)((m->sr & ~MD_C) | MD_V | MD_N); return 1; }
     const int32_t q = dividend / divisor, r = dividend % divisor;
     if (q < -32768 || q > 32767) m->sr = (uint16_t)((m->sr & ~MD_C) | MD_V | MD_N);

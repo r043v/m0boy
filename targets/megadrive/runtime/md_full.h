@@ -28,6 +28,11 @@ typedef struct MdFull {
      * (1 = pressed); pad_cnt counts TH rising edges (0-3).  pad_ext == 0 keeps the
      * three-button behaviour exactly. */
     uint8_t pad_ext, pad_cnt;
+    /* Second port: pad2_on = a three-button pad is plugged in (otherwise every read is $7F, nothing plugged). */
+    uint8_t pad2, pad2_th, pad2_on;
+    /* Pads latched at the start of the active display (Gens-rr film semantics): the host stores the next input in *_pend,
+     * the frame loop applies it at line 38 (first active line) when pend_set. */
+    uint8_t pad_pend, pad2_pend, pad2_on_pend, pend_set, pad_line0;
     /* Cartridge SRAM ($200000-$20FFFF), enabled by a write to $A130F1;
      * bit 1 of that write protects it.  Volatile across a reset;
      * sram_dirty: written since the frontend last stored it. */
@@ -90,8 +95,14 @@ typedef struct MdFull {
     void *hook_user;
 } MdFull;
 
+#ifdef MD_ROM_EXTERNAL   /* PC build whose ROM is loaded at run time (md_rom_ext.c) */
+extern const uint8_t *md_rom;
+extern uint32_t md_rom_size;
+int md_rom_load(const char *path);
+#else
 extern const uint8_t md_rom[];
 extern const uint32_t md_rom_size;
+#endif
 void md_full_reset(MdFull *m);
 /* Rebuilds the CRAM palette LUTs (after an external state load). */
 void md_full_cram_sync(MdFull *m);

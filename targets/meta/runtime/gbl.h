@@ -113,7 +113,11 @@ static inline uint8_t gbl_load_u8(const uint8_t *p) { return *p; }
 #endif
 /* ESPboy: the whole ROM, or bank 0 of a larger one (the rest is rom.bin,
  * gbl_espboy.h), is in the application's flash. */
+#ifdef M0_ROM_EXTERNAL /* the PC build loads its cartridge at run time (m0_rom_ext.h) */
+extern const uint8_t *gbl_rom;
+#else
 extern const uint8_t gbl_rom[];
+#endif
 extern const uint32_t gbl_rom_size;
 
 /* ---- lifecycle ---------------------------------------------------------- */

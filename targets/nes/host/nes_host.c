@@ -21,9 +21,18 @@
 #include "m0_explore_host.h"
 #ifdef NES_EMBEDDED
 #include "../src/nes_config.h"
+#ifdef M0_ROM_EXTERNAL /* the cartridge is loaded at run time (m0_rom_ext.h) */
+#include "../src/m0_rom_ext.h"
+#include "../src/nes_rom_id.h"
+extern const uint8_t *nes_prg;
+#if !NES_CHR_RAM
+extern const uint8_t *nes_chr;
+#endif
+#else
 extern const uint8_t nes_prg[];
 #if !NES_CHR_RAM
 extern const uint8_t nes_chr[];
+#endif
 #endif
 #endif
 
@@ -187,6 +196,9 @@ static void play(unsigned count) {
 }
 
 int main(int argc, char **argv) {
+#ifdef M0_ROM_EXTERNAL
+    m0_romx_args(&argc, argv);
+#endif
     const char *rom_path = 0, *ppm = 0, *wav = 0, *input_path = 0, *coverage = 0;
     const char *save_state = 0, *load_state = 0;
     int interp = 0;
@@ -211,6 +223,17 @@ int main(int argc, char **argv) {
         else if (m0xh_arg(&xh, argc, argv, &i)) { /* --explore, --random */ }
         else rom_path = argv[i];
     }
+#ifdef M0_ROM_EXTERNAL
+    { /* the generated code reads nes_prg directly: the loaded image is the one cartridge */
+        const uint8_t *image = m0_romx_load(NES_ROM_EXPECT_SIZE, NES_ROM_EXPECT_CRC32, NES_ROM_NAME);
+        if (!image) return 2;
+        nes_prg = image;
+#if !NES_CHR_RAM
+        nes_chr = image + NES_PRG_SIZE;
+#endif
+        rom_path = 0;
+    }
+#endif
     uint8_t header[16] = {0};
     uint8_t *prg, *chr;
     uint32_t prg_bytes, chr_bytes;

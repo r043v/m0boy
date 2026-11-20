@@ -2,6 +2,10 @@
  * (sg_gen.c) on the shared runtime, the consoles' LCD, audio, clock and
  * button drivers. */
 #include "sg_config.h"
+#ifdef M0_ROM_EXTERNAL
+#include "m0_rom_ext.h"
+#include "sg_rom_id.h"
+#endif
 #include "sg1000.h"
 #include "m0_target.h"
 #include "m0_clock.h"
@@ -30,7 +34,11 @@
 #include "m0_card.h"
 #endif
 extern "C" {
+#ifdef M0_ROM_EXTERNAL /* the PC build loads its cartridge at run time (see sg_rom_id.h) */
+extern const uint8_t *sg_rom;
+#else
 extern const uint8_t sg_rom[];
+#endif
 extern const size_t sg_rom_size;
 sg_fn sg_gen_lookup(uint16_t pc);
 #if M0_TARGET_POKITTO && !defined(GG_STATE_NAME83) /* else pokitto_sd.c */
@@ -290,6 +298,9 @@ int m0boy_console_main() {
 int main() {
 #endif
     SG_STACK_PAINT();
+#ifdef M0_ROM_EXTERNAL
+    if (!(sg_rom = m0_romx_load(SG_ROM_EXPECT_SIZE, SG_ROM_EXPECT_CRC32, SG_ROM_NAME))) return 2; /* the cartridge, from its file */
+#endif
     SG_PLATFORM_INIT();
 #if defined(GG_STATE_NAME83)
     m0_state_init(sg_card_open(), SG_MENU_STATE_BUF());

@@ -142,6 +142,9 @@ int main(int argc, char **argv) {
     int interp = 0;
     const char *ppm = NULL, *script = NULL, *coverage = NULL, *wav = NULL, *ym_path = NULL, *record_path = NULL;
     const char *save_arg = NULL;
+#ifdef MD_ROM_EXTERNAL
+    const char *rom_arg = NULL;
+#endif
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--frames") && i + 1 < argc) limit = (unsigned)strtoul(argv[++i], NULL, 10);
         else if (!strcmp(argv[i], "--input") && i + 1 < argc) script = argv[++i];
@@ -151,6 +154,10 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--ym-log") && i + 1 < argc) ym_path = argv[++i];
         else if (!strcmp(argv[i], "--record-input") && i + 1 < argc) record_path = argv[++i];
         else if (!strcmp(argv[i], "--save") && i + 1 < argc) save_arg = argv[++i];
+#ifdef MD_ROM_EXTERNAL
+        else if (!strcmp(argv[i], "--rom") && i + 1 < argc) rom_arg = argv[++i];
+        else if (argv[i][0] != '-' && !rom_arg) rom_arg = argv[i];
+#endif
         else if (!strcmp(argv[i], "--interp")) interp = 1;
         else if (m0xh_arg(&xh, argc, argv, &i)) { /* --explore, --random */ }
         else { fprintf(stderr, "usage: md_pc [--frames N] [--input SCRIPT] [--ppm FILE] [--wav FILE] [--ym-log FILE] [--coverage FILE] [--explore FRAMES --random SEED] [--record-input FILE] [--save FILE] [--interp]\n"); return 2; }
@@ -167,6 +174,9 @@ int main(int argc, char **argv) {
     if (script && !read_events(script, &events, &event_count)) {
         fprintf(stderr, "invalid input script\n"); free(events); return 2;
     }
+#ifdef MD_ROM_EXTERNAL
+    if (!md_rom_load(rom_arg)) { free(events); return 2; }
+#endif
     MdFull *m = calloc(1, sizeof *m);
     uint32_t *pixels = calloc(W * H, sizeof *pixels);
     if (!m || !pixels) { free(m); free(pixels); free(events); return 1; }

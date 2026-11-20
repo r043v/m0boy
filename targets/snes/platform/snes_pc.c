@@ -20,7 +20,13 @@
 
 #ifdef SNES_EMBEDDED
 #include "snes_config.h"
+#ifdef M0_ROM_EXTERNAL
+#include "m0_rom_ext.h"
+#include "snes_rom_id.h"
+extern const uint8_t *snes_rom; /* loaded at start-up */
+#else
 extern const uint8_t snes_rom[];
+#endif
 #endif
 
 #define AUDIO_RATE 32000u
@@ -46,6 +52,10 @@ static const char *const snes_pad_names[12] = {
 };
 
 int main(int argc, char **argv) {
+#ifdef M0_ROM_EXTERNAL
+    m0_romx_args(&argc, argv);
+    if (!(snes_rom = m0_romx_load(SNES_ROM_EXPECT_SIZE, SNES_ROM_EXPECT_CRC32, SNES_ROM_NAME))) return 2;
+#endif
     unsigned limit = 0;
     const char *ppm = NULL, *input_path = NULL, *record_path = NULL, *wav_path = NULL;
     for (int i = 1; i < argc; ++i) {

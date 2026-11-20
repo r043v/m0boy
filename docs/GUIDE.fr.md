@@ -557,3 +557,34 @@ ctest --test-dir build --output-on-failure
 
 Le fonctionnement détaillé, les mesures et les limites techniques sont dans
 `targets/meta/README.md`.
+
+## ROM non embarquée (`--rom-external`, cible PC)
+
+Option de `m0recomp`, désactivée par défaut, à utiliser pour les releases :
+le projet généré ne contient **aucun octet de la cartouche**. Il contient un
+`*_rom_id.h` (taille et CRC-32 de l'image attendue) et l'exécutable charge la
+ROM à l'exécution (`m0_rom_ext.h`) :
+
+1. `--rom FICHIER` (ou premier argument positionnel) ;
+2. sinon la variable `M0_ROM` ;
+3. sinon, à côté de l'exécutable puis dans le répertoire courant, un fichier
+   dont la taille et le CRC-32 correspondent (l'en-tête de copieur de 512
+   octets, 128, 16 et le bourrage 0xFF sont tolérés) ;
+4. toute autre ROM est refusée, avec un message qui nomme le jeu attendu.
+
+Systèmes couverts (cible `pc`) : Mega Drive, PC Engine, SNES, Neo Geo Pocket,
+Vectrex, NES, SG-1000, Game Gear, Master System, MSX (images brutes) et Game
+Boy (sans streaming). Sortie vérifiée identique à la version embarquée
+(mêmes hashes d'image sur plusieurs centaines de trames). Pour un MSX packé,
+une Game Gear streamée ou une carte SD, le mode est ignoré et la ROM reste
+embarquée.
+
+Non couverts : m0plus (le « ROM » est un firmware transformé avec ses pages
+natives), pico8 (la cartouche est le code du jeu lui-même, traduit), les
+cibles micro-contrôleurs (la ROM vit dans la flash du firmware) : il n'y a
+pas de fichier à charger sur ces cibles.
+
+**Limite** : le code C généré (`*_gen.c`, `md_full_code.c`) reste dérivé de la
+ROM ; ne pas le publier revient à ne pas publier le jeu. Ce n'est pas un avis
+juridique. Le plus prudent est de distribuer l'outil et l'émulateur, chaque
+utilisateur générant le C à partir de sa propre ROM.

@@ -16,13 +16,23 @@
 #include <string.h>
 
 #ifdef NGP_EMBEDDED
+#ifdef M0_ROM_EXTERNAL
+#include "m0_rom_ext.h"
+#include "ngp_rom_id.h"
+extern const uint8_t *ngp_rom_data; /* loaded at start-up */
+#else
 extern const uint8_t ngp_rom_data[];
+#endif
 extern const unsigned ngp_rom_size;
 #endif
 
 #define AUDIO_RATE 44100u
 
 int main(int argc, char **argv) {
+#ifdef M0_ROM_EXTERNAL
+    m0_romx_args(&argc, argv);
+    if (!(ngp_rom_data = m0_romx_load(NGP_ROM_EXPECT_SIZE, NGP_ROM_EXPECT_CRC32, NGP_ROM_NAME))) return 2;
+#endif
     unsigned limit = 0;
     const char *ppm = NULL, *input_path = NULL, *record_path = NULL;
     for (int i = 1; i < argc; ++i) {

@@ -95,7 +95,11 @@ typedef struct {
   uint8_t attention;
 } Vectrex;
 
+#ifdef M0_ROM_EXTERNAL /* PC build whose cartridge is loaded at run time (m0_rom_ext.h) */
+extern const uint8_t *vectrex_cart;
+#else
 extern const uint8_t vectrex_cart[];
+#endif
 extern const unsigned vectrex_cart_size;
 
 /* the frontend's: a stroke from (x0, y0) to (x1, y1) in beam coordinates,

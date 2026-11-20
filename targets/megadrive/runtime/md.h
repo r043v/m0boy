@@ -29,8 +29,14 @@ typedef struct {
 enum { MD_UP = 1u, MD_DOWN = 2u, MD_LEFT = 4u, MD_RIGHT = 8u,
        MD_A = 16u, MD_B = 32u, MD_C = 64u, MD_START = 128u };
 
+#ifdef MD_ROM_EXTERNAL   /* PC build whose ROM is loaded at run time (md_rom_ext.c) */
+extern const uint8_t *md_rom;
+extern uint32_t md_rom_size;
+int md_rom_load(const char *path);
+#else
 extern const uint8_t md_rom[];
 extern const uint32_t md_rom_size;
+#endif
 void md_reset(Md *m);
 uint8_t md_read8(Md *m, uint32_t addr);
 uint16_t md_read16(Md *m, uint32_t addr);

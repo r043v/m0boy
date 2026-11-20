@@ -18,6 +18,7 @@
  */
 
 #include "recompiler/codegen/meta_emitter.h"
+#include "m0boy/rom_external.h"
 #include "m0boy/rom_storage.h"
 #include "m0boy/sweep.h"
 #include "recompiler/decoder.h"
@@ -376,6 +377,8 @@ public:
     std::string emit_rom() const;
     std::vector<uint8_t> espboy_image() const;
     std::string emit_config(std::string& error) const;
+    /* --rom-external (PC): the cartridge is loaded at run time, not embedded */
+    bool ext_rom() const { return m0boy::g_rom_external && opt_.pc && !stream_; }
     std::string espboy_state_config(size_t eram, bool battery) const;
 
     size_t compiled() const { return ins_.size(); }
@@ -2228,6 +2231,12 @@ std::string Generator::emit_rom() const {
         }
         return o.str();
     }
+    if (ext_rom()) {
+        o << "/* ROM image for gbl: loaded at run time (gbl_rom_id.h, m0_rom_ext.h). */\n#include <stdint.h>\n\n"
+          << "const uint32_t gbl_rom_size = " << rom_.size() << "u;\n"
+          << "const uint8_t *gbl_rom; /* set at start-up from the ROM file */\n";
+        return o.str();
+    }
     o << "/* ROM image for gbl (flash resident). */\n#include <stdint.h>\n\n"
       << "const uint32_t gbl_rom_size = " << rom_.size() << "u;\n"
       << "#if defined(ESP8266)\n#include <pgmspace.h>\n#define GBL_ROM_ATTR PROGMEM __attribute__((aligned(4)))\n#else\n#define GBL_ROM_ATTR __attribute__((aligned(4)))\n#endif\n"
@@ -2526,6 +2535,7 @@ std::string Generator::emit_config(std::string& error) const {
       << "#define GBL_GEN_VERSION \"" << (opt_.espboy ? GBRECOMP_ESPBOY_VERSION : opt_.pc ? GBRECOMP_PC_VERSION
                        : opt_.odroid ? GBRECOMP_ODROID_VERSION : opt_.aka ? GBRECOMP_AKA_VERSION
                        : opt_.pokitto ? GBRECOMP_POKITTO_VERSION : GBRECOMP_META_VERSION) << "\"\n"
+      << (ext_rom() ? "#define M0_ROM_EXTERNAL 1\n" : "")
       << "#endif\n";
     return o.str();
 }
@@ -2770,6 +2780,12 @@ bool generate_meta_project(const ROM& rom, const MetaTargetOptions& options,
                                (fname.size() > 6 && fname.compare(fname.size() - 6, 6, "_rom.c") == 0);
         if (generated && fname != options.name + "_gen.c" && fname != options.name + "_rom.c")
             fs::remove(entry.path(), ec);
+    }
+    if (gen.ext_rom()) {
+        if (!write_file(src / "gbl_rom_id.h", m0boy::rom_id_header("GBL", rom.data(), rom.size(), options.name), error)) return false;
+        fs::copy_file(tpl.parent_path() / "common/runtime/m0_rom_ext.h", src / "m0_rom_ext.h",
+                      fs::copy_options::overwrite_existing, ec);
+        if (ec) { error = "cannot copy the ROM loader: " + ec.message(); return false; }
     }
     if (!write_file(src / "gbl_config.h", config, error) ||
         !write_file(src / (options.name + "_gen.c"), gen.emit_code(), error) ||

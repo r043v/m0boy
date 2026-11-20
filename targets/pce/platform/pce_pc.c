@@ -17,7 +17,13 @@
 
 #ifdef PCE_EMBEDDED
 #include "pce_config.h"
+#ifdef M0_ROM_EXTERNAL
+#include "m0_rom_ext.h"
+#include "pce_rom_id.h"
+extern const uint8_t *pce_rom; /* loaded at start-up */
+#else
 extern const uint8_t pce_rom[];
+#endif
 #endif
 
 #define AUDIO_RATE 11025u
@@ -36,6 +42,10 @@ static uint32_t fnv(const void *data, size_t n, uint32_t h) {
 }
 
 int main(int argc, char **argv) {
+#ifdef M0_ROM_EXTERNAL
+    m0_romx_args(&argc, argv);
+    if (!(pce_rom = m0_romx_load(PCE_ROM_EXPECT_SIZE, PCE_ROM_EXPECT_CRC32, PCE_ROM_NAME))) return 2;
+#endif
     unsigned limit = 0;
     const char *ppm = NULL, *input_path = NULL, *record_path = NULL;
     for (int i = 1; i < argc; ++i) {

@@ -3,6 +3,7 @@
  * at run time) or a console firmware with the BIOS built in (the META, or
  * the Gamebuino AKA on the ESP32 family's shared core; neither ever enters
  * the repository). */
+#include "m0boy/rom_external.h"
 #include "m0boy/vectrex_generator.h"
 #include "m0boy/vectrex_emitter.h"
 #include "m0boy/console_project.h"
@@ -201,8 +202,16 @@ bool generate(const fs::path &cartridge, const GenerateOptions &o,
                        ";\nconst uint8_t vectrex_cart[] = {\n" + bytes(rom.data(), rom.size()) + "};\n";
 
     if (o.target == TargetId::pc) {
+      const bool ext_rom = g_rom_external;
+      if (ext_rom) {
+        /* --rom-external: no cartridge bytes in the project; the window loads it (m0_rom_ext.h) */
+        write(src / "vx_rom_id.h", rom_id_header("VX", rom.data(), rom.size(), o.name));
+        copy_template(o.targets_dir / "common/runtime/m0_rom_ext.h", src / "m0_rom_ext.h");
+        cart = "#include <stdint.h>\nconst unsigned vectrex_cart_size = " + std::to_string(rom.size()) +
+               ";\nconst uint8_t *vectrex_cart; /* set at start-up from the ROM file */\n";
+      }
       write(src / "vx_cart.c", cart);
-      write(src / "vx_config.h", "#pragma once\n" + native +
+      write(src / "vx_config.h", "#pragma once\n" + native + (ext_rom ? "#define M0_ROM_EXTERNAL 1\n" : "") +
                                      "/* the host's --coverage and the dispatcher's counts */\n"
                                      "#define VX_COVERAGE 1\n#define VX_GEN_STATS 1\n");
       copy_template(tpl / "host" / "vectrex_host.c", src / "vectrex_host.c");
