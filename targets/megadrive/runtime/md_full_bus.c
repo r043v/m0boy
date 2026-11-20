@@ -30,7 +30,7 @@ void md_full_reset(MdFull *m) {
     m->pc = rom32(4);
     m->sr = 0x2700;
     m->vdp_reg[15] = 2;
-    m->pad_th = 0x40;
+    m->pad_th = 0x40; m->pad2_th = 0x40;
     for (unsigned i = 0; i < 64; ++i) cram_lut(m, i);
     md_full_audio_reset(m);
     /* DP_MD_POWERON=gpgx: the 68000 leaves reset at VDP line 159 (HV counter $9F21 measured on a VA4 MD1, as Genesis Plus GX
@@ -42,6 +42,24 @@ void md_full_reset(MdFull *m) {
     if (po && !strcmp(po, "gens")) { m->frame_cycles = 38u * 488u; m->no_vint0 = 1; }   /* Gens: frame 1 starts at active line 0, its first V-int is at line 224 */
     m->vint_drop = getenv("DP_MD_VINT_DROP") != NULL;
     m->gens_dma = getenv("DP_MD_GENS_DMA") != NULL;
+}
+
+static uint8_t pad2_read(const MdFull *m) {   /* three-button pad on port 2 */
+    const uint8_t p = m->pad2;
+    uint8_t v = 0x80;
+    if (!(p & 1)) v |= 1;
+    if (!(p & 2)) v |= 2;
+    if (m->pad2_th) {
+        if (!(p & 4)) v |= 4;
+        if (!(p & 8)) v |= 8;
+        if (!(p & 32)) v |= 16;
+        if (!(p & 64)) v |= 32;
+        v |= 64;
+    } else {
+        if (!(p & 16)) v |= 16;
+        if (!(p & 128)) v |= 32;
+    }
+    return v;
 }
 
 static uint8_t pad_read(MdFull *m) {
@@ -104,7 +122,7 @@ uint8_t md_full_read8(MdFull *m, uint32_t addr) {
         switch (addr & 0x1eu) {
         case 0: return md_version_reg();
         case 2: return pad_read(m);
-        case 4: return 0x7f;   /* port 2: no controller plugged, every button reads released (Clown: Sonic 1 $F606 = 00) */
+        case 4: return m->pad2_on ? pad2_read(m) : 0x7f;   /* port 2: no controller plugged, every button reads released (Clown: Sonic 1 $F606 = 00) */
         case 8: return m->pad_control;
         default: return 0;
         }
@@ -267,6 +285,7 @@ void md_full_write8(MdFull *m, uint32_t addr, uint8_t v) {
             if (th && !m->pad_th) m->pad_cnt = (uint8_t)((m->pad_cnt + 1u) & 3u);   /* TH rising edge */
             m->pad_th = th;
         }
+        else if ((addr & 0x1eu) == 4u) m->pad2_th = v & 0x40u;
         else if ((addr & 0x1eu) == 8u) m->pad_control = v;
         return;
     }

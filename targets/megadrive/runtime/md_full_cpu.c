@@ -555,6 +555,7 @@ void md_full_frame(MdFull *m, int native) {
             run_slice(m, (line ? md_line_end(m, line - 1u) : 0u) + (unsigned)m->phase_cycle, native);
             if (!m->fault) m->phase_hook(m->hook_user, m);
         }
+        if (line == VBLANK_LINES && m->pend_set) { m->pad = m->pad_pend; m->pad2 = m->pad2_pend; m->pad2_on = m->pad2_on_pend; m->pend_set = 0; }
         run_slice(m, md_line_end(m, line), native);
         if (line >= VBLANK_LINES) {
             /* the frontend hook first (the ESP32 one captures the line's
