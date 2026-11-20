@@ -5,6 +5,7 @@
  * md_m68k_time.h, semantics from md_m68k_ops.h: the recompiled C uses the
  * same two, so both count and do the same thing (run_hash must match). */
 #include "md_m68k_ops.h"
+#include "md_dbg.h"
 
 typedef struct { unsigned kind, reg; uint32_t addr, imm; } Ea;
 
@@ -72,7 +73,8 @@ void md_full_execute(MdFull *m, uint16_t op) {
     const uint32_t start = m->fault_pc;
     unsigned size;
     m->last_opcode = op;
-    md_spend(m, md_m68k_cycles(op));
+    m->insn_cycles = m->cycles;
+    md_spend(m, md_star_time() ? md_star_adjust(op, md_m68k_cycles(op)) : md_m68k_cycles(op));
     ++m->instructions;
     switch (top) {
     case 1: case 2: case 3: {
@@ -142,7 +144,7 @@ void md_full_execute(MdFull *m, uint16_t op) {
             const unsigned kind = (op >> 6) & 3u;
             size = mode == 0u ? 4u : 1u;
             const Ea dst = ea(m, bits, size);
-            if (mode == 0u && kind && (bit & 31u) >= 16u) md_spend(m, 2u);   /* register bit ops: +2 for bits 16-31 */
+            if (mode == 0u && kind && (bit & 31u) >= 16u && !md_star_time()) md_spend(m, 2u);   /* register bit ops: +2 for bits 16-31 */
             bit &= size == 4u ? 31u : 7u;
             const uint32_t old = ea_read(m, dst, size), b = 1u << bit;
             m->sr = (uint16_t)((m->sr & ~MD_Z) | (old & b ? 0 : MD_Z));
@@ -476,7 +478,7 @@ void md_full_idle(MdFull *m, unsigned a, unsigned b, uint32_t test_pc, uint32_t 
 static int interrupt(MdFull *m) {
     const unsigned mask = (m->sr >> 8) & 7u;
     unsigned level;
-    if (m->irq_pending && (m->vdp_reg[1] & 0x20u) && mask < 6u) { level = 6; m->irq_pending = 0; { static int vdbg = -1; if (vdbg < 0) vdbg = getenv("DP_MD_VDBG") != NULL; if (vdbg) fprintf(stderr, "VINT f=%u line=%u pc=%x r1=%x\n", (unsigned)m->frames, (unsigned)m->line, (unsigned)m->pc, m->vdp_reg[1]); } }
+    if (m->irq_pending && (m->vdp_reg[1] & 0x20u) && mask < 6u) { level = 6; m->irq_pending = 0; { static MdFrameSel vsel; if (md_frame_sel(&vsel, "DP_MD_VDBG", m->frames)) fprintf(stderr, "VINT f=%u line=%u pc=%x r1=%x\n", (unsigned)m->frames, (unsigned)m->line, (unsigned)m->pc, m->vdp_reg[1]); } }
     else if (m->hint_pending && (m->vdp_reg[0] & 0x10u) && mask < 4u) { level = 4; m->hint_pending = 0; }
     else return 0;
     md_spend(m, 44);
@@ -549,13 +551,21 @@ void md_full_frame(MdFull *m, int native) {
         if (m->gens_dma && m->gdma_rem) { const uint32_t st = md_full_gens_dma_line(m); m->cycles += st; m->frame_cycles += st; }
         { static int vd = -1; if (vd < 0) vd = getenv("DP_MD_VINT_DELAY") ? atoi(getenv("DP_MD_VINT_DELAY")) : 0;
           if (vd && line == 0 && m->irq_pending) { m->irq_pending = 0; run_slice(m, (uint32_t)vd, native); if (!m->fault) m->irq_pending = 1; } }   /* Gens raises the V-int 128 cycles into its line */
-        { static int vdbg2 = -1; if (vdbg2 < 0) vdbg2 = getenv("DP_MD_VDBG2") != NULL; if (vdbg2 && line == 0) fprintf(stderr, "F f=%u pc=%x sr=%x r1=%x pend=%d\n", (unsigned)m->frames, (unsigned)m->pc, (unsigned)m->sr, m->vdp_reg[1], m->irq_pending); }
+        { static MdFrameSel vsel2; if (line == 0 && md_frame_sel(&vsel2, "DP_MD_VDBG2", m->frames)) fprintf(stderr, "F f=%u pc=%x sr=%x r1=%x pend=%d\n", (unsigned)m->frames, (unsigned)m->pc, (unsigned)m->sr, m->vdp_reg[1], m->irq_pending); }
         if (line == 0 && m->vint_drop && !(m->vdp_reg[1] & 0x20u)) m->irq_pending = 0;   /* Gens raises the request only while the VDP enables it */
         if (m->phase_hook && !m->phase_on_vint && line == m->phase_line) {   /* host sampling point: phase_cycle cycles into line phase_line */
             run_slice(m, (line ? md_line_end(m, line - 1u) : 0u) + (unsigned)m->phase_cycle, native);
             if (!m->fault) m->phase_hook(m->hook_user, m);
         }
         if (line == VBLANK_LINES && m->pend_set) { m->pad = m->pad_pend; m->pad2 = m->pad2_pend; m->pad2_on = m->pad2_on_pend; m->pend_set = 0; }
+        int hint_done = 0;
+        if (line == FRAME_LINES - 1u && !getenv("DP_MD_HINT_LATE")) {
+            /* Gens raises the H-int 404 cycles before the end of each active line, so the last line's H-int is served before the V-int of the
+             * next line (it would otherwise run after the V-int handler's palette DMA and leave the next frame with the H-int palette) */
+            run_slice(m, md_line_end(m, line) - 404u, native);
+            if (!m->fault) { if (m->hint_counter == 0) { m->hint_counter = (uint8_t)m->vdp_reg[10]; m->hint_pending = 1; } else --m->hint_counter; m->slice_limit = 0; }
+            hint_done = 1;
+        }
         run_slice(m, md_line_end(m, line), native);
         if (line >= VBLANK_LINES) {
             /* the frontend hook first (the ESP32 one captures the line's
@@ -565,7 +575,7 @@ void md_full_frame(MdFull *m, int native) {
         }
         /* The horizontal counter counts active lines (and the first blank
          * one) and is reloaded during the vertical blank. */
-        if (line == 0 || line >= VBLANK_LINES) {
+        if (!hint_done && (line == 0 || line >= VBLANK_LINES)) {
             if (m->hint_counter == 0) { m->hint_counter = (uint8_t)m->vdp_reg[10]; m->hint_pending = 1; }
             else --m->hint_counter;
         } else m->hint_counter = (uint8_t)m->vdp_reg[10];

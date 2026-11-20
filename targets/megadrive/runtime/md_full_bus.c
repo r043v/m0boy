@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "md_full.h"
+#include "md_dbg.h"
 #include <string.h>
 
 static uint32_t rom32(uint32_t a) {
@@ -128,7 +129,12 @@ uint8_t md_full_read8(MdFull *m, uint32_t addr) {
         }
     }
     if (addr >= 0xa11000u && addr < 0xa12000u)
-        return (addr & 0xff00u) == 0x1100u ? (m->z80_bus ? 0 : 1) : 0;
+    {
+        static int gb = -1; if (gb < 0) gb = getenv("DP_MD_GENS_BUSREQ") != NULL;
+        if ((addr & 0xff00u) != 0x1100u) return 0;
+        if (gb && m->z80_bus) return (uint8_t)((m->insn_cycles - m->busreq_cnt) > 16u ? 0u : m->busreq_st);
+        return m->z80_bus ? 0 : 1;
+    }
     if (addr >= 0xc00000u && addr <= 0xc0001fu) {
         uint16_t v = md_full_read16(m, addr & ~1u);
         return (addr & 1u) ? (uint8_t)v : (uint8_t)(v >> 8);
@@ -173,6 +179,7 @@ static void vdp_store(MdFull *m, uint16_t v) {
         break;
     case 3:
         m->cram[(addr >> 1) & 63u] = v & 0x0eeeu;
+        { static MdFrameSel sel; if (((addr >> 1) & 63u) < 2u && md_frame_sel(&sel, "DP_MD_CRLOG", m->frames)) fprintf(stderr, "CR f=%u line=%u idx=%u v=%03x pc=%x\n", (unsigned)m->frames, (unsigned)m->line, (unsigned)((addr >> 1) & 63u), v & 0xeeeu, (unsigned)m->pc); }
         cram_lut(m, (addr >> 1) & 63u);
         break;
     case 5:
@@ -216,8 +223,8 @@ static void vdp_dma(MdFull *m) {
             vdp_store(m, v);
         }
     }
-    static int vdbg = -1; if (vdbg < 0) vdbg = getenv("DP_MD_VDBG") != NULL;
-    if (vdbg) fprintf(stderr, "DMA f=%u line=%u mode=%u code=%x len=%u src=%x r1=%x\n", (unsigned)m->frames, (unsigned)m->line, mode, m->vdp_code, length, source << 1, m->vdp_reg[1]);
+    static MdFrameSel vsel;
+    if (md_frame_sel(&vsel, "DP_MD_VDBG", m->frames)) fprintf(stderr, "DMA f=%u line=%u mode=%u code=%x len=%u src=%x r1=%x\n", (unsigned)m->frames, (unsigned)m->line, mode, m->vdp_code, length, source << 1, m->vdp_reg[1]);
     if (mode < 2u && m->gens_dma) {
         m->gdma_type = (uint8_t)(((m->vdp_code & 0x0fu) == 1u) ? 0u : 1u);
         m->gdma_rem = length;

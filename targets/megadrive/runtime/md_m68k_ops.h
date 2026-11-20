@@ -235,6 +235,25 @@ static inline void md_exception(MdFull *m, unsigned vector, uint32_t pc) {
 /* ---- Multiply and divide (with their data-dependent time) ------------- */
 /* Gens' Starscream core times DIVU/DIVS as constants (133 / 150 plus the effective address), overflow included. */
 static inline int md_star_div(void) { static int f = -1; if (f < 0) f = getenv("DP_MD_STAR_DIV") != NULL; return f; }
+/* Starscream's other fixed times that differ from the manual (opt-in, Gens compatibility):
+ * BCHG/BCLR/BSET on Dn always pay the long-bit price (+2, no bit>=16 surcharge), CLR byte/word
+ * to memory is 2 faster, CLR.L Dn 2 slower, TAS memory 4 slower, DBT 8, SUBQ.W #n,An 8. */
+static inline int md_star_time(void) { static int f = -1; if (f < 0) f = getenv("DP_MD_STAR_TIME") != NULL; return f; }
+static inline int md_star_addq(void) { static int f = -1; if (f < 0) f = getenv("DP_MD_STAR_ADDQ") != NULL; return f; }   /* ADDQ.W An: Starscream 4 (breaks Sonic 1843S at frame 168: Gens matches the hardware 8) */
+static inline unsigned md_star_adjust(uint16_t op, unsigned c) {
+    const unsigned top = op >> 12, mode = (op >> 3) & 7u, size = (op >> 6) & 3u;
+    if (top == 0u && ((op & 0x0100u) || (op & 0x0f00u) == 0x0800u) && (op & 0x0138u) != 0x0108u)
+        return (mode == 0u && size) ? c + 2u : c;
+    if ((op & 0xff00u) == 0x4200u && size != 3u) {
+        if (mode != 0u) return c - 2u;
+        return size == 2u ? c + 2u : c;
+    }
+    if ((op & 0xffc0u) == 0x4ac0u && mode != 0u) return c + 4u;
+    if (md_star_addq() && top == 5u && mode == 1u && size == 1u && (op & 0x00c0u) != 0x00c0u) return 4u;   /* ADDQ/SUBQ.W An: Starscream 4, hardware 8 */
+    if ((op & 0xf0f8u) == 0x50c8u && ((op >> 8) & 15u) == 0u) return 8u;
+    if ((op & 0xf1f8u) == 0x5148u) return 8u;
+    return c;
+}
 static inline void md_mulu(MdFull *m, unsigned reg, uint16_t src) {
     md_spend(m, md_m68k_mulu_cycles(src));
     m->d[reg] = (uint32_t)(uint16_t)m->d[reg] * src;

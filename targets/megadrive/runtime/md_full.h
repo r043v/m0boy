@@ -24,6 +24,8 @@ typedef struct MdFull {
     uint32_t vdp_addr, vdp_first;
     uint8_t vdp_code, vdp_pending, dma_fill;
     uint8_t pad, pad_th, pad_control, z80_bus, z80_reset;
+    /* Gens-style Z80 bus grant delay (DP_MD_GENS_BUSREQ): cycle count at the start of the current instruction, and of the last bus request. */
+    uint32_t insn_cycles, busreq_cnt; uint8_t busreq_st;
     /* Six-button pad: pad_ext bit 7 = a six-button pad is plugged in, bits 0-3 = Z,Y,X,Mode
      * (1 = pressed); pad_cnt counts TH rising edges (0-3).  pad_ext == 0 keeps the
      * three-button behaviour exactly. */

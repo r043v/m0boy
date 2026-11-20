@@ -216,7 +216,11 @@ uint8_t md_full_sound_read(MdFull *m, uint32_t addr) {
 void md_full_sound_control(MdFull *m, unsigned reset_line, uint8_t value) {
     const uint64_t now = m68k_time(m);
     z80_run(m, now);
-    if (!reset_line) { m->z80_bus = value; return; }
+    if (!reset_line) {
+        if (value) { m->busreq_st = !m->z80_bus; m->busreq_cnt = m->insn_cycles; }   /* Gens: bus granted CYCLE_FOR_TAKE_Z80_BUS_GENESIS (16) cycles after the request */
+        m->z80_bus = value;
+        return;
+    }
     if (value && !m->z80_reset) {
         const uint64_t cycles = m->sound_cpu.cycles;
         z80_reset(&m->sound_cpu);

@@ -55,12 +55,12 @@ static inline unsigned md_m68k_cycles(uint16_t op) {
             if (mode == 1u) return 12;            /* DBcc with cc true */
             return mode == 0u ? 4u : 8u + md_m68k_ea(mode, reg, 0);   /* Scc false (Dn) */
         }
-        if (mode == 1u) return 8;                 /* ADDQ/SUBQ to An */
+        if (mode == 1u) return 8;                 /* ADDQ/SUBQ to An (word too: whole register; Starscream charges 4 for word) */
         if (mode == 0u) return lng ? 8u : 4u;
         return (lng ? 12u : 8u) + md_m68k_ea(mode, reg, lng);
     case 0: {
         if ((op & 0x0100u) || (op & 0x0f00u) == 0x0800u) {
-            if ((op & 0x0138u) == 0x0108u) return lng ? 24u : 16u;     /* MOVEP */
+            if ((op & 0x0138u) == 0x0108u) return (op & 0x0040u) ? 24u : 16u;   /* MOVEP: long = bit 6 */
             const unsigned kind = (op >> 6) & 3u, dynamic = !!(op & 0x0100u);
             if (mode == 0u)
                 return (kind == 0u ? 6u : kind == 2u ? 8u : 6u) + (dynamic ? 0u : 4u);   /* +2 when the bit is >= 16: charged at run time */
