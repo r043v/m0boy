@@ -49,7 +49,7 @@ def toolchain() -> str | None:
     return None
 
 
-def generate(gbrecomp: str, rom: Path, out: Path, target: str) -> None:
+def generate(m0recomp: str, rom: Path, out: Path, target: str) -> None:
     run([m0recomp, str(rom), "--target", target, "--output-prefix", "e2e", "--meta-static", "--meta-thumb", "-o", str(out)])
 
 
