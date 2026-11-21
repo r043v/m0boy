@@ -239,19 +239,21 @@ static inline int md_star_div(void) { static int f = -1; if (f < 0) { const char
  * BCHG/BCLR/BSET on Dn always pay the long-bit price (+2, no bit>=16 surcharge), CLR byte/word
  * to memory is 2 faster, CLR.L Dn 2 slower, TAS memory 4 slower, DBT 8, SUBQ.W #n,An 8. */
 static inline int md_star_time(void) { static int f = -1; if (f < 0) f = getenv("DP_MD_STAR_TIME") != NULL; return f; }
+/* DP_MD_STAR_TIME=n (n > 1): class mask for ablation (1 BCHG/BCLR/BSET Dn, 2 CLR memory, 4 CLR.L Dn, 8 TAS memory, 16 DBT/SUBQ); 1 or any non-number keeps all. */
+static inline unsigned md_star_time_mask(void) { static int f = -1; if (f < 0) { const char *e = getenv("DP_MD_STAR_TIME"); int v = e ? atoi(e) : 0; f = v > 1 ? v : 0x1f; } return (unsigned)f; }
 static inline int md_star_addq(void) { static int f = -1; if (f < 0) { const char *e = getenv("DP_MD_STAR_ADDQ"); f = e == NULL ? 0 : (atoi(e) > 1 ? atoi(e) : 0x1fe); } return f; }   /* bit n set: ADDQ.W #n,An costs 4 (default all) */   /* ADDQ.W An: Starscream 4 (breaks Sonic 1843S at frame 168: Gens matches the hardware 8) */
 static inline unsigned md_star_adjust(uint16_t op, unsigned c) {
     const unsigned top = op >> 12, mode = (op >> 3) & 7u, size = (op >> 6) & 3u;
     if (top == 0u && ((op & 0x0100u) || (op & 0x0f00u) == 0x0800u) && (op & 0x0138u) != 0x0108u)
-        return (mode == 0u && size) ? c + 2u : c;
+        return (mode == 0u && size && (md_star_time_mask() & 1u)) ? c + 2u : c;
     if ((op & 0xff00u) == 0x4200u && size != 3u) {
-        if (mode != 0u) return c - 2u;
-        return size == 2u ? c + 2u : c;
+        if (mode != 0u) return (md_star_time_mask() & 2u) ? c - 2u : c;
+        return (size == 2u && (md_star_time_mask() & 4u)) ? c + 2u : c;
     }
-    if ((op & 0xffc0u) == 0x4ac0u && mode != 0u) return c + 4u;
+    if ((op & 0xffc0u) == 0x4ac0u && mode != 0u) return (md_star_time_mask() & 8u) ? c + 4u : c;
     if (top == 5u && mode == 1u && ((md_star_addq() >> (((op >> 9) & 7u) ? ((op >> 9) & 7u) : 8u)) & 1) && (op & 0x0100u) == 0u && (size == 1u || size == 2u)) return 4u;   /* ADDQ.W/.L #n,An only (SUBQ stays 8): Starscream 4, manual 8 */
-    if ((op & 0xf0f8u) == 0x50c8u && ((op >> 8) & 15u) == 0u) return 8u;
-    if ((op & 0xf1f8u) == 0x5148u) return 8u;
+    if ((op & 0xf0f8u) == 0x50c8u && ((op >> 8) & 15u) == 0u) return (md_star_time_mask() & 16u) ? 8u : c;
+    if ((op & 0xf1f8u) == 0x5148u) return (md_star_time_mask() & 16u) ? 8u : c;
     return c;
 }
 static inline void md_mulu(MdFull *m, unsigned reg, uint16_t src) {
