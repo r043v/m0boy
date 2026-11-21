@@ -84,9 +84,35 @@ def main():
     parser.add_argument("--frames", type=int)
     parser.add_argument("--trace", type=Path)
     parser.add_argument("--input-out", type=Path)
+    parser.add_argument("--settings-out", type=Path,
+                        help="write the cartridge model from the BK2 sync settings as JSON")
+    parser.add_argument("--host-options-out", type=Path,
+                        help="write ws_host options matching the BK2 hardware and timing")
+    parser.add_argument("--settings-only", action="store_true",
+                        help="export sync settings without loading the BizHawk library")
     parser.add_argument("--capture", type=Path)
     args = parser.parse_args()
     rom = args.rom.read_bytes()
+    with ZipFile(args.movie) as archive:
+        movie_settings = json.loads(archive.read("SyncSettings.json"))["o"]
+    if args.settings_out:
+        args.settings_out.write_text(json.dumps({
+            "color": bool(movie_settings["Color"]),
+            "initial_time": movie_settings["InitialTime"],
+            "use_real_time": bool(movie_settings["UseRealTime"]),
+            "birth_date": movie_settings["BirthDate"],
+            "language": movie_settings["Language"],
+            "gender": movie_settings["Gender"],
+            "blood_type": movie_settings["BloodType"],
+            "name": movie_settings["Name"],
+        }, indent=2) + "\n", encoding="utf-8")
+    if args.host_options_out:
+        options = ["--bizhawk-timing"]
+        if movie_settings["Color"]:
+            options.append("--color")
+        args.host_options_out.write_text("\n".join(options) + "\n", encoding="ascii")
+    if args.settings_only:
+        return 0
     lib = c.CDLL(str(args.library.resolve()))
     lib.bizswan_new.restype = c.c_void_p
     lib.bizswan_delete.argtypes = [c.c_void_p]
