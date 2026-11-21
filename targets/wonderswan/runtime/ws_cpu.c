@@ -418,7 +418,7 @@ decoded:
         unsigned displacement = fetch(ws);
         if (condition(ws->flags, op & 15)) {
             relative_byte(ws, displacement);
-            clocks = 1;
+            clocks = 3; // measured from BizHawk's V30MZ: taken jcc costs 3 (JMP macro)
         }
     } else switch (op) {
     case 0x06: push(ws, ws->es); clocks = 2; break;
