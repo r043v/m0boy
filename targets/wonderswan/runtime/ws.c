@@ -193,6 +193,11 @@ uint8_t ws_read(const Ws *ws, uint32_t address)
     return value;
 }
 
+uint8_t ws_peek(const Ws *ws, uint32_t address)
+{
+    return read_bus(ws, address & 0xfffff);
+}
+
 void ws_write(Ws *ws, uint32_t address, uint8_t value)
 {
     address &= 0xfffff;
@@ -312,7 +317,25 @@ void ws_dma_run(Ws *ws, WsLineSink sink, void *context)
 }
 #endif
 
+static uint8_t in_ports(Ws *ws, uint16_t port);
+static void out_ports(Ws *ws, uint16_t port, uint8_t value);
+
 uint8_t ws_in(Ws *ws, uint16_t port)
+{
+    uint8_t value = in_ports(ws, port);
+    if (ws->io_sink)
+        ws->io_sink(ws->io_context, port, value, 0);
+    return value;
+}
+
+void ws_out(Ws *ws, uint16_t port, uint8_t value)
+{
+    if (ws->io_sink)
+        ws->io_sink(ws->io_context, port, value, 1);
+    out_ports(ws, port, value);
+}
+
+static uint8_t in_ports(Ws *ws, uint16_t port)
 {
 #if WS_ENABLE_COLOR
     if (port >= 0x40 && port <= 0x48)
@@ -377,7 +400,7 @@ uint8_t ws_in(Ws *ws, uint16_t port)
     }
 }
 
-void ws_out(Ws *ws, uint16_t port, uint8_t value)
+static void out_ports(Ws *ws, uint16_t port, uint8_t value)
 {
 #if WS_ENABLE_COLOR
     if (port >= 0x40 && port <= 0x48) {

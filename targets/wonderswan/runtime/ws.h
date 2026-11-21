@@ -38,6 +38,7 @@ typedef void (*WsAudioSink)(void *context, uint8_t speaker, int16_t left, int16_
 typedef void (*WsInstructionSink)(void *context, uint32_t pc, uint32_t rom_offset);
 typedef void (*WsMemoryWriteSink)(void *context, uint32_t address, uint8_t value);
 typedef void (*WsMemoryReadSink)(void *context, uint32_t address, uint8_t value);
+typedef void (*WsIoSink)(void *context, uint16_t port, uint8_t value, int write);
 
 typedef struct {
     WsAudioSink sink;
@@ -80,6 +81,8 @@ typedef struct {
     void *memory_write_context;
     WsMemoryReadSink memory_read_sink;
     void *memory_read_context;
+    WsIoSink io_sink;
+    void *io_context;
     WsFlash flash;
     const uint8_t *boot_rom;
     uint8_t system_control;
@@ -151,6 +154,8 @@ uint32_t ws_address(uint16_t segment, uint16_t offset);
 // Returns UINT32_MAX for addresses without a backing cartridge ROM byte.
 uint32_t ws_rom_offset(const Ws *ws, uint32_t address);
 uint8_t ws_read(const Ws *ws, uint32_t address);
+// The memory view without firing memory_read_sink (opcode fetches, probes).
+uint8_t ws_peek(const Ws *ws, uint32_t address);
 void ws_write(Ws *ws, uint32_t address, uint8_t value);
 void ws_set_low_battery(Ws *ws, bool low);
 void ws_set_keys(Ws *ws, uint16_t keys);

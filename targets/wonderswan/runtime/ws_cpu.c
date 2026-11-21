@@ -3,7 +3,8 @@
 
 static uint8_t fetch(Ws *ws)
 {
-    return ws_read(ws, ws_address(ws->cs, ws->ip++));
+    // opcode fetches are not data reads: they bypass the memory read sink
+    return ws_peek(ws, ws_address(ws->cs, ws->ip++));
 }
 
 static uint16_t fetch_word(Ws *ws)
