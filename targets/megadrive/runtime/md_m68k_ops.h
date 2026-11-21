@@ -242,12 +242,25 @@ static inline int md_star_time(void) { static int f = -1; if (f < 0) f = getenv(
 /* DP_MD_STAR_TIME=n (n > 1): class mask for ablation (1 BCHG/BCLR/BSET Dn, 2 CLR memory, 4 CLR.L Dn, 8 TAS memory, 16 DBT/SUBQ); 1 or any non-number keeps all. */
 static inline unsigned md_star_time_mask(void) { static int f = -1; if (f < 0) { const char *e = getenv("DP_MD_STAR_TIME"); int v = e ? atoi(e) : 0; f = v > 1 ? v : 0x1f; } return (unsigned)f; }
 static inline int md_star_addq(void) { static int f = -1; if (f < 0) { const char *e = getenv("DP_MD_STAR_ADDQ"); f = e == NULL ? 0 : (atoi(e) > 1 ? atoi(e) : 0x1fe); } return f; }   /* bit n set: ADDQ.W #n,An costs 4 (default all) */   /* ADDQ.W An: Starscream 4 (breaks Sonic 1843S at frame 168: Gens matches the hardware 8) */
-static inline unsigned md_star_adjust(uint16_t op, unsigned c) {
+static inline unsigned md_star_adjust(uint16_t op, unsigned c);
+static inline unsigned md_star_adjust0(uint16_t op, unsigned c);
+static inline unsigned md_star_adjust(uint16_t op, unsigned c) {   /* diagnostic: DP_MD_OPADJ=mask:val:delta (hex mask, hex val, decimal delta) */
+    static int on = -1; static unsigned mk, vl; static int dl;
+    if (on < 0) { const char *e = getenv("DP_MD_OPADJ"); on = 0; if (e && sscanf(e, "%x:%x:%d", &mk, &vl, &dl) == 3) on = 1; }
+    c = md_star_adjust0(op, c);
+    return (on && (op & mk) == vl) ? (unsigned)((int)c + dl) : c;
+}
+static inline unsigned md_star_adjust0(uint16_t op, unsigned c) {
     const unsigned top = op >> 12, mode = (op >> 3) & 7u, size = (op >> 6) & 3u;
     if (top == 0u && ((op & 0x0100u) || (op & 0x0f00u) == 0x0800u) && (op & 0x0138u) != 0x0108u)
         return (mode == 0u && size && (md_star_time_mask() & 1u)) ? c + 2u : c;
     if ((op & 0xff00u) == 0x4200u && size != 3u) {
-        if (mode != 0u) return (md_star_time_mask() & 2u) ? c - 2u : c;
+        if (mode != 0u) {
+            /* CLR.L (An) and CLR.L (xxx).W keep the manual time; every other CLR to memory is 2 faster
+             * (measured against Gens on SoR 1845S: V-int overshoot and RAM dumps). */
+            if (size == 2u && (mode == 2u || (mode == 7u && (op & 7u) == 0u))) return c;
+            return (md_star_time_mask() & 2u) ? c - 2u : c;
+        }
         return (size == 2u && (md_star_time_mask() & 4u)) ? c + 2u : c;
     }
     if ((op & 0xffc0u) == 0x4ac0u && mode != 0u) return (md_star_time_mask() & 8u) ? c + 4u : c;

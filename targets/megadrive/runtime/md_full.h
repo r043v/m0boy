@@ -26,6 +26,8 @@ typedef struct MdFull {
     uint8_t pad, pad_th, pad_control, z80_bus, z80_reset;
     /* Gens-style Z80 bus grant delay (DP_MD_GENS_BUSREQ): cycle count at the start of the current instruction, and of the last bus request. */
     uint32_t insn_cycles, busreq_cnt; uint8_t busreq_st;
+    /* Gens-style latched Z80 /INT (DP_MD_GENS_Z80LATCH): next raise in Z80 cycles, and the pending latch. */
+    uint64_t z80_int_at; uint8_t z80_int_latch;
     /* Six-button pad: pad_ext bit 7 = a six-button pad is plugged in, bits 0-3 = Z,Y,X,Mode
      * (1 = pressed); pad_cnt counts TH rising edges (0-3).  pad_ext == 0 keeps the
      * three-button behaviour exactly. */
@@ -61,7 +63,7 @@ typedef struct MdFull {
     uint8_t exact_clock, clock_off;        /* DP_MD_CLOWN_CLOCK=exact: master-clock bookkeeping of the reference (frame 895780, carry in master units) */
     void (*phase_hook)(void *user, const struct MdFull *m); uint16_t phase_line, phase_cycle; uint8_t phase_on_vint; /* optional: called once per frame, phase_cycle cycles into line phase_line */
     uint16_t line_master;                  /* master clocks per line (3420; 3419 with DP_MD_CLOWN_CLOCK, the reference core's 60 Hz frame) */
-    uint32_t gdma_rem; uint8_t gdma_type, gens_dma;   /* DP_MD_GENS_DMA: Gens' per-line DMA drain (words left, destination type) */
+    uint32_t gdma_rem, gtrip_frame, gdma_done; uint8_t gdma_type, gens_dma;   /* DP_MD_GENS_DMA: Gens' per-line DMA drain (words left, destination type) */
     uint8_t vint_drop;                     /* DP_MD_VINT_DROP: a V-int raised while reg 1 disables it is dropped, not latched (Gens) */
     uint8_t no_vint0;                      /* power-on phase: the first frame's opening V-int never happened */
     uint8_t stopped, fault, irq_pending;   /* irq_pending: vertical interrupt */
@@ -143,6 +145,8 @@ uint8_t md_full_sound_read(MdFull *m, uint32_t addr);
 void md_full_sound_control(MdFull *m, unsigned reset_line, uint8_t value);
 void md_full_sound_frame(MdFull *m);
 void md_full_sound_line(MdFull *m, unsigned line);
+void md_full_gens_trip(MdFull *m, uint32_t at);
+int md_full_gens_dmaph(void);
 /* Moves up to max stereo frames (44.1 kHz, L then R) into samples. */
 unsigned md_full_audio_read(MdFull *m, int16_t *samples, unsigned max);
 /* Bench counters (MD_PERF builds only). */

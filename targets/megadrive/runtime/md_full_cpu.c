@@ -74,6 +74,12 @@ void md_full_execute(MdFull *m, uint16_t op) {
     unsigned size;
     m->last_opcode = op;
     m->insn_cycles = m->cycles;
+    { static int pl = -2; if (pl == -2) pl = getenv("DP_MD_PCLOG") ? atoi(getenv("DP_MD_PCLOG")) : -1;
+      static unsigned pw = 0; if (!pw) pw = getenv("DP_MD_PCWATCH") ? (unsigned)strtoul(getenv("DP_MD_PCWATCH"), NULL, 16) : 1u;
+      if (pl >= 0 && m->frames == (unsigned)pl) fprintf(stderr, "PC %u %06x\n", (unsigned)m->frame_cycles, (unsigned)start);
+      if (pw > 1u && start == pw) fprintf(stderr, "PW f=%u fc=%u\n", (unsigned)m->frames, (unsigned)m->frame_cycles); }
+    { static int pf = -1; static uint8_t *seen; if (pf < 0) { pf = getenv("DP_MD_PCFIRST") ? atoi(getenv("DP_MD_PCFIRST")) : 0; if (pf) seen = calloc(1, 1u << 23); }   /* diagnostic: first execution of each PC up to frame N */
+      if (pf && seen && m->frames <= (unsigned)pf && start < (1u << 23) && !seen[start]) { seen[start] = 1; fprintf(stderr, "PF %u %u %06x\n", (unsigned)m->frames, (unsigned)m->frame_cycles, (unsigned)start); } }
     md_spend(m, md_star_time() ? md_star_adjust(op, md_m68k_cycles(op)) : md_m68k_cycles(op));
     ++m->instructions;
     switch (top) {
@@ -550,7 +556,7 @@ void md_full_frame(MdFull *m, int native) {
     for (unsigned line = 0; line < FRAME_LINES && !m->fault; ++line) {
         m->line = (uint16_t)line;
         if (line == 0) m->irq_pending = !m->no_vint0;        /* vertical blank */
-        if (m->gens_dma && m->gdma_rem) { const uint32_t st = md_full_gens_dma_line(m); m->cycles += st; m->frame_cycles += st; }
+        if (m->gens_dma && m->gdma_rem) { if (!md_full_gens_dmaph()) { const uint32_t st = md_full_gens_dma_line(m); m->cycles += st; m->frame_cycles += st; } }
         { static int vd = -1; if (vd < 0) vd = getenv("DP_MD_VINT_DELAY") ? atoi(getenv("DP_MD_VINT_DELAY")) : 0;
           if (vd && line == 0 && m->irq_pending) { m->irq_pending = 0; run_slice(m, (uint32_t)vd, native); if (!m->fault) m->irq_pending = 1; } }   /* Gens raises the V-int 128 cycles into its line */
         { static MdFrameSel vsel2; if (line == 0 && md_frame_sel(&vsel2, "DP_MD_VDBG2", m->frames)) fprintf(stderr, "F f=%u pc=%x sr=%x r1=%x pend=%d\n", (unsigned)m->frames, (unsigned)m->pc, (unsigned)m->sr, m->vdp_reg[1], m->irq_pending); }
@@ -568,7 +574,24 @@ void md_full_frame(MdFull *m, int native) {
             if (!m->fault) { if (m->hint_counter == 0) { m->hint_counter = (uint8_t)m->vdp_reg[10]; m->hint_pending = 1; } else --m->hint_counter; m->slice_limit = 0; }
             hint_done = 1;
         }
+        { static int trip = -1; if (trip < 0) trip = getenv("DP_MD_GENS_TRIP") ? atoi(getenv("DP_MD_GENS_TRIP")) : 0;
+          /* DP_MD_GENS_TRIP=<fc>: Gens' frame starts <fc> cycles after ours (its active line 0, 18418 here), where it drops the 68000's
+           * overshoot (main68k_tripOdometer) and the Z80's (z80_Clear_Odo) */
+          /* once per frame (gtrip_frame = frames + 1), also when a DMA stall already carried the 68000 past that point */
+          if (trip && m->frames && line >= VBLANK_LINES - 1u && m->gtrip_frame != m->frames + 1u && (uint32_t)trip < md_line_end(m, line)) {
+              if (m->frame_cycles < (uint32_t)trip) run_slice(m, (uint32_t)trip, native);
+              if (!m->fault) m->gtrip_frame = m->frames + 1u;
+              if (!m->fault && m->frame_cycles > (uint32_t)trip) { const uint32_t o = m->frame_cycles - (uint32_t)trip; m->frame_cycles -= o; m->cycles -= o; m->insn_cycles -= o; if (getenv("DP_MD_TRIPLOG")) fprintf(stderr, "TRIP f=%u o=%u pc=%x\n", (unsigned)m->frames, o, (unsigned)m->pc); }
+              if (!m->fault) md_full_gens_trip(m, (uint32_t)trip);
+          } }
+        if (m->gens_dma && md_full_gens_dmaph() && m->gdma_done != m->frames * FRAME_LINES + line + 1u) {
+            run_slice(m, md_line_end(m, line) - 128u, native);
+            if (!m->fault) { m->gdma_done = m->frames * FRAME_LINES + line + 1u;
+                if (m->gdma_rem) { const uint32_t st = md_full_gens_dma_line(m); m->cycles += st; m->frame_cycles += st; } }
+        }
         run_slice(m, md_line_end(m, line), native);
+        { static int ld = -1; if (ld < 0) ld = getenv("DP_MD_LINEDELAY") ? atoi(getenv("DP_MD_LINEDELAY")) : 0;   /* diagnostic */
+          if (ld && !m->fault) run_slice(m, md_line_end(m, line) + (unsigned)ld, native); }
         md_full_sound_line(m, line);
         if (line >= VBLANK_LINES) {
             /* the frontend hook first (the ESP32 one captures the line's

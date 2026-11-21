@@ -118,7 +118,7 @@ uint8_t md_full_read8(MdFull *m, uint32_t addr) {
     if (m->sram_enable && addr >= 0x200000u && addr < 0x210000u) return m->sram[addr & 0xffffu];
     if (addr < md_rom_size) return md_rom[addr];
     if (addr >= 0xff0000u) return m->ram[addr & 0xffffu];
-    if (addr >= 0xa00000u && addr < 0xa10000u) return md_full_sound_read(m, addr & 0xffffu);
+    if (addr >= 0xa00000u && addr < 0xa10000u) { return md_full_sound_read(m, addr & 0xffffu); }
     if (addr >= 0xa10000u && addr <= 0xa1001fu) {
         switch (addr & 0x1eu) {
         case 0: return md_version_reg();
@@ -198,6 +198,7 @@ static uint32_t gens_update_dma(MdFull *m) {
     const int h40 = (m->vdp_reg[12] & 1u) != 0u;
     const int active = !((int)m->line < 38 || !(m->vdp_reg[1] & 0x40u));
     const uint32_t rate = tab[(active ? 8 : 0) + h40 * 4 + m->gdma_type];
+    if (getenv("DP_MD_FILLLOG") && m->frames < (unsigned)atoi(getenv("DP_MD_FILLLOG"))) fprintf(stderr, "DSTEP f=%u line=%u fc=%u type=%u rem=%u rate=%u r1=%x r12=%x\n", (unsigned)m->frames, (unsigned)m->line, (unsigned)m->frame_cycles, m->gdma_type, (unsigned)m->gdma_rem, rate, m->vdp_reg[1], m->vdp_reg[12]);   /* diagnostic */
     if (m->gdma_rem > rate) { m->gdma_rem -= rate; return (m->gdma_type & 2u) ? 0u : 488u; }
     const uint32_t rem = m->gdma_rem; m->gdma_rem = 0;
     return (m->gdma_type & 2u) ? 0u : (uint32_t)(((488ull << 16) / rate * rem) >> 16);
@@ -240,6 +241,21 @@ static void vdp_dma(MdFull *m) {
         const uint32_t rate = blank ? (h40 ? 204u : 166u) : (h40 ? 18u : 16u);
         const uint32_t reads = length << ((m->vdp_code & 0x0fu) == 1u);
         const uint32_t lm = m->line_master ? m->line_master : 3420u;
+        static int gensdma = -1;
+        if (gensdma < 0) gensdma = getenv("DP_MD_GENS_DMA") != NULL;
+        if (gensdma) {   /* Gens model: the rate is re-chosen per line, the freeze starts on the next line and lasts 488 cycles per full line */
+            uint32_t left = reads; uint32_t stall = 0; unsigned l = m->line;
+            const int dis = !(m->vdp_reg[1] & 0x40u);
+            for (int guard = 0; left && guard < 4096; ++guard) {
+                l = (l + 1u) % 262u;
+                const int bl = (int)l < vb || dis;
+                const uint32_t r = bl ? (h40 ? 204u : 166u) : (h40 ? 18u : 16u);
+                if (left > r) { stall += 488u; left -= r; }
+                else { stall += 488u * left / r; left = 0; }
+            }
+            m->cycles += stall; m->frame_cycles += stall;
+            goto dma_done;
+        }
         static int refround = -1;
         if (refround < 0) refround = getenv("DP_MD_DMA_REFROUND") != NULL;   /* reference rounding: master clocks, then ceil to 68000 cycles */
         uint32_t st = refround ? (lm * reads / rate + 6u) / 7u : (lm * reads / 7u) / rate;
@@ -250,6 +266,7 @@ static void vdp_dma(MdFull *m) {
         }
         m->cycles += st; m->frame_cycles += st;
     }
+    dma_done:;
     m->vdp_reg[19] = m->vdp_reg[20] = 0;
     m->vdp_reg[21] = source & 255u;
     m->vdp_reg[22] = (source >> 8) & 255u;
@@ -329,7 +346,7 @@ void md_full_write16(MdFull *m, uint32_t addr, uint16_t v) {
                 uint32_t count = m->vdp_reg[19] | m->vdp_reg[20] << 8;
                 if (!count) count = 65536;
                 m->dma_fill = 0;
-                if (m->gens_dma) { m->gdma_type = 2; m->gdma_rem = count; }
+                if (m->gens_dma) { m->gdma_type = 2; m->gdma_rem = count; if (getenv("DP_MD_FILLLOG") && m->frames < (unsigned)atoi(getenv("DP_MD_FILLLOG"))) fprintf(stderr, "FILL f=%u line=%u fc=%u count=%u\n", (unsigned)m->frames, (unsigned)m->line, (unsigned)m->frame_cycles, (unsigned)count); }
                 while (count--) vdp_store(m, v);
             } else vdp_store(m, v);
             return;
@@ -345,3 +362,5 @@ void md_full_write32(MdFull *m, uint32_t addr, uint32_t v) {
     md_full_write16(m, addr, v >> 16);
     if (!m->fault) md_full_write16(m, addr + 2u, (uint16_t)v);
 }
+
+int md_full_gens_dmaph(void) { static int v = -1; if (v < 0) v = getenv("DP_MD_GENS_DMAPH") ? atoi(getenv("DP_MD_GENS_DMAPH")) : 0; return v; }
