@@ -207,6 +207,13 @@ static void copy_sprites(Ws *ws, unsigned clock, unsigned clocks)
 // The default sink sees each completed visible line. BizHawk samples at
 // line entry and counts a completed frame after executing line 144.
 // Hardware transfers two OAM bytes per clock on line 144.
+//
+// BizHawk's core runs each line as execute(128) + execute(96), then bumps the
+// visible line register, then execute(32). So port 02 already reads the next
+// line — and the line-hit interrupt asserts — for the last 32 clocks of a
+// line, not at the boundary. Measured against the Rockman & Forte TAS: its
+// line-wait loops exit 32 clocks earlier there, which drifts a full frame
+// every ~13000 frames if the register only moves at the boundary.
 void ws_video_clock(Ws *ws, unsigned clocks, WsLineSink sink, void *context)
 {
 #if WS_ENABLE_BIZHAWK_TIMING
@@ -215,6 +222,22 @@ void ws_video_clock(Ws *ws, unsigned clocks, WsLineSink sink, void *context)
     const bool bizhawk_timing = false;
 #endif
     unsigned until_line = 256 - ws->line_clock;
+    if (bizhawk_timing && ws->line_clock < 224 && clocks >= until_line - 32) {
+        unsigned head = until_line - 32;
+        if (ws->uart_tx_clocks)
+            ws_uart_clock(ws, head);
+        if (ws->rtc.present || ws->rtc.delay)
+            ws_rtc_clock(ws, head);
+        ws_audio_clock(ws, head);
+        clocks -= head;
+        ws->line_clock += head;
+        // The register bump BizHawk does before the line's final 32 clocks.
+        ws->line_shown = ws->line_override ? ws->display[0x18]
+                       : ws->line == ws->display[0x16] ? 0 : ws->line + 1;
+        if (ws->line_shown == ws->display[3])
+            ws->irq_pending |= ws->irq_enable & 0x10;
+        until_line = 32;
+    }
     while (clocks >= until_line) {
         if (ws->uart_tx_clocks)
             ws_uart_clock(ws, until_line);
@@ -239,8 +262,11 @@ void ws_video_clock(Ws *ws, unsigned clocks, WsLineSink sink, void *context)
         } else {
             ++ws->line;
         }
+        ws->line_shown = ws->line;
         tick_timer(ws, 0, 0x80);
-        if (ws->line == ws->display[3])
+        // The line-hit interrupt moved to the register bump at clock 224 under
+        // BizHawk timing; the boundary only asserts it on the default path.
+        if (!bizhawk_timing && ws->line == ws->display[3])
             ws->irq_pending |= ws->irq_enable & 0x10;
         if (ws->line == WS_HEIGHT) {
             tick_timer(ws, 1, 0x20);

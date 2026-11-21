@@ -106,6 +106,7 @@ typedef struct {
     uint8_t display[0x40];
     uint8_t sprites[512];
     uint8_t line, line_clock;
+    uint8_t line_shown;
     bool line_override;
 #if WS_ENABLE_BIZHAWK_TIMING
     bool bizhawk_timing;

@@ -231,44 +231,27 @@ static bool string_opcode(unsigned op)
            (op >= 0xa4 && op <= 0xaf && op != 0xa8 && op != 0xa9);
 }
 
-static unsigned string_step(Ws *ws, unsigned op, const uint16_t *segment,
-                            unsigned repeat, uint16_t start_ip)
+static void string_iteration(Ws *ws, unsigned op, bool word, int delta,
+                             unsigned source, unsigned destination)
 {
-    if (repeat && !ws->reg[1])
-        return 1;
-
-    bool word = op & 1;
-    int delta = word ? 2 : 1;
-    if (ws->flags & DF)
-        delta = -delta;
-    unsigned source = ws_address(segment ? *segment : ws->ds, ws->reg[6]);
-    unsigned destination = ws_address(ws->es, ws->reg[7]);
-    bool compare = false;
-    unsigned clocks = 3;
-
     switch (op & ~1u) {
     case 0x6c: // INS
         write_mem(ws, destination, word, read_port(ws, ws->reg[2], word));
         ws->reg[7] += delta;
-        clocks = 6;
         break;
     case 0x6e: // OUTS
         write_port(ws, ws->reg[2], word, read_mem(ws, source, word));
         ws->reg[6] += delta;
-        clocks = 6;
         break;
     case 0xa4: // MOVS
         write_mem(ws, destination, word, read_mem(ws, source, word));
         ws->reg[6] += delta;
         ws->reg[7] += delta;
-        clocks = 5;
         break;
     case 0xa6: // CMPS
         alu(ws, read_mem(ws, source, word), read_mem(ws, destination, word), word, 7);
         ws->reg[6] += delta;
         ws->reg[7] += delta;
-        compare = true;
-        clocks = 6;
         break;
     case 0xaa: // STOS
         write_mem(ws, destination, word, ws->reg[0]);
@@ -281,15 +264,99 @@ static unsigned string_step(Ws *ws, unsigned op, const uint16_t *segment,
     case 0xae: // SCAS
         alu(ws, read_reg(ws, 0, word), read_mem(ws, destination, word), word, 7);
         ws->reg[7] += delta;
-        compare = true;
-        clocks = 4;
         break;
     }
+}
 
-    if (repeat && --ws->reg[1] &&
-        (!compare || ((ws->flags & ZF) != 0) == (repeat == 0xf3)))
-        ws->ip = start_ip;
-    return clocks;
+static unsigned string_step(Ws *ws, unsigned op, const uint16_t *segment,
+                            unsigned repeat, uint16_t start_ip,
+                            WsLineSink sink, void *context)
+{
+    bool word = op & 1;
+    int delta = word ? 2 : 1;
+    if (ws->flags & DF)
+        delta = -delta;
+    unsigned source, destination;
+    // Per-iteration cost measured from BizHawk's core: its rep handlers charge
+    // the string primitive itself plus the loop overhead (compare ops add 3).
+    bool compare = false;
+    unsigned clocks;
+    switch (op & ~1u) {
+    case 0x6c: clocks = 6; break;                 // INS
+    case 0x6e: clocks = 7; break;                 // OUTS
+    case 0xa4: clocks = 5; break;                 // MOVS
+    case 0xa6: clocks = 6; compare = true; break; // CMPS
+    case 0xaa: clocks = 3; break;                 // STOS
+    case 0xac: clocks = 3; break;                 // LODS
+    case 0xae: clocks = 4; compare = true; break; // SCAS
+    default: clocks = 3; break;
+    }
+    unsigned rate = clocks + (compare ? 3 : 0);
+
+    if (!repeat) {
+        source = ws_address(segment ? *segment : ws->ds, ws->reg[6]);
+        destination = ws_address(ws->es, ws->reg[7]);
+        string_iteration(ws, op, word, delta, source, destination);
+        return clocks;
+    }
+
+    // A rep runs to completion in one step. BizHawk's core executes it inside
+    // 128/96/32-clock execute slices: each slice pays a 5-clock prologue (two
+    // more per restart when a segment prefix is replayed) and its iterations,
+    // then rewinds to the opcode when the slice budget runs out — the iteration
+    // that overruns is executed again in the next slice, so its clocks are paid
+    // twice. The video clock is charged chunk by chunk so line events keep
+    // firing between iterations, exactly as they do between plain instructions.
+#if WS_ENABLE_BIZHAWK_TIMING
+    bool bizhawk_timing = ws->bizhawk_timing;
+#else
+    const bool bizhawk_timing = false;
+#endif
+    unsigned entry = 5 + (segment ? 2 : 0);
+    if (!bizhawk_timing) {
+        // One iteration per step on the default path: the caller re-enters
+        // through the rewound instruction pointer after each one.
+        source = ws_address(segment ? *segment : ws->ds, ws->reg[6]);
+        destination = ws_address(ws->es, ws->reg[7]);
+        string_iteration(ws, op, word, delta, source, destination);
+        if (--ws->reg[1] && (!compare || ((ws->flags & ZF) != 0) == (repeat == 0xf3)))
+            ws->ip = start_ip;
+        return clocks;
+    }
+    unsigned logical = ws->reg[1];
+    ws_video_clock(ws, entry, sink, context);
+    unsigned position = ws->line_clock;
+    unsigned off = position % 256;
+    unsigned slice_end = off < 128 ? 128 : off < 224 ? 224 : 256;
+    long budget = (long)slice_end - position;
+    unsigned slices = 1, bodies = 0;
+    for (unsigned done = 0; done < logical; ) {
+        source = ws_address(segment ? *segment : ws->ds, ws->reg[6]);
+        destination = ws_address(ws->es, ws->reg[7]);
+        string_iteration(ws, op, word, delta, source, destination);
+        ++done;
+        --ws->reg[1];
+        ++bodies;
+        ws_video_clock(ws, rate, sink, context);
+        position = ws->line_clock;
+        if (compare && ((ws->flags & ZF) != 0) != (repeat == 0xf3))
+            return 0; // already charged chunk by chunk
+        if (done >= logical)
+            break;
+        budget -= rate;
+        if (budget < 0) {
+            // Out of slice budget: the iteration just executed is redone in a
+            // fresh slice, paying its clocks and the prologue a second time.
+            ++bodies;
+            ++slices;
+            ws_video_clock(ws, entry, sink, context);
+            position = ws->line_clock;
+            off = position % 256;
+            slice_end = off < 128 ? 128 : off < 224 ? 224 : 256;
+            budget = (long)slice_end - position;
+        }
+    }
+    return 0; // already charged chunk by chunk
 }
 
 static void push(Ws *ws, unsigned value)
@@ -379,14 +446,17 @@ WsStep ws_step_with_video(Ws *ws, WsLineSink sink, void *context)
     unsigned repeat = 0;
     uint8_t op;
     unsigned prefixes = 0;
+    // BizHawk's core charges one clock per segment/lock prefix; a segment
+    // prefix attached to a rep costs two (charged once per execute slice).
+    unsigned segment_prefixes = 0, lock_prefixes = 0;
     for (;;) {
         op = fetch(ws);
         switch (op) {
-        case 0x26: segment = &ws->es; break;
-        case 0x2e: segment = &ws->cs; break;
-        case 0x36: segment = &ws->ss; break;
-        case 0x3e: segment = &ws->ds; break;
-        case 0xf0: break; // No other bus master executes mid-instruction.
+        case 0x26: segment = &ws->es; ++segment_prefixes; break;
+        case 0x2e: segment = &ws->cs; ++segment_prefixes; break;
+        case 0x36: segment = &ws->ss; ++segment_prefixes; break;
+        case 0x3e: segment = &ws->ds; ++segment_prefixes; break;
+        case 0xf0: ++lock_prefixes; break; // No other bus master executes mid-instruction.
         case 0xf2: case 0xf3: repeat = op; break;
         default: goto decoded;
         }
@@ -546,7 +616,7 @@ decoded:
         unsigned value = read_operand(ws, operand, word);
         write_operand(ws, operand, word, read_reg(ws, reg, word));
         write_reg(ws, reg, word, value);
-        clocks = operand.mode == 3 ? 3 : 5;
+        clocks = operand.mode == 3 ? 5 : 3;
         break;
     }
     case 0x8d: case 0xc4: case 0xc5: {
@@ -597,16 +667,16 @@ decoded:
             goto unsupported;
         Operand operand = decode_operand(ws, modrm, segment);
         bool word = (op & 1) || op == 0x8c || op == 0x8e;
-        // BizHawk's core follows the V30MZ timings; register operands are cheaper
-        // than memory only for the read-modify ALU, test and stack groups.
+        // BizHawk's core follows the V30MZ timings: register-form operands
+        // cost less than memory forms across these groups.
         if ((op >= 0x88 && op <= 0x8c) || op == 0xc6 || op == 0xc7)
             clocks = 1;
         else if (op == 0x8e)
-            clocks = operand.mode == 3 ? 3 : 2;
+            clocks = operand.mode == 3 ? 2 : 3;
         else if ((op & 2) || op == 0x84 || op == 0x85 || (op >= 0x38 && op <= 0x3b))
-            clocks = operand.mode == 3 ? 2 : 1;
+            clocks = operand.mode == 3 ? 1 : 2;
         else
-            clocks = operand.mode == 3 ? 3 : 1;
+            clocks = operand.mode == 3 ? 1 : 3;
         switch (op) {
         case 0x88: case 0x89:
             write_operand(ws, operand, word, read_reg(ws, reg, word));
@@ -706,7 +776,7 @@ decoded:
     case 0x6c: case 0x6d: case 0x6e: case 0x6f:
     case 0xa4: case 0xa5: case 0xa6: case 0xa7:
     case 0xaa: case 0xab: case 0xac: case 0xad: case 0xae: case 0xaf:
-        clocks = string_step(ws, op, segment, repeat, start_ip);
+        clocks = string_step(ws, op, segment, repeat, start_ip, sink, context);
         break;
     case 0xcc: interrupt(ws, 3); clocks = 9; break;
     case 0xcd: interrupt(ws, fetch(ws)); clocks = 10; break;
@@ -744,7 +814,7 @@ decoded:
         count &= 31;
         // BizHawk's core charges a flat cost per shift, whatever the count.
         if (op < 0xd0 || op >= 0xd2)
-            clocks = operand.mode == 3 ? 5 : 3;
+            clocks = operand.mode == 3 ? 3 : 5;
         else
             clocks = operand.mode == 3 ? 1 : 3;
         if (!count)
@@ -956,6 +1026,12 @@ decoded:
     case 0xfd: ws->flags |= DF; clocks = 4; break;
     default: goto unsupported;
     }
+    // Non-rep paths charge the prefix clocks here; a rep re-pays a segment
+    // prefix's two clocks once per execute slice inside string_step.
+    if (!repeat)
+        clocks += segment_prefixes + lock_prefixes;
+    else
+        clocks += lock_prefixes;
     ws_video_clock(ws, clocks, sink, context);
 #if WS_ENABLE_COLOR
     if (ws->dma_control & 0x80 && !ws->bizhawk_timing)

@@ -319,7 +319,7 @@ uint8_t ws_in(Ws *ws, uint16_t port)
     if (port >= 0xc4 && port <= 0xc8)
         return ws_eeprom_read(&ws->cart_eeprom, port - 0xc4, false);
     if (port == 2)
-        return ws->line;
+        return ws->line_shown;
     if (port == 0x18)
         return 0xff;
     if (port < sizeof(ws->display))
