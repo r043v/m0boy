@@ -454,7 +454,9 @@ void md_full_step_interp(MdFull *m) {
 #endif
     /* An idle loop's test just ran: spend the rest of the spin at once, as
      * the recompiled loop does (md_m68k_idle_loop). */
-    if (pc < md_rom_size && ((op & 0xff00u) == 0x4a00u || (op & 0xff00u) == 0x0800u || (op & 0xff00u) == 0x0c00u) &&
+    static int no_idle = -1;
+    if (no_idle < 0) no_idle = getenv("MD_NO_IDLE") != NULL;   /* diagnostic: step idle loops instruction by instruction */
+    if (!no_idle && pc < md_rom_size && ((op & 0xff00u) == 0x4a00u || (op & 0xff00u) == 0x0800u || (op & 0xff00u) == 0x0c00u) &&
         m->frame_cycles < m->slice_limit) {
         const unsigned len = md_m68k_idle_loop(md_rom, md_rom_size, pc);
         if (len) {
