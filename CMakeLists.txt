@@ -30,6 +30,11 @@ target_compile_definitions(m0boy_ws_runtime PUBLIC WS_ENABLE_BIZHAWK_TIMING=1)
 add_executable(ws_host targets/wonderswan/host/ws_host.c)
 target_include_directories(ws_host PRIVATE targets/common/host targets/common/runtime)
 target_link_libraries(ws_host PRIVATE m0boy_ws_runtime)
+find_package(SDL2 QUIET)
+if(TARGET SDL2::SDL2)
+    add_executable(ws_play targets/wonderswan/host/ws_play.c)
+    target_link_libraries(ws_play PRIVATE m0boy_ws_runtime SDL2::SDL2)
+endif()
 
 add_library(m0boy_m0plus_runtime STATIC targets/m0plus/runtime/m0_cpu.c
     targets/m0plus/runtime/m0_machine.c)
