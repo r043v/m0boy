@@ -422,7 +422,13 @@ uint8_t ngp_read(uint32_t addr) {
     uint32_t off;
     addr &= 0xFFFFFF;
     if (addr < 0x100) return io_read(addr);
-    if (addr >= 0x4000 && addr < 0x8000) return machine.ram[addr - 0x4000];
+    if (addr >= 0x4000 && addr < 0x8000) {
+        /* the joypad latch: the CPU read of $6F82 returns the pad (up, down,
+         * left, right, A, B, option, power), like the reference lineage's
+         * memory map; the game's own mirror writes still land in the RAM */
+        if (addr == 0x6F82) return machine.buttons;
+        return machine.ram[addr - 0x4000];
+    }
     if (addr >= 0x8000 && addr < 0xC000) return ngp_gfx_read(addr);
     off = flash_offset(addr);
     if (off != 0xFFFFFFFFu) {
