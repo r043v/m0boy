@@ -24,17 +24,34 @@ int main(int argc, char **argv)
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) { fprintf(stderr, "%s\n", SDL_GetError()); return 2; }
     SDL_Window *window = SDL_CreateWindow("m0boy WonderSwan TAS", SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED, WS_WIDTH * 3, WS_HEIGHT * 3, SDL_WINDOW_SHOWN);
-    SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    SDL_Renderer *renderer = SDL_CreateRenderer(window, -1,
+        SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    if (!renderer)
+        renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
+    if (!renderer) { fprintf(stderr, "SDL renderer: %s\n", SDL_GetError()); return 2; }
     SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB24,
         SDL_TEXTUREACCESS_STREAMING, WS_WIDTH, WS_HEIGHT);
+    if (!texture) { fprintf(stderr, "SDL texture: %s\n", SDL_GetError()); return 2; }
     uint8_t pixels[WS_WIDTH * WS_HEIGHT * 3];
     unsigned frame = 0, keys = 0;
     int running = 1;
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_RenderClear(renderer);
+    SDL_RenderPresent(renderer);
     while (running && fscanf(keys_file, "%x", &keys) == 1) {
         ws_set_keys(&ws, keys);
+        unsigned steps = 0;
+        char title[96];
+        snprintf(title, sizeof(title), "m0boy WonderSwan TAS — frame %u", frame + 1);
+        SDL_SetWindowTitle(window, title);
         while (ws.frames == frame && ws_step(&ws) == WS_STEP_OK) {
-            SDL_Event event; while (SDL_PollEvent(&event)) if (event.type == SDL_QUIT) running = 0;
-            if (!running) break;
+            /* Keep the window responsive without polling SDL on every CPU instruction. */
+            if ((++steps & 1023u) == 0) {
+                SDL_Event event;
+                while (SDL_PollEvent(&event))
+                    if (event.type == SDL_QUIT) running = 0;
+                if (!running) break;
+            }
         }
         if (!running) break;
         ++frame;
