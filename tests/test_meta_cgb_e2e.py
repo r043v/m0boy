@@ -4,6 +4,8 @@
 A synthetic CGB-only cartridge (0x143 = C0) for the pc target with --cgb:
 - writes BG palette 0 (BCPS/BCPD), reads it back;
 - fills WRAM with a pattern, GDMA-copies it to VRAM $8000;
+- checks the timing of BIT (HL) and GDMA at a DIV transition;
+- checks the written SVBK value and bank 1 alias;
 - writes the attribute map with VBK=1 and reads both banks back;
 - switches to double speed (KEY1 + STOP) and counts DIV increments over
   60 frames, half of them before the switch;
@@ -58,6 +60,10 @@ def make_rom() -> bytes:
         code.append((target - (len(code) + 1)) & 0xFF)  # JR: relative to the next instruction
 
     emit(0xF3, 0x31, 0xF0, 0xDF)          # di / ld sp,$DFF0
+    # SVBK must retain the written zero while the bank and echo select bank 1.
+    emit(0x3E, 0x01, 0xE0, 0x70, 0x21, 0xFF, 0xD7, 0x36, 0xA5)
+    emit(0xAF, 0xE0, 0x70, 0xF0, 0x70, 0xEA, 0x09, 0xC7)
+    emit(0x21, 0xFF, 0xF7, 0x7E, 0xEA, 0x0A, 0xC7)
     # BG palette 0: color 0 = $7FFF (white), color 1 = $FF7F, color 2 = $03E0
     emit(0x3E, 0x80, 0xE0, 0x68)          # BCPS = $80 (index 0, autoinc)
     emit(0x3E, 0xFF, 0xE0, 0x69)          # BCPD low
@@ -88,6 +94,15 @@ def make_rom() -> bytes:
     emit(0xAF, 0xE0, 0x53)                # dst high $80
     emit(0xAF, 0xE0, 0x54)                # dst low
     emit(0x3E, 0x7F, 0xE0, 0x55)          # GDMA start
+    # BIT must sample DIV at cycle 252, before bit 0 rises at cycle 256.
+    emit(0x21, 0x04, 0xFF, 0xAF, 0xE0, 0x04)  # ld hl,$FF04 / xor a / reset DIV
+    emit(*([0x00] * 60))
+    emit(0xCB, 0x46, 0x28, 0x01, 0x3C, 0xEA, 0x07, 0xC7)
+    # A one-block GDMA adds 32 transfer cycles and one extra M-cycle.
+    # With that extra cycle, this BIT samples DIV at 256 instead of 252.
+    emit(0xAF, 0xE0, 0x04, 0xAF, 0xE0, 0x55)
+    emit(*([0x00] * 48))
+    emit(0xCB, 0x46, 0x28, 0x01, 0x3C, 0xEA, 0x08, 0xC7)
     # read back a DMA-written tile byte ($8010) -> $C702
     emit(0xFA, 0x10, 0x80, 0xEA, 0x02, 0xC7)
     # VBK = 1: write attributes at $9C40 ($E7 = palette 7, prio, yflip? keep
@@ -175,7 +190,7 @@ def main():
             failures.append(f"run_hash mismatch interp/precise/fast: {hashes}")
 
         data = (tmp / "wram_interp.bin").read_bytes()
-        got = data[0x700:0x707]
+        got = data[0x700:0x70B]
         want = bytes([
             0xE0,          # color 2 low byte read back from BCPD
             0x03,          # color 2 high
@@ -184,6 +199,10 @@ def main():
             0x5A,          # bank-1 tile byte read back with VBK=1
             0xFE,          # KEY1 after the switch: 0x7E | double-speed bit
             0xFE,          # KEY1 after 600 more frames: still double
+            0x00,          # BIT saw DIV before the increment
+            0x01,          # BIT saw DIV after the increment with GDMA
+            0xF8,          # SVBK reads back the written zero
+            0xA5,          # SVBK=0 still reads bank 1 through the echo
         ])
         if got != want:
             failures.append(f"CGB readbacks {got.hex()} != {want.hex()}")

@@ -406,7 +406,7 @@ private:
     void emit_call(std::ostringstream& o, const Ins& in);
     void emit_alu(std::ostringstream& o, unsigned grp, const std::string& src, bool mem,
                   bool src_is_a, uint8_t live);
-    void emit_cb(std::ostringstream& o, const Ins& in);
+    void emit_cb(std::ostringstream& o, const Ins& in, bool timed);
     std::string const_read(std::ostringstream& o, uint16_t a);
     void const_write(std::ostringstream& o, uint16_t a, const std::string& v, bool& sync_after);
     void flush(std::ostringstream& o) {
@@ -1672,11 +1672,14 @@ void Generator::emit_alu(std::ostringstream& o, unsigned grp, const std::string&
     }
 }
 
-void Generator::emit_cb(std::ostringstream& o, const Ins& in) {
+void Generator::emit_cb(std::ostringstream& o, const Ins& in, bool timed) {
     const uint8_t cb = in.n8;
     const unsigned r = cb & 7, grp = cb >> 6, bit = (cb >> 3) & 7;
     const bool mem = r == 6;
     const std::string src = mem ? "gbl_rd(gbr.hl)" : kR8[r];
+    if (timed && grp != 1)
+        o << "    { const uint8_t cb_value = gbl_rd(gbr.hl); gbr.cyc += 4;\n";
+    const std::string operand = timed && grp != 1 ? "cb_value" : src;
     const uint8_t live = in.live_out;
     const std::string mask = hex(1u << bit, 2);
     auto print = [&](const std::string& s) {
@@ -1692,10 +1695,11 @@ void Generator::emit_cb(std::ostringstream& o, const Ins& in) {
         return;
     }
     if (grp == 2 || grp == 3) {
-        const std::string expr = grp == 2 ? "(uint8_t)(" + src + " & ~" + mask + ")"
-                                          : "(uint8_t)(" + src + " | " + mask + ")";
+        const std::string expr = grp == 2 ? "(uint8_t)(" + operand + " & ~" + mask + ")"
+                                          : "(uint8_t)(" + operand + " | " + mask + ")";
         if (mem) o << "    gbl_wr(gbr.hl, " << expr << ");\n";
         else o << "    " << kR8[r] << " = " << expr << ";\n";
+        if (timed) o << "    }\n";
         return;
     }
     static const char* rexpr[8] = {"(v << 1) | (v >> 7)", "(v >> 1) | (v << 7)",
@@ -1705,7 +1709,7 @@ void Generator::emit_cb(std::ostringstream& o, const Ins& in) {
     static const char* cexpr[8] = {"v >> 7", "v & 1", "v >> 7", "v & 1",
                                    "v >> 7", "v & 1", "0", "v & 1"};
     const unsigned k = (cb >> 3) & 7;
-    std::string s = "    { uint32_t v = " + src + "; uint8_t r = (uint8_t)(" + rexpr[k] + ");";
+    std::string s = "    { uint32_t v = " + operand + "; uint8_t r = (uint8_t)(" + rexpr[k] + ");";
     if (live & FC) s += std::string(" gbr.cf = (uint8_t)(") + cexpr[k] + ");";
     s += mem ? " gbl_wr(gbr.hl, r);" : std::string(" ") + kR8[r] + " = r;";
     if (live & FZ) s += " gbr.zr = r;";
@@ -1713,6 +1717,7 @@ void Generator::emit_cb(std::ostringstream& o, const Ins& in) {
     if (live & FN) s += " gbr.nf = 0;";
     if (live & FH) s += " gbr.hf = 0;";
     o << s << "\n";
+    if (timed) o << "    }\n";
 }
 
 void Generator::emit_ins(std::ostringstream& o, Ins& in, const Ins* following,
@@ -1744,9 +1749,14 @@ void Generator::emit_ins(std::ostringstream& o, Ins& in, const Ins* following,
     /* precise (and a timed read): an opcode whose data access falls in its
      * last M-cycle runs its body 4 cycles before the end, as the interpreter
      * does (gbl_acc_last, gbl_cycles.h) */
-    const bool last_acc = (opt_.precise || in.spin_read) && !replacement && in.cycles >= 8 && gbl_acc_last[op];
-    pend_ += last_acc ? in.cycles - 4 : in.cycles;
-    if (opt_.precise || in.spin_read) flush(o); /* a timed read sees the exact cycle */
+    const bool cgb = opt_.cgb && rom_.header().is_cgb;
+    const bool last_acc = (opt_.precise || in.spin_read || cgb) && !replacement
+                          && in.cycles >= 8 && gbl_acc_last[op];
+    /* CGB CB (HL): read in M3, then write in M4 for read-modify-write. */
+    const bool cb_timed = !replacement && op == 0xCB && (in.n8 & 7) == 6
+                          && cgb;
+    pend_ += cb_timed ? 8 : last_acc ? in.cycles - 4 : in.cycles;
+    if (opt_.precise || in.spin_read || last_acc || cb_timed) flush(o); /* a timed read sees the exact cycle */
 
     auto rd = [&](unsigned r) { return r == 6 ? std::string("gbl_rd(gbr.hl)") : std::string(kR8[r]); };
 
@@ -1765,7 +1775,7 @@ void Generator::emit_ins(std::ostringstream& o, Ins& in, const Ins* following,
     } else if (op >= 0x80 && op < 0xC0) {
         emit_alu(o, (op >> 3) & 7, rd(op & 7), (op & 7) == 6, (op & 7) == 7, live);
     } else if (op == 0xCB) {
-        emit_cb(o, in);
+        emit_cb(o, in, cb_timed);
     } else {
         switch (op) {
         case 0x00: case 0x10: break;
@@ -1974,7 +1984,7 @@ void Generator::emit_ins(std::ostringstream& o, Ins& in, const Ins* following,
     }
 
     /* Sequential continuation. */
-    if (last_acc) pend_ += 4;
+    if (last_acc || cb_timed) pend_ += 4;
     if (after_ei && !opt_.precise) sync_after = true;
     if (sync_after && !opt_.precise) {
         flush(o);

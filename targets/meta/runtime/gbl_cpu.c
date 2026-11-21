@@ -329,7 +329,7 @@ static inline __attribute__((always_inline)) uint32_t exec_op(uint32_t op, uint8
     case 0xCB: {
         uint32_t r = n8 & 7, grp = n8 >> 6, bit = (n8 >> 3) & 7;
         gbr.pc++;
-#if defined(GBL_PPU_REF) && GBL_PPU_REF
+#if GBL_PPU_REF || GBL_CGB
         if (r == 6) {
             /* (HL) operand: the read is in the third M-cycle, a write in the
              * fourth (mem_timing 01 and 03) */

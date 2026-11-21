@@ -52,7 +52,7 @@ extern gbl_cpu_t gbr;
 #define GBL_VRAM_SIZE 0x4000
 extern uint8_t gbl_cgb;  /* 1 when the cartridge runs in colour mode */
 extern uint8_t gbl_vbk;  /* FF4F bit 0 */
-extern uint8_t gbl_svbk; /* FF70 bank, 1..7 */
+extern uint8_t gbl_svbk; /* FF70 written bank, 0..7 (0 maps bank 1) */
 #else
 #define GBL_WRAM_SIZE 0x2000
 #define GBL_VRAM_SIZE 0x2000

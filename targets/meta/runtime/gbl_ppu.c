@@ -1271,10 +1271,10 @@ void gbl_ppu_write(uint8_t n, uint8_t v) {
     case 0x40:
         if ((v & 0x80) && !lcd_on) {
             lcd_on = 1;
-            /* The frame restarted by an enable runs 2 cycles ahead of the
+            /* The frame restarted by an enable runs 2 dots ahead of the
              * write (SameBoy and Gambatte: the first VBlank after enable is
-             * requested 65662 cycles after the write's bus cycle). */
-            line_start = gbr.cyc - 2u;
+             * requested 65662 dots after the write's bus cycle). */
+            line_start = gbr.cyc - PS(2u);
             ly = 0;
             stage = 0;
             next_stage_off = MODE3_START;

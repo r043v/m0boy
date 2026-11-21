@@ -23,8 +23,11 @@ static void hdma_write(uint8_t n, uint8_t v);
 /* Banked addresses: VRAM bank 1 sits at +$2000; WRAM bank n (1..7) at
  * n * $1000, so D000 with SVBK=1 is the DMG layout. */
 #define VOFF(o) ((uint16_t)((o) + (gbl_vbk ? 0x2000u : 0u)))
+static inline unsigned wram_bank_offset(void) {
+    return (gbl_svbk ? gbl_svbk : 1u) * 0x1000u;
+}
 static inline uint16_t wram_echo(uint16_t a) {
-    return a < 0xF000 ? (uint16_t)(a - 0xE000) : (uint16_t)(a - 0xF000 + gbl_svbk * 0x1000u);
+    return a < 0xF000 ? (uint16_t)(a - 0xE000) : (uint16_t)(a - 0xF000 + wram_bank_offset());
 }
 #define WRAM_FAST_END 0xCFFFu /* the stack fast path stops before the banked half */
 static void map_pages(void);
@@ -1689,8 +1692,7 @@ void gbl_io_wr(uint8_t n, uint8_t v) {
         return;
     case 0x70:
         if (gbl_cgb) {
-            uint8_t b = v & 7u;
-            gbl_svbk = b ? b : 1u;
+            gbl_svbk = v & 7u;
             map_pages();
         }
         return;
@@ -1760,6 +1762,7 @@ static void hdma_write(uint8_t n, uint8_t v) {
             if (gbl_ppu_in_hblank()) gbl_hdma_pend = 1;
         } else {
             for (unsigned b = 0; b <= hdma_len; b++) hdma_block();
+            gbr.cyc += 4; /* one CPU M-cycle at the end of the transfer */
             hdma_len = 0x7F;
         }
         gbl_update_evt();
@@ -2408,7 +2411,7 @@ static void map_pages(void) {
     gbl_rmap[0x8] = gbl_rmap[0x9] = BIAS(gbl_vram + (gbl_vbk ? 0x2000 : 0), 0x8000u);
 #endif
     gbl_rmap[0xC] = gbl_wmap[0xC] = BIAS(gbl_wram, 0xC000u);
-    gbl_rmap[0xD] = gbl_wmap[0xD] = BIAS(gbl_wram + gbl_svbk * 0x1000, 0xD000u);
+    gbl_rmap[0xD] = gbl_wmap[0xD] = BIAS(gbl_wram + wram_bank_offset(), 0xD000u);
 #else
     gbl_rmap[0xC] = gbl_rmap[0xD] = BIAS(gbl_wram, 0xC000u);
     gbl_wmap[0xC] = gbl_wmap[0xD] = BIAS(gbl_wram, 0xC000u);

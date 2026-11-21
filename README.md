@@ -456,7 +456,8 @@ card; `EMU_INPUT` scripts buttons (`frame:keys:frames,...`).
 
 ## Limitations
 
-- Game Boy Color-only games are rejected; CGB features are not emulated.
+- Game Boy Color support is experimental and requires `--target pc --cgb`.
+  Console targets use DMG mode and reject CGB-only cartridges.
 - Simplified Game Boy timing: mode 3 always lasts 172 dots, OAM DMA is
   instant, sound is quantised to a frame, no link cable.
 - Code the sessions never reached runs in the interpreter, much slower: a
