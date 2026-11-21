@@ -163,9 +163,8 @@ uint32_t ws_rom_offset(const Ws *ws, uint32_t address)
     return base < ws->rom.size ? base + (address & 0xffff) : UINT32_MAX;
 }
 
-uint8_t ws_read(const Ws *ws, uint32_t address)
+static uint8_t read_bus(const Ws *ws, uint32_t address)
 {
-    address &= 0xfffff;
     if (ws->boot_rom && !(ws->system_control & 1) && address >= 0x100000 - bios_size(ws))
         return ws->boot_rom[address & (bios_size(ws) - 1)];
     if (address < ram_size(ws))
@@ -183,6 +182,15 @@ uint8_t ws_read(const Ws *ws, uint32_t address)
     if (ws->flash.identify || ws->flash.fast)
         return ws_flash_read(ws, offset, address >= 0x20000 && (ws->system_control & 4));
     return ws->rom.read(ws->rom.context, offset);
+}
+
+uint8_t ws_read(const Ws *ws, uint32_t address)
+{
+    uint8_t value = read_bus(ws, address & 0xfffff);
+    // Observers (coverage bridges) want every completed bus read.
+    if (ws->memory_read_sink)
+        ws->memory_read_sink(ws->memory_read_context, address & 0xfffff, value);
+    return value;
 }
 
 void ws_write(Ws *ws, uint32_t address, uint8_t value)
