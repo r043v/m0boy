@@ -15,14 +15,16 @@ std::optional<CartridgeInfo> inspect(const std::filesystem::path&, std::string&)
 std::string load_flash(const std::filesystem::path&, std::string& error);
 
 /* Project generation, after the PCE generator's plan: the cartridge image
- * embedded as C data, the interpreter runtime, the desktop harness and the
- * PC's SDL2 window.  The TLCS-900H -> C emitter follows later; until then
- * every project interprets. */
+ * embedded as C data, the interpreter runtime, the TLCS-900H translated
+ * code (ngp_gen.c, unless interpret), the desktop harness and the PC's
+ * SDL2 window. */
 struct GenerateOptions {
     TargetId target = TargetId::desktop;
     std::string name;                     /* project prefix, file-safe */
     std::filesystem::path output;         /* project directory */
     std::filesystem::path meta_templates; /* targets/meta (siblings: consoles/, common/) */
+    bool interpret = false;               /* --interp: no translated code, the interpreter only */
+    size_t code_budget_bytes = 0;         /* --meta-code-budget: flash for ngp_gen.c (0: no cap) */
 };
 
 struct GenerateStats {

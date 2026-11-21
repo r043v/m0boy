@@ -1,10 +1,11 @@
 /* Neo Geo Pocket project generation, after the PC Engine generator's plan:
  * the cartridge image as C data, the interpreter runtime (the TLCS-900H
- * core, the K2GE, the T6W28 and the sound Z80), the desktop harness and the
- * PC's SDL2 window.  The recompiled TLCS-900H code follows later; until
- * then every project interprets. */
+ * core, the K2GE, the T6W28 and the sound Z80), the translated TLCS-900H
+ * code (ngp_gen.c, unless --interp), the desktop harness and the PC's
+ * SDL2 window. */
 #include "m0boy/rom_external.h"
 #include "m0boy/ngp_generator.h"
+#include "m0boy/ngp_emitter.h"
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -117,9 +118,34 @@ bool generate(const std::filesystem::path& cartridge, const GenerateOptions& o,
         copy_template(o.meta_templates.parent_path() / "common" / "host" / "m0_host_util.h",
                       src / "m0_host_util.h");
 
-        const std::string sources =
+        std::string sources =
             "${SRC}/ngp.c ${SRC}/ngp_cpu.c ${SRC}/ngp_gfx.c ${SRC}/ngp_psg.c "
             "${SRC}/ngp_z80.c ${SRC}/ngp_bios.c ${SRC}/z80.c ${SRC}/ngp_cart.c";
+
+        /* the translated TLCS-900H code: the walk starts at the header's
+         * entry and folds what it proves (see emitter.cpp); the dispatcher
+         * (ngp_step under NGP_NATIVE) falls back to the interpreter for
+         * everything else, so the hash holds whatever the walk missed */
+        const bool native = !o.interpret;
+        std::string native_define;
+        if (native) {
+            m0boy::ngp::EmitOptions emit;
+            /* a translated instruction is a small C function: ~40 bytes a
+             * piece at -O2 keeps the budget a flash-size estimate */
+            emit.max_instructions = o.code_budget_bytes ? o.code_budget_bytes / 40 : 0;
+            EmitStats es;
+            const std::vector<uint8_t> image(reinterpret_cast<const uint8_t*>(data.data()),
+                                             reinterpret_cast<const uint8_t*>(data.data()) + rom_bytes);
+            write(src / "ngp_gen.c", emit_code(image, emit, es));
+            if (es.entries) {
+                native_define = " NGP_NATIVE";
+                sources += " ${SRC}/ngp_gen.c";
+            }
+            stats.compiled = es.compiled;
+            stats.covered = es.reached;
+            stats.regions = es.regions;
+            stats.entries = es.entries;
+        }
 
         if (pc_window) {
             /* the SDL2 window: the shell next to src/, the cartridge embedded */
@@ -135,17 +161,19 @@ bool generate(const std::filesystem::path& cartridge, const GenerateOptions& o,
                   "${CMAKE_CURRENT_SOURCE_DIR}/src/ngp.c ${CMAKE_CURRENT_SOURCE_DIR}/src/ngp_cpu.c "
                   "${CMAKE_CURRENT_SOURCE_DIR}/src/ngp_gfx.c ${CMAKE_CURRENT_SOURCE_DIR}/src/ngp_psg.c "
                   "${CMAKE_CURRENT_SOURCE_DIR}/src/ngp_z80.c ${CMAKE_CURRENT_SOURCE_DIR}/src/ngp_bios.c "
-                  "${CMAKE_CURRENT_SOURCE_DIR}/src/z80.c ${CMAKE_CURRENT_SOURCE_DIR}/src/ngp_cart.c)\n"
+                  "${CMAKE_CURRENT_SOURCE_DIR}/src/z80.c ${CMAKE_CURRENT_SOURCE_DIR}/src/ngp_cart.c" +
+                  (native_define.empty() ? std::string() : " ${CMAKE_CURRENT_SOURCE_DIR}/src/ngp_gen.c") + ")\n"
                   "target_include_directories(" + o.name + "_pc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)\n"
-                  "target_compile_definitions(" + o.name + "_pc PRIVATE NGP_EMBEDDED" + (ext_rom ? " M0_ROM_EXTERNAL=1" : "") + ")\n"
+                  "target_compile_definitions(" + o.name + "_pc PRIVATE NGP_EMBEDDED" + (ext_rom ? " M0_ROM_EXTERNAL=1" : "") + native_define + ")\n"
                   "target_compile_options(" + o.name + "_pc PRIVATE -O2 -w -ffunction-sections -fdata-sections)\n"
                   "target_link_options(" + o.name + "_pc PRIVATE -Wl,--gc-sections -s)\n"
                   "target_link_libraries(" + o.name + "_pc PRIVATE PkgConfig::SDL2 m)\n");
             write(marker, target_name + "\n");
             write(o.output / "README.md",
                   "# Neo Geo Pocket project: " + o.name + "\n\n"
-                  "The cartridge interpreted on the TLCS-900H/K2GE runtime; SDL2 supplies\n"
-                  "the window, the keyboard and the sound.\n\n"
+                  "The cartridge on the TLCS-900H/K2GE runtime"
+                  + (native_define.empty() ? " (interpreted)" : " (TLCS-900H translated code + interpreter)")
+                  + "; SDL2 supplies\nthe window, the keyboard and the sound.\n\n"
                   "Build: cmake -G Ninja -S . -B build && ninja -C build\n"
                   "Run: build/" + o.name + "_pc (arrows, X = A, Z = B, Enter = Option, Esc quits; "
                   "gamepad B/A = A/B, Start = Option). "
@@ -171,13 +199,14 @@ bool generate(const std::filesystem::path& cartridge, const GenerateOptions& o,
                   "set(SRC ${CMAKE_CURRENT_SOURCE_DIR}/../src)\n"
                   "add_executable(" + o.name + "_host ngp_host.c " + sources + ")\n"
                   "target_include_directories(" + o.name + "_host PRIVATE ${SRC})\n"
-                  "target_compile_definitions(" + o.name + "_host PRIVATE " + (ext_rom ? "M0_ROM_EXTERNAL" : "NGP_EMBEDDED") + ")\n"
+                  "target_compile_definitions(" + o.name + "_host PRIVATE " + (ext_rom ? "M0_ROM_EXTERNAL" : "NGP_EMBEDDED") + native_define + ")\n"
                   "target_compile_options(" + o.name + "_host PRIVATE -w)\n"
                   "target_link_libraries(" + o.name + "_host PRIVATE m)\n");
             write(marker, target_name + "\n");
             write(o.output / "README.md",
                   "# Neo Geo Pocket project: " + o.name + "\n\n"
-                  "The cartridge interpreted on the TLCS-900H/K2GE runtime.\n\n"
+                  "The cartridge on the TLCS-900H/K2GE runtime"
+                  + (native_define.empty() ? " (interpreted)" : " (TLCS-900H translated code + interpreter)") + ".\n\n"
                   "Host: cmake -G Ninja -S host -B host/build && ninja -C host/build\n"
                   "Run: host/build/" + o.name + "_host --frames 300 [--ppm shot.ppm] [--wav out.wav] "
                   "[--input script.txt] [--save-state f] [--load-state f] [--gfx-dump]\n");

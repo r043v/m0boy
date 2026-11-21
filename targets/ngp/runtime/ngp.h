@@ -156,6 +156,21 @@ unsigned ngp_run_frame(void);
 /* the interpreter's one instruction; returns its cycles (the native code
  * calls ngp_tick with the same value after each region) */
 int32_t ngp_step(void);
+/* the recompiled code's one instruction (ngp_gen.c, under NGP_NATIVE):
+ * the decode state handed in precomputed, the interpreter's own handlers
+ * run; ngp_gen_exec takes a two-byte group form (the (mem) address and its
+ * extra cycles folded), ngp_gen_exec1 a single-byte form.  The dispatcher
+ * lives in ngp_step: ngp_gen_lookup names the translated entry at pc (the
+ * hint checked first), ngp_gen_enter runs it. */
+int32_t ngp_gen_exec(uint8_t f, uint8_t s, int size, uint8_t rcode, uint8_t brc,
+                     uint32_t mem, int extra);
+int32_t ngp_gen_exec1(uint8_t f);
+int ngp_gen_lookup(uint32_t pc, int hint);
+int32_t ngp_gen_enter(int entry);
+/* the entry the executed instruction names as its successor (ngp_gen.c
+ * seeds it before each handler run; -1: none) — the dispatcher's hint, so
+ * sequential flow costs no hash search */
+extern int ngp_gen_hint;
 /* advance timers, video, the sound Z80 and interrupts by n CPU ticks */
 void ngp_tick(uint32_t ticks);
 /* the K2GE's line work: draws the line, raises H-INT/V-INT; returns 1 when

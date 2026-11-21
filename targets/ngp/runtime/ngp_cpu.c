@@ -1339,34 +1339,11 @@ static void reg_ops(uint8_t op) {
 
 /* ---- the single-byte instructions and the primary dispatch ------------------------ */
 
-int32_t ngp_step(void) {
-    brCode = 0;
-    rCode = 0;
-    cycles_extra = 0;
-    cycles = 0;
-    size = 0;
-    /* where code may live: the work RAM, the cartridge windows and the BIOS;
-     * a fetch elsewhere means the flow already went through garbage — the
-     * harness reports the last sane pc */
-    {
-        const uint32_t pc = machine.cpu.pc;
-        const int ok = (pc >= 0x4000 && pc < 0x8000) || (pc >= 0x200000 && pc < 0x400000) ||
-                       (pc >= 0x800000 && pc < 0xA00000) || (pc & 0xFF0000) == 0xFF0000;
-        if (!ok) {
-            machine.cpu.fault = 3;
-            machine.last_pc = pc;
-            machine.last_good_pc = ngp_last_good;
-            machine.cpu.halted = 1;
-            return 8;
-        }
-        ngp_last_good = pc;
-    }
-    {
-        const uint32_t pc = machine.cpu.pc;
-        first = fetch8();
-        NGP_TRACE_HOOK(pc, first);
-        decode_addr(first);
-    }
+/* the primary switch over the decode state the caller prepared (brCode,
+ * rCode, cycles_extra, cycles, size, first reset; decode_addr run); the
+ * interpreter's step and the recompiled code's one-shot entry share it */
+static int32_t step_body(uint8_t f) {
+    first = f;
     switch (first) {
         case 0x00: cycles = 2; break;                                    /* NOP */
         case 0x01: cycles = 4; break;                                    /* NORMAL */
@@ -1595,3 +1572,86 @@ int32_t ngp_step(void) {
     }
     return cycles + cycles_extra;
 }
+
+int32_t ngp_step(void) {
+    /* the recompiled entry at pc (one translated instruction per call; the
+     * hint the previous entry seeded is checked first, so sequential flow
+     * costs no hash search): the same cycles back, ticked the same way */
+#if defined(NGP_NATIVE) && !defined(NGP_TRACE)
+    if (!machine.cpu.halted) {
+        const int e = ngp_gen_lookup(machine.cpu.pc, ngp_gen_hint);
+        if (e >= 0) return ngp_gen_enter(e);
+        ngp_gen_hint = -1;
+    }
+#endif
+    brCode = 0;
+    rCode = 0;
+    cycles_extra = 0;
+    cycles = 0;
+    size = 0;
+    /* where code may live: the work RAM, the cartridge windows and the BIOS;
+     * a fetch elsewhere means the flow already went through garbage — the
+     * harness reports the last sane pc (a recompiled pc never arrives here
+     * wild: the dispatcher's lookup missed first) */
+    {
+        const uint32_t pc = machine.cpu.pc;
+        const int ok = (pc >= 0x4000 && pc < 0x8000) || (pc >= 0x200000 && pc < 0x400000) ||
+                       (pc >= 0x800000 && pc < 0xA00000) || (pc & 0xFF0000) == 0xFF0000;
+        if (!ok) {
+            machine.cpu.fault = 3;
+            machine.last_pc = pc;
+            machine.last_good_pc = ngp_last_good;
+            machine.cpu.halted = 1;
+            return 8;
+        }
+        ngp_last_good = pc;
+    }
+    {
+        const uint32_t pc = machine.cpu.pc;
+        first = fetch8();
+        NGP_TRACE_HOOK(pc, first);
+        decode_addr(first);
+    }
+    return step_body(first);
+}
+
+#ifdef NGP_NATIVE
+/* the recompiled code's one instruction: the decode state handed in
+ * precomputed (the emitter folded the instruction's bytes), the
+ * interpreter's own handlers run — the same expressions, cycle for cycle.
+ * ngp_gen_exec runs a two-byte group form (src_ops/dst_ops/reg_ops, the
+ * (mem) address and its extra cycles given); ngp_gen_exec1 runs a
+ * single-byte form the way ngp_step does, pc left just past the first
+ * byte so the handler's own fetches read the right operands. */
+int32_t ngp_gen_exec(uint8_t f, uint8_t s, int sz, uint8_t rc, uint8_t brc, uint32_t at, int extra) {
+    brCode = brc;
+    rCode = rc;
+    cycles_extra = extra;
+    cycles = 0;
+    size = sz;
+    first = f;
+    second = s;
+    R = 0;
+    mem = at;
+    if ((f >= 0x80 && f < 0xB0) || (f >= 0xC0 && f < 0xC6) || (f >= 0xD0 && f < 0xD6) ||
+        (f >= 0xE0 && f < 0xE6))
+        src_ops(s);
+    else if ((f >= 0xB0 && f < 0xC0) || (f >= 0xF0 && f <= 0xF5))
+        dst_ops(s);
+    else
+        reg_ops(s);
+    return cycles + cycles_extra;
+}
+
+int32_t ngp_gen_exec1(uint8_t f) {
+    brCode = 0;
+    rCode = 0;
+    cycles_extra = 0;
+    cycles = 0;
+    size = 0;
+    first = f;
+    decode_addr(f); /* a no-op for every single-byte opcode (f < 0xC0, or 0xF6/0xF7) */
+    return step_body(f);
+}
+#endif
+

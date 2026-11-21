@@ -2900,8 +2900,8 @@ int m0recomp_main(int argc, char* argv[]) {
             emit_android_project || !native_patch_manifest_path.empty() ||
             !symbol_file_path.empty() || !annotation_file_path.empty() ||
             specific_bank > 0 || !manual_entry_points.empty() || !trace_file_path.empty() ||
-            meta_precise || nes_interp || pce_sweep || g_meta_code_budget || meta_bpi_set) {
-            std::cerr << "Error: unsupported Neo Geo Pocket option; use --target\n";
+            meta_precise || pce_sweep || meta_bpi_set) {
+            std::cerr << "Error: unsupported Neo Geo Pocket option; use --target, --interp and --meta-code-budget\n";
             return 1;
         }
         m0boy::ngp::GenerateOptions options;
@@ -2913,6 +2913,8 @@ int m0recomp_main(int argc, char* argv[]) {
         }
         options.output = output_dir.empty() ? fs::path(options.name + "_ngp_" + target) : fs::path(output_dir);
         options.meta_templates = resolve_meta_dir(argv[0], meta_dir);
+        options.interpret = nes_interp;
+        options.code_budget_bytes = g_meta_code_budget;
         std::string error;
         m0boy::ngp::GenerateStats stats;
         if (!m0boy::ngp::generate(rom_path, options, stats, error)) {
@@ -2920,7 +2922,10 @@ int m0recomp_main(int argc, char* argv[]) {
             return 1;
         }
         std::cout << "Generated Neo Geo Pocket project for " << target << ": " << options.output << "\n"
-                  << "  mode:               interpreter (the TLCS-900H emitter follows later)\n";
+                  << "  mode:               " << (options.interpret ? "interpreter (--interp)"
+                        : stats.entries ? "TLCS-900H translated code + interpreter for the rest"
+                                        : "interpreter (nothing translated)") << "\n"
+                  << "  instructions:       " << stats.entries << " translated\n";
         return 0;
     }
     /* SNES, phase 1: the 65C816's interpreter and recompiler on the

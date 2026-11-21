@@ -28,8 +28,9 @@ out/game_pc/build/game_pc --frames 300 --ppm shot.ppm
 ## La machine
 
 - **TLCS-900H** (`targets/ngp/runtime/ngp_cpu.c`) : l'interpréteur est la
-  référence ; l'émetteur TLCS-900H → C suit plus tard, comme le PCE l'a
-  fait avant son recompilateur. L'espace d'adressage est plat sur 24
+  référence et reste dans chaque projet ; l'émetteur TLCS-900H → C
+  (section plus bas) traduit ce que la marche statique prouve, tout le
+  reste reste interprété. L'espace d'adressage est plat sur 24
   bits, avec les banques de registres XWA/XBC/XDE/XHL et les index
   XIX/XIY/XIZ/XSP ; les 16 conditions portent sur les drapeaux S/Z/V/C et
   DJNZ apporte sa propre condition. Le décodeur statique de deepeel
@@ -78,17 +79,64 @@ un fichier d'une autre cartouche est ignoré au chargement.
 `m0boy ROM.ngc` lance deepeel (intégré au build ou `DEEPEEL=` sur le
 chemin) quand aucune couverture ne se trouve à côté de la ROM
 (`<nom>.deepeel/`), et garde les sorties (`.cov`, carte PNG, `.rtcode`)
-à côté de la cartouche. Les projets interprétant encore tout, le profil
-ne pilote pas encore la génération — il servira à l'émetteur
-TLCS-900H → C quand il suivra.
+à côté de la cartouche. Le profil ne pilote pas encore la génération :
+la marche de l'émetteur est purement statique (elle part de l'entrée de
+l'en-tête), la couverture deepeel servira à y ajouter ce que la marche
+ne voit pas (tables de sauts, code copié en WRAM).
+
+## L'émetteur TLCS-900H → C
+
+Par défaut (`--interp` pour s'en passer), la génération produit
+`src/ngp_gen.c` : la marche statique part de l'entrée de l'en-tête et
+suit ce qu'elle prouve (JP/JR/JRL/CALL/CALR/DJNZ, `JP cc,(abs)` à
+adresse constante) ; chaque instruction prouvée devient une petite
+fonction C qui plie la lecture d'octets, l'adressage `(mem)` et le
+dispatch primaire en constantes, puis appelle le gestionnaire de
+l'interpréteur lui-même (`ngp_gen_exec` / `ngp_gen_exec1` dans
+`ngp_cpu.c`) — les mêmes expressions, cycle pour cycle. Le dispatcher
+(`ngp_step` sous `NGP_NATIVE`) entre une instruction traduite par appel,
+avec le pointeur d'entrée précédemment exécuté comme indice (un hachage
+par changement de flux, pas par instruction) ; là où la recherche
+échoue, l'interpréteur prend l'instruction. Comme les interruptions sont
+acceptées dans `ngp_tick`, entre deux `ngp_step`, le pas d'entrée reste
+l'instruction : les frontières de cycle — minuteries, points
+d'acceptation d'interruption, front de trame — tombent sur les mêmes
+ticks qu'en interprétation, et le `run_hash` est identique par
+construction (le e2e le vérifie sur les deux cartouches synthétiques).
+
+Restent hors de portée de la marche (et donc à l'interpréteur, sans
+aucun effet de bord) : le code copié en WRAM, les tables de sauts
+lues en RAM, les opcodes non définis, SWI et les sorties de
+procédure (RET/RETI), les gestionnaires d'interruption installés par
+écriture dans la table de vecteurs $6FB8 — le gestionnaire V-INT d'une
+cartouche réelle n'est atteint que par ce chemin.
+
+Options : `--interp` désactive la traduction (projet interprétant tout,
+même runtime) ; `--meta-code-budget N` plafonne le poids de `ngp_gen.c`
+(la marche s'arrête, le reste reste interprété).
+
+Perf, honnêtement : sur la cartouche synthétique du e2e (boucle
+d'attente minuscule, ~260 instructions exécutées par trame), la version
+traduite mesure ~10 % plus lentement que l'interpréteur — l'entrée par
+instruction (appel indirect, état de décodage réinitialisé) coûte plus
+que la lecture+décodage en ligne qu'elle remplace sur un si petit
+programme. La limite est la contrepartie du contrat de hash : tant que
+l'acceptation d'interruption se produit entre deux instructions, il
+faut une entrée par instruction. L'étape suivante, comme le PCE l'a
+fait, est l'entrée par bloc de base qui rappelle l'horloge à
+l'intérieur du bloc — elle amortira ces appels.
 
 ## État et limites
 
-- Interpréteur seul (étiquette **vérifié** sur les cartouches
-  synthétiques et les contrôles croisés de l'interpréteur) ; la
-  recompilation est le travail suivant.
+- Interpréteur + code traduit sur desktop et pc (étiquette **vérifié**
+  sur les cartouches synthétiques : hash identiques entre
+  l'interpréteur pur, le projet traduit et la fenêtre PC) ; la marche
+  est purement statique et part de l'entrée de l'en-tête — une
+  cartouche réelle dont le flux passe par des tables de sauts verra
+  l'essentiel de son code interprété (correct, pas encore accéléré).
 - Les surfaces matérielles suivent le même inventaire que la couverture
   deepeel (voir `docs/COUVERTURE.fr.md` §3.7 côté deepeel) : le port de
   communication (SIO) n'est pas modélisé, la RTC est lue statique.
-- Cibles : `desktop` et `pc` (les consoles attendent la recompilation —
-  l'interpréteur TLCS-900H est trop lourd pour un Cortex-M0+).
+- Cibles : `desktop` et `pc` (les consoles attendent l'entrée par bloc
+  et l'apport deepeel — l'interpréteur TLCS-900H est trop lourd pour un
+  Cortex-M0+).

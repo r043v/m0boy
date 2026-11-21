@@ -84,8 +84,12 @@ telles quelles à `m0recomp`.
 Neo Geo Pocket (`--system ngp`) : l'interpréteur TLCS-900H exécute la
 cartouche entière (mono et couleur par le K2GE, le son T6W28, le Z80 son,
 l'espace de travail BIOS synthétisé) ; les sauvegardes persistent dans un
-fichier `.ngpflash`. L'émetteur TLCS-900H → C suit plus tard. deepeel
-(0.429.0) explore statiquement les mêmes cartouches. Voir `docs/NGP.fr.md`.
+fichier `.ngpflash`. L'émetteur TLCS-900H → C traduit ce qu'une marche
+statique prouve depuis l'entrée de l'en-tête (une fonction par
+instruction, les gestionnaires de l'interpréteur lui-même ; l'interpréteur
+garde le reste ; `--interp` pour un projet tout-interprété ; le `run_hash`
+reste identique dans les deux cas). deepeel (0.429.0) explore
+statiquement les mêmes cartouches. Voir `docs/NGP.fr.md`.
 
 SNES (`--system snes`) : le 65816 est recompilé en C avec une marche de
 contextes, un PPU/HDMA/IRQ par ligne, un interpréteur SPC700 et un DSP BRR ;

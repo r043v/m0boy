@@ -147,7 +147,10 @@ has not been compared with a console (see the Mega Drive notes).
 Neo Geo Pocket (`--system ngp`): the TLCS-900H interpreter runs the cartridge
 whole (mono and colour through the K2GE, the T6W28 sound, the sound Z80, the
 BIOS workspace synthesised); the saves persist in a `.ngpflash` file. The
-TLCS-900H → C emitter follows later. deepeel (0.429.0) explores the same
+TLCS-900H → C emitter translates what a static walk proves from the header's
+entry (one function per instruction, the interpreter's own handlers, the
+interpreter keeps the rest; `--interp` for a pure-interpreter project; the
+run_hash stays identical either way). deepeel (0.429.0) explores the same
 cartridges statically. See `docs/NGP.fr.md`.
 
 SNES (`--system snes`): the 65816 is recompiled to C with a context walk, with
