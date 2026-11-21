@@ -91,6 +91,8 @@ def main():
     parser.add_argument("--settings-only", action="store_true",
                         help="export sync settings without loading the BizHawk library")
     parser.add_argument("--capture", type=Path)
+    parser.add_argument("--memory-out", type=Path,
+                        help="save BizHawk's 64 KiB WonderSwan RAM after replay")
     args = parser.parse_args()
     rom = args.rom.read_bytes()
     with ZipFile(args.movie) as archive:
@@ -126,6 +128,9 @@ def main():
     lib.bizswan_getnecreg.restype = c.c_uint32
     lib.bizswan_putsettings.argtypes = [c.c_void_p, c.POINTER(VideoSettings)]
     lib.bizswan_putsettings.restype = None
+    lib.bizswan_getmemoryarea.argtypes = [c.c_void_p, c.c_int,
+                                          c.POINTER(c.c_char_p), c.POINTER(c.c_int),
+                                          c.POINTER(c.c_void_p)]
 
     core = lib.bizswan_new()
     screen = (c.c_uint32 * (224 * 144))()
@@ -178,6 +183,13 @@ def main():
         if args.capture:
             width, height = (144, 224) if rotated.value else (224, 144)
             args.capture.write_bytes(f"P6\n{width} {height}\n255\n".encode() + rgb_bytes(screen))
+        if args.memory_out:
+            name, length, data = c.c_char_p(), c.c_int(), c.c_void_p()
+            if not lib.bizswan_getmemoryarea(core, 0, c.byref(name), c.byref(length), c.byref(data)):
+                raise RuntimeError("BizHawk did not expose WonderSwan RAM")
+            if name.value != b"RAM" or length.value != 65536:
+                raise RuntimeError("Unexpected BizHawk WonderSwan RAM geometry")
+            args.memory_out.write_bytes(c.string_at(data, length.value))
 
 
 if __name__ == "__main__":

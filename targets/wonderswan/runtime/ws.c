@@ -183,6 +183,8 @@ uint8_t ws_read(const Ws *ws, uint32_t address)
 void ws_write(Ws *ws, uint32_t address, uint8_t value)
 {
     address &= 0xfffff;
+    if (ws->memory_write_sink)
+        ws->memory_write_sink(ws->memory_write_context, address, value);
     if (address < ram_size(ws))
         ws->ram[address] = value;
     else if (address >= 0x10000 && address < 0x20000 && ws->rom_in_sram_window) {

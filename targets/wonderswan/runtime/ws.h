@@ -36,6 +36,7 @@ typedef void (*WsSerialSink)(void *context, uint8_t value);
 enum { WS_AUDIO_RATE = 24000 };
 typedef void (*WsAudioSink)(void *context, uint8_t speaker, int16_t left, int16_t right);
 typedef void (*WsInstructionSink)(void *context, uint32_t pc, uint32_t rom_offset);
+typedef void (*WsMemoryWriteSink)(void *context, uint32_t address, uint8_t value);
 
 typedef struct {
     WsAudioSink sink;
@@ -74,6 +75,8 @@ typedef struct {
     WsRom rom;
     WsInstructionSink instruction_sink;
     void *instruction_context;
+    WsMemoryWriteSink memory_write_sink;
+    void *memory_write_context;
     WsFlash flash;
     const uint8_t *boot_rom;
     uint8_t system_control;

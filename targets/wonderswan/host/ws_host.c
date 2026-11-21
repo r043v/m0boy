@@ -77,6 +77,12 @@ static void trace_instruction(void *context, uint32_t pc, uint32_t rom_offset)
         fprintf(trace, "%08x,%08x\n", pc, rom_offset);
 }
 
+static void trace_memory_write(void *context, uint32_t address, uint8_t value)
+{
+    FILE *trace = context;
+    fprintf(trace, "%08x,%02x\n", address, value);
+}
+
 static bool save_image(const Ws *ws, const char *path, const Capture *capture, bool color)
 {
     FILE *file = fopen(path, "wb");
@@ -224,6 +230,7 @@ int main(int argc, char **argv)
 {
     const char *wav_path = NULL, *save_path = NULL, *trace_path = NULL, *bios_path = NULL;
     const char *input_path = NULL, *frame_trace_path = NULL, *exec_trace_path = NULL;
+    const char *ram_dump_path = NULL, *write_trace_path = NULL;
     bool color = false, stereo = false, bizhawk_timing = false;
     while (argc >= 3) {
         if (strcmp(argv[argc - 1], "--color") == 0 && !color) {
@@ -254,6 +261,10 @@ int main(int argc, char **argv)
             frame_trace_path = argv[argc - 1];
         else if (strcmp(option, "--exec-trace") == 0 && !exec_trace_path)
             exec_trace_path = argv[argc - 1];
+        else if (strcmp(option, "--ram-dump") == 0 && !ram_dump_path)
+            ram_dump_path = argv[argc - 1];
+        else if (strcmp(option, "--write-trace") == 0 && !write_trace_path)
+            write_trace_path = argv[argc - 1];
         else if (strcmp(option, "--input") == 0 && !input_path)
             input_path = argv[argc - 1];
         else
@@ -261,7 +272,7 @@ int main(int argc, char **argv)
         argc -= 2;
     }
     if (argc < 2 || argc > 5 || (bios_path && bizhawk_timing)) {
-        fprintf(stderr, "Usage: ws_host cartridge.ws [capture.pgm [frames [start-frame]]] [--color] [--bios boot.bin] [--input keys.txt] [--bizhawk-timing] [--wav audio.wav | --stereo-wav audio.wav] [--save nvram.bin] [--rom-trace reads.txt] [--frame-trace frames.csv] [--exec-trace instructions.csv]\n");
+        fprintf(stderr, "Usage: ws_host cartridge.ws [capture.pgm [frames [start-frame]]] [--color] [--bios boot.bin] [--input keys.txt] [--bizhawk-timing] [--wav audio.wav | --stereo-wav audio.wav] [--save nvram.bin] [--rom-trace reads.txt] [--frame-trace frames.csv] [--exec-trace instructions.csv] [--ram-dump ram.bin]\n");
         return 2;
     }
     unsigned frame_limit = 0, start_frame = 0;
@@ -337,6 +348,9 @@ int main(int argc, char **argv)
     if (bizhawk_timing) {
         ws.bizhawk_timing = true;
         ws.line = WS_HEIGHT + 1;
+        // BizHawk's Cygne memory reset seeds this WonderSwan Color RAM range.
+        if (color)
+            memcpy(ws.ram + 0x75ac, "A_C1n_c1", 8);
     }
     if (size == WS_FLASH_SIZE && memcmp(rom + 0x70000, "ELISA", 5) == 0 &&
         rom[0x7fff6] == 0 && rom[0x7fff8] == 0 && rom[0x7fffb] == 4 &&
@@ -413,6 +427,22 @@ int main(int argc, char **argv)
         ws.instruction_sink = trace_instruction;
         ws.instruction_context = exec_trace;
     }
+    FILE *write_trace = write_trace_path ? fopen(write_trace_path, "w") : NULL;
+    if (write_trace_path && !write_trace) {
+        perror(write_trace_path);
+        if (exec_trace) fclose(exec_trace);
+        if (frame_trace) fclose(frame_trace);
+        if (input) fclose(input);
+        if (wav.file) fclose(wav.file);
+        free(sram);
+        free(rom);
+        return 2;
+    }
+    if (write_trace) {
+        fputs("address,value\n", write_trace);
+        ws.memory_write_sink = trace_memory_write;
+        ws.memory_write_context = write_trace;
+    }
     unsigned input_frame = 0;
     bool input_ok = true;
     uint64_t steps = 0;
@@ -454,6 +484,11 @@ int main(int argc, char **argv)
     if (exec_trace) {
         exec_trace_ok = !ferror(exec_trace);
         exec_trace_ok &= fclose(exec_trace) == 0;
+    }
+    bool write_trace_ok = true;
+    if (write_trace) {
+        write_trace_ok = !ferror(write_trace);
+        write_trace_ok &= fclose(write_trace) == 0;
     }
     if (result == WS_STEP_UNSUPPORTED)
         fprintf(stderr, "Unsupported opcode %02X at %04X:%04X (step %llu)\n",
@@ -512,6 +547,19 @@ int main(int argc, char **argv)
     }
     if (!exec_trace_ok) {
         fprintf(stderr, "Could not write %s\n", exec_trace_path);
+        return 2;
+    }
+    if (ram_dump_path) {
+        FILE *ram_dump = fopen(ram_dump_path, "wb");
+        bool ok = ram_dump && fwrite(ws.ram, 1, sizeof(ws.ram), ram_dump) == sizeof(ws.ram);
+        if (ram_dump && fclose(ram_dump) != 0) ok = false;
+        if (!ok) {
+            fprintf(stderr, "Could not write %s\n", ram_dump_path);
+            return 2;
+        }
+    }
+    if (!write_trace_ok) {
+        fprintf(stderr, "Could not write %s\n", write_trace_path);
         return 2;
     }
     if (!input_ok)
