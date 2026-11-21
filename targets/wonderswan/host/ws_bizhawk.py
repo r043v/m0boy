@@ -93,6 +93,10 @@ def main():
     parser.add_argument("--capture", type=Path)
     parser.add_argument("--memory-out", type=Path,
                         help="save BizHawk's 64 KiB WonderSwan RAM after replay")
+    parser.add_argument("--memory-trace", type=Path,
+                        help="append BizHawk's 64 KiB WonderSwan RAM after every replayed frame")
+    parser.add_argument("--memory-trace-interval", type=int, default=1,
+                        help="with --memory-trace: dump every Nth frame's RAM instead of every frame's")
     args = parser.parse_args()
     rom = args.rom.read_bytes()
     with ZipFile(args.movie) as archive:
@@ -147,6 +151,8 @@ def main():
         stack.callback(lib.bizswan_delete, core)
         trace = stack.enter_context(args.trace.open("w")) if args.trace else None
         replay = stack.enter_context(args.input_out.open("w")) if args.input_out else None
+        memory_trace = stack.enter_context(args.memory_trace.open("wb")) if args.memory_trace else None
+        ram_pointer = c.c_void_p()
         if trace:
             print("frame,buttons,lag,rotate,cs,ip,video_sha256,video_crc32", file=trace)
         for frame, (settings, power, buttons) in enumerate(read_movie(args.movie, rom), 1):
@@ -161,6 +167,12 @@ def main():
                 if not lib.bizswan_load(core, rom, len(rom), c.byref(config), c.byref(rotated)):
                     raise ValueError("BizHawk refused the ROM")
                 lib.bizswan_putsettings(core, c.byref(video_settings))
+                if memory_trace:
+                    name, length, data = c.c_char_p(), c.c_int(), c.c_void_p()
+                    if not lib.bizswan_getmemoryarea(core, 0, c.byref(name), c.byref(length), c.byref(data)) \
+                            or name.value != b"RAM" or length.value != 65536:
+                        raise RuntimeError("Unexpected BizHawk WonderSwan RAM geometry")
+                    ram_pointer = data
             if power:
                 if replay:
                     raise ValueError("The ws_host input format cannot replay a power reset")
@@ -168,6 +180,8 @@ def main():
             samples = c.c_int(len(audio) // 2)
             lag = lib.bizswan_advance(core, buttons, False, screen, audio,
                                       c.byref(samples), c.byref(rotated))
+            if memory_trace and frame % args.memory_trace_interval == 0:
+                memory_trace.write(c.string_at(ram_pointer, 65536))
             if trace:
                 cs = lib.bizswan_getnecreg(core, 12)
                 ip = lib.bizswan_getnecreg(core, 1)

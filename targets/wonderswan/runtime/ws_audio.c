@@ -10,6 +10,25 @@ static void advance(WsAudio *audio, unsigned clocks)
     static const uint8_t taps[8] = {14, 10, 13, 4, 8, 6, 9, 11};
     unsigned control = audio->io[0x10];
     for (unsigned ch = 0; ch < 4; ++ch) {
+        // BizHawk's core steps the noise LFSR whenever the noise bit is set,
+        // even with the channel disabled (games poll it as a random source).
+        if (ch == 3 && (audio->io[0x0e] & 16)) {
+            unsigned period = 2048 - frequency(audio, 3);
+            unsigned elapsed = audio->phase[3] + clocks;
+            if (elapsed < period) {
+                audio->phase[3] = elapsed;
+                continue;
+            }
+            unsigned steps = elapsed / period;
+            audio->phase[3] = elapsed - steps * period;
+            audio->index[3] = (audio->index[3] + steps) & 31;
+            unsigned tap = taps[audio->io[0x0e] & 7];
+            while (steps--) {
+                unsigned bit = 1 ^ (((audio->noise >> 7) ^ (audio->noise >> tap)) & 1);
+                audio->noise = ((audio->noise << 1) | bit) & 0x7fff;
+            }
+            continue;
+        }
         if (!(control & (1u << ch)))
             continue;
         unsigned period = 2048 - frequency(audio, ch);
@@ -21,23 +40,23 @@ static void advance(WsAudio *audio, unsigned clocks)
         unsigned steps = elapsed / period;
         audio->phase[ch] = elapsed - steps * period;
         audio->index[ch] = (audio->index[ch] + steps) & 31;
-        if (ch == 3 && (audio->io[0x0e] & 16) && !(audio->io[0x15] & 12)) {
-            unsigned tap = taps[audio->io[0x0e] & 7];
-            while (steps--) {
-                unsigned bit = 1 ^ (((audio->noise >> 7) ^ (audio->noise >> tap)) & 1);
-                audio->noise = ((audio->noise << 1) | bit) & 0x7fff;
-            }
-        }
     }
 }
 
-static void mix(const Ws *ws, unsigned *left, unsigned *right)
+// Mix the active channels; vol_left/vol_right (when not NULL) receive the summed
+// per-side volume nibbles, so the headphone path can re-centre the wave samples.
+static void mix(const Ws *ws, unsigned *left, unsigned *right,
+                unsigned *vol_left, unsigned *vol_right)
 {
     const WsAudio *audio = &ws->audio;
     unsigned control = audio->io[0x10];
     unsigned base = audio->io[0x0f] * 64;
     unsigned test = audio->io[0x15];
     *left = *right = 0;
+    if (vol_left)
+        *vol_left = 0;
+    if (vol_right)
+        *vol_right = 0;
     for (unsigned ch = 0; ch < 4; ++ch) {
         unsigned volume = audio->io[8 + ch];
         if (ch == 1 && (control & 0x20)) {
@@ -53,6 +72,10 @@ static void mix(const Ws *ws, unsigned *left, unsigned *right)
                 sample = (audio->noise & 1) * 15;
             *left += sample * (volume >> 4);
             *right += sample * (volume & 15);
+            if (vol_left)
+                *vol_left += volume >> 4;
+            if (vol_right)
+                *vol_right += volume & 15;
         }
     }
     if (test & 0x20)
@@ -119,9 +142,9 @@ static void sound_dma_transfer(Ws *ws)
         audio->io[9] = value;
 }
 
-static int16_t headphone_sample(unsigned psg, uint16_t pcm)
+static int16_t headphone_sample(int psg, uint16_t pcm)
 {
-    int sample = (int)psg * 32 + (pcm >= 0x8000 ? (int)pcm - 0x10000 : pcm);
+    int sample = psg * 32 + (pcm >= 0x8000 ? (int)pcm - 0x10000 : pcm);
     if (sample > INT16_MAX)
         return INT16_MAX;
     if (sample < INT16_MIN)
@@ -240,18 +263,23 @@ void ws_audio_clock(Ws *ws, unsigned clocks)
             bool hyper_voice = (ws->video_mode & 0x80) && (audio->pcm_control & 0x80);
 #endif
             if (audio->sink) {
-                unsigned left, right;
-                mix(ws, &left, &right);
+                unsigned left, right, vol_left = 0, vol_right = 0;
+                mix(ws, &left, &right, &vol_left, &vol_right);
                 unsigned output = audio->io[0x11];
                 // Speaker DAC wraps after its programmable right shift.
                 unsigned speaker = ((left + right) >> ((output >> 1) & 3)) & 255;
                 speaker = speaker * audio->io[0x1e] / 3;
-                int16_t headphone_left = (output & 8) ? left * 32 : 0;
-                int16_t headphone_right = (output & 8) ? right * 32 : 0;
+                // The headphone output ignores the speaker/headphone enable bits —
+                // BizHawk's core always plays the mix — and re-centres every 4-bit wave
+                // sample on the DAC's mid-scale, sample - 8 per unit of volume.
+                int headphone_left = ((int)left - 8 * (int)vol_left) * 32;
+                int headphone_right = ((int)right - 8 * (int)vol_right) * 32;
 #if WS_ENABLE_COLOR
-                if ((output & 8) && hyper_voice) {
-                    headphone_left = headphone_sample(left, audio->pcm_output[0]);
-                    headphone_right = headphone_sample(right, audio->pcm_output[1]);
+                if (hyper_voice) {
+                    headphone_left = headphone_sample((int)left - 8 * (int)vol_left,
+                                                      audio->pcm_output[0]);
+                    headphone_right = headphone_sample((int)right - 8 * (int)vol_right,
+                                                       audio->pcm_output[1]);
                 }
 #endif
                 audio->sink(audio->context, (output & 1) ? speaker : 0,
@@ -272,10 +300,14 @@ uint8_t ws_audio_read(const Ws *ws, unsigned reg)
         return audio->noise >> ((reg - 0x12) * 8);
     if (reg >= 0x16 && reg <= 0x1b) {
         unsigned left, right;
-        mix(ws, &left, &right);
+        mix(ws, &left, &right, 0, 0);
         unsigned value = reg < 0x18 ? right : reg < 0x1a ? left : left + right;
         return value >> ((reg & 1) * 8);
     }
+    // The output-control read-back always reports the headphone-write bit set,
+    // matching BizHawk's core (and hardware, whose upper bit reads as one).
+    if (reg == 0x11)
+        return audio->io[0x11] | 0x80;
     return audio->io[reg];
 }
 

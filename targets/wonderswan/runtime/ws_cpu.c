@@ -261,13 +261,14 @@ static unsigned string_step(Ws *ws, unsigned op, const uint16_t *segment,
         write_mem(ws, destination, word, read_mem(ws, source, word));
         ws->reg[6] += delta;
         ws->reg[7] += delta;
+        clocks = 5;
         break;
     case 0xa6: // CMPS
         alu(ws, read_mem(ws, source, word), read_mem(ws, destination, word), word, 7);
         ws->reg[6] += delta;
         ws->reg[7] += delta;
         compare = true;
-        clocks = 5;
+        clocks = 6;
         break;
     case 0xaa: // STOS
         write_mem(ws, destination, word, ws->reg[0]);
@@ -306,6 +307,7 @@ static unsigned pop(Ws *ws)
 
 static void interrupt(Ws *ws, unsigned vector)
 {
+
     push(ws, ws->flags | FLAGS_FIXED);
     push(ws, ws->cs);
     push(ws, ws->ip);
@@ -339,7 +341,7 @@ WsStep ws_step_with_video(Ws *ws, WsLineSink sink, void *context)
         ws->nmi_pending = false;
         interrupt(ws, 2);
         ws->halted = false;
-        ws_video_clock(ws, 12, sink, context);
+        ws_video_clock(ws, 2, sink, context);
         return WS_STEP_OK;
     }
     if (!shadow && !stack_shadow && (ws->flags & IF) &&
@@ -349,7 +351,7 @@ WsStep ws_step_with_video(Ws *ws, WsLineSink sink, void *context)
             --source;
         interrupt(ws, ws->irq_base | source);
         ws->halted = false;
-        ws_video_clock(ws, 12, sink, context);
+        ws_video_clock(ws, 2, sink, context);
         return WS_STEP_OK;
     }
     // INT releases standby even when IF prevents taking the vector.
@@ -407,16 +409,16 @@ decoded:
         ws->flags = (ws->flags & ~CF) | carry;
     } else if (op >= 0x50 && op <= 0x57) {
         push(ws, ws->reg[op - 0x50]);
-        clocks = 2;
+        clocks = 1;
     } else if (op >= 0x58 && op <= 0x5f) {
         unsigned value = pop(ws);
         ws->reg[op - 0x58] = value;
-        clocks = 3;
+        clocks = 1;
     } else if (op >= 0x70 && op <= 0x7f) {
         unsigned displacement = fetch(ws);
         if (condition(ws->flags, op & 15)) {
             relative_byte(ws, displacement);
-            clocks = 4;
+            clocks = 1;
         }
     } else switch (op) {
     case 0x06: push(ws, ws->es); clocks = 2; break;
@@ -525,15 +527,17 @@ decoded:
         clocks = operand.mode == 3 ? 3 : 4;
         break;
     }
-    case 0x9c: push(ws, ws->flags | FLAGS_FIXED); break;
+    case 0x9c: push(ws, ws->flags | FLAGS_FIXED); clocks = 2; break;
     case 0x9d:
         ws->flags = (pop(ws) & FLAGS_WRITABLE) | FLAGS_FIXED;
         ws->irq_shadow = !(start_flags & IF) && (ws->flags & IF);
+        clocks = 3;
         break;
     case 0x9e:
         ws->flags = (ws->flags & ~0xffu) | (read_reg(ws, 4, false) & 0xd5) | 2;
+        clocks = 4;
         break;
-    case 0x9f: set_reg_byte(ws, 4, ws->flags | FLAGS_FIXED); break;
+    case 0x9f: set_reg_byte(ws, 4, ws->flags | FLAGS_FIXED); clocks = 2; break;
     case 0x86: case 0x87: {
         unsigned modrm = fetch(ws);
         Operand operand = decode_operand(ws, modrm, segment);
@@ -568,7 +572,7 @@ decoded:
         Operand operand = decode_operand(ws, modrm, segment);
         unsigned value = pop(ws);
         write_operand(ws, operand, true, value);
-        clocks = operand.mode == 3 ? 3 : 5;
+        clocks = operand.mode == 3 ? 1 : 3;
         break;
     }
     case 0x00: case 0x01: case 0x02: case 0x03:
@@ -593,7 +597,16 @@ decoded:
             goto unsupported;
         Operand operand = decode_operand(ws, modrm, segment);
         bool word = (op & 1) || op == 0x8c || op == 0x8e;
-        clocks = operand.mode == 3 ? 2 : 4;
+        // BizHawk's core follows the V30MZ timings; register operands are cheaper
+        // than memory only for the read-modify ALU, test and stack groups.
+        if ((op >= 0x88 && op <= 0x8c) || op == 0xc6 || op == 0xc7)
+            clocks = 1;
+        else if (op == 0x8e)
+            clocks = operand.mode == 3 ? 3 : 2;
+        else if ((op & 2) || op == 0x84 || op == 0x85 || (op >= 0x38 && op <= 0x3b))
+            clocks = operand.mode == 3 ? 2 : 1;
+        else
+            clocks = operand.mode == 3 ? 3 : 1;
         switch (op) {
         case 0x88: case 0x89:
             write_operand(ws, operand, word, read_reg(ws, reg, word));
@@ -664,7 +677,7 @@ decoded:
             clocks += op == 0xe2 ? 1 : 2;
         break;
     }
-    case 0x90: break;
+    case 0x90: clocks = 3; break;
     case 0x91: case 0x92: case 0x93: case 0x94:
     case 0x95: case 0x96: case 0x97: {
         unsigned reg = op & 7, value = ws->reg[reg];
@@ -687,7 +700,7 @@ decoded:
             write_mem(ws, address, word, ws->reg[0]);
         else
             write_reg(ws, 0, word, read_mem(ws, address, word));
-        clocks = 3;
+        clocks = 1;
         break;
     }
     case 0x6c: case 0x6d: case 0x6e: case 0x6f:
@@ -729,7 +742,11 @@ decoded:
         bool word = op & 1;
         unsigned count = op < 0xd0 ? fetch(ws) : (op & 2) ? ws->reg[1] : 1;
         count &= 31;
-        clocks = (operand.mode == 3 ? 2 : 4) + count;
+        // BizHawk's core charges a flat cost per shift, whatever the count.
+        if (op < 0xd0 || op >= 0xd2)
+            clocks = operand.mode == 3 ? 5 : 3;
+        else
+            clocks = operand.mode == 3 ? 1 : 3;
         if (!count)
             break;
 
@@ -838,8 +855,17 @@ decoded:
         }
         if (operation == 4 || operation == 5)
             clocks = operand.mode == 3 ? 3 : 4;
+        else if (operation >= 6) {
+            if (word)
+                clocks = operand.mode == 3 ? (operation == 6 ? 23 : 24)
+                                           : (operation == 6 ? 24 : 25);
+            else
+                clocks = operand.mode == 3 ? (operation == 6 ? 15 : 17)
+                                           : (operation == 6 ? 16 : 18);
+        } else if (operation == 0)
+            clocks = operand.mode == 3 ? 1 : 2;
         else
-            clocks = operation >= 6 ? 20 : operand.mode == 3 ? 2 : 4;
+            clocks = 3;
         break;
     }
     case 0xfe: case 0xff: {
@@ -869,7 +895,16 @@ decoded:
             ws->cs = target;
             ws->ip = value;
         }
-        clocks = far ? (operation == 3 ? 12 : 10) : operand.mode == 3 ? 4 : 6;
+        if (far)
+            clocks = operation == 3 ? 12 : 10;
+        else if (operation == 2)
+            clocks = operand.mode == 3 ? 5 : 6;
+        else if (operation == 4)
+            clocks = operand.mode == 3 ? 4 : 5;
+        else if (operation == 6)
+            clocks = operand.mode == 3 ? 1 : 2;
+        else
+            clocks = operand.mode == 3 ? 1 : 3;
         break;
     }
     case 0xe4: case 0xe5: case 0xe6: case 0xe7:
@@ -907,28 +942,29 @@ decoded:
         relative_byte(ws, fetch(ws));
         clocks = 4;
         break;
-    case 0xf4: ws->halted = true; break;
-    case 0xf5: ws->flags ^= CF; break;
-    case 0xf8: ws->flags &= ~CF; break;
-    case 0xf9: ws->flags |= CF; break;
-    case 0xfa: ws->flags &= ~IF; break;
+    case 0xf4: ws->halted = true; clocks = 0; break;
+    case 0xf5: ws->flags ^= CF; clocks = 4; break;
+    case 0xf8: ws->flags &= ~CF; clocks = 4; break;
+    case 0xf9: ws->flags |= CF; clocks = 4; break;
+    case 0xfa: ws->flags &= ~IF; clocks = 4; break;
     case 0xfb:
         ws->irq_shadow = !(ws->flags & IF);
         ws->flags |= IF;
+        clocks = 4;
         break;
-    case 0xfc: ws->flags &= ~DF; break;
-    case 0xfd: ws->flags |= DF; break;
+    case 0xfc: ws->flags &= ~DF; clocks = 4; break;
+    case 0xfd: ws->flags |= DF; clocks = 4; break;
     default: goto unsupported;
     }
     ws_video_clock(ws, clocks, sink, context);
 #if WS_ENABLE_COLOR
-    if (ws->dma_control & 0x80)
+    if (ws->dma_control & 0x80 && !ws->bizhawk_timing)
         ws_dma_run(ws, sink, context);
 #endif
     if ((start_flags & ws->flags & TF) && !ws->stack_shadow) {
         interrupt(ws, 1);
         ws->halted = false;
-        ws_video_clock(ws, 12, sink, context);
+        ws_video_clock(ws, 2, sink, context);
     }
     return ws->halted && !ws_can_wake(ws) ? WS_STEP_HALTED : WS_STEP_OK;
 

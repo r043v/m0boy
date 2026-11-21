@@ -1,4 +1,5 @@
 #include "ws.h"
+#include "ws_bizhawk_boot.h"
 #include <SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -79,6 +80,7 @@ int main(int argc, char **argv)
     ws.bizhawk_timing = true;
     ws.line = WS_HEIGHT + 1;
     memcpy(ws.ram + 0x75ac, "A_C1n_c1", 8);
+    ws_boot_bizhawk(&ws);
     // Battery SRAM must back the cartridge's SRAM window: a game whose boot probes it
     // (Rockman & Forte) parks at FFFF:FEFF with a blank LCD when reads answer FF forever.
     uint8_t *sram = NULL;
@@ -97,11 +99,19 @@ int main(int argc, char **argv)
     want.samples = 512;
     SDL_AudioSpec have;
     audio_device = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
+    if (audio_device && strcmp(SDL_GetCurrentAudioDriver(), "dummy") == 0) {
+        // The dummy driver plays silence and drains the queue instantly: it would keep
+        // the watch soundless and unpaced, so watch on the wall clock instead.
+        SDL_CloseAudioDevice(audio_device);
+        audio_device = 0;
+    }
     if (audio_device) {
         SDL_PauseAudioDevice(audio_device, 0);
         ws.audio.sink = audio_sink;
+        fprintf(stderr, "audio: %s driver at %d Hz stereo\n", SDL_GetCurrentAudioDriver(), have.freq);
     } else {
-        fprintf(stderr, "audio: %s (watch without sound, paced at 60 fps)\n", SDL_GetError());
+        fprintf(stderr, "audio: %s (watching without sound, paced on the clock)\n",
+            SDL_GetCurrentAudioDriver() ? SDL_GetCurrentAudioDriver() : SDL_GetError());
     }
     SDL_Window *window = SDL_CreateWindow("m0boy WonderSwan TAS", SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED, WS_WIDTH * 3, WS_HEIGHT * 3, SDL_WINDOW_SHOWN);
@@ -117,6 +127,7 @@ int main(int argc, char **argv)
     SDL_RenderClear(renderer);
     SDL_RenderPresent(renderer);
     unsigned frame = 0, keys = 0;
+    Uint32 start_ticks = SDL_GetTicks();
     int running = 1;
     // Why the replay stopped (movie over, rejected input, core stop): the window keeps
     // rendering and stays responsive, the reason shows in the title and on stderr.
@@ -173,7 +184,11 @@ int main(int argc, char **argv)
             while (SDL_GetQueuedAudioSize(audio_device) > AUDIO_FRAME_PAIRS * 4)
                 SDL_Delay(1);
         } else {
-            SDL_Delay(16);
+            // Clock pacing without audio: anchor every frame to its deadline from a
+            // common start time, 40704 clocks of 3.072 MHz per frame.
+            Uint32 target = start_ticks + (Uint32)(40704ULL * frame / 3072ULL);
+            if (SDL_GetTicks() < target)
+                SDL_Delay(target - SDL_GetTicks());
         }
     }
     if (running) {

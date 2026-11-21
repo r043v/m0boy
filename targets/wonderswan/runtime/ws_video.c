@@ -187,11 +187,14 @@ void ws_render_line(const Ws *ws, unsigned line, uint8_t pixels[WS_WIDTH])
 static void tick_timer(Ws *ws, unsigned timer, unsigned irq)
 {
     unsigned control = ws->timer_control >> (timer * 2);
-    if (ws->timer_count[timer] == 1)
-        ws->irq_pending |= ws->irq_enable & irq;
+    // BizHawk's core only counts enabled timers and raises the interrupt when the
+    // count reaches zero, reloading before the handler can observe the count.
     if ((control & 1) && ws->timer_count[timer]) {
-        if (--ws->timer_count[timer] == 0 && (control & 2))
-            ws->timer_count[timer] = ws->timer_reload[timer];
+        if (--ws->timer_count[timer] == 0) {
+            ws->irq_pending |= ws->irq_enable & irq;
+            if (control & 2)
+                ws->timer_count[timer] = ws->timer_reload[timer];
+        }
     }
 }
 

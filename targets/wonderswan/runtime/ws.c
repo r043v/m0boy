@@ -91,6 +91,11 @@ bool ws_boot_with_bios(Ws *ws, WsRom rom, const uint8_t bios[WS_MONO_BIOS_SIZE])
 
 static unsigned ram_size(const Ws *ws)
 {
+#if WS_ENABLE_BIZHAWK_TIMING
+    // BizHawk's core always exposes the full 64 KiB work RAM, mono mode included.
+    if (ws->bizhawk_timing)
+        return WS_RAM_SIZE;
+#endif
 #if WS_ENABLE_COLOR
     if (ws->video_mode & 0x80)
         return WS_RAM_SIZE;
@@ -209,8 +214,7 @@ void ws_set_low_battery(Ws *ws, bool low)
 void ws_set_keys(Ws *ws, uint16_t keys)
 {
     keys &= 0x0ffe;
-    if (keys & ~ws->keys)
-        ws->irq_pending |= ws->irq_enable & 2;
+    // BizHawk's core never raises the keypad interrupt on input latching.
     ws->keys = keys;
 }
 
@@ -258,6 +262,17 @@ static void dma_write(Ws *ws, unsigned port, unsigned value)
         ws->dma_length = (ws->dma_length & ~(255u << shift)) | (value << shift);
     } else if (port == 0x48) {
         ws->dma_control = value & 0xc0;
+        // BizHawk's core drains the whole transfer synchronously on the control
+        // write, one byte at a time with no CPU clocks, always ascending.
+        if ((ws->dma_control & 0x80) && ws->bizhawk_timing) {
+            while (ws->dma_length) {
+                ws_write(ws, ws->dma_target, ws_read(ws, ws->dma_source));
+                ws->dma_source++;
+                ws->dma_target = (ws->dma_target & 0xf0000) | ((ws->dma_target + 1) & 0xffff);
+                --ws->dma_length;
+            }
+            ws->dma_control &= 0x7f;
+        }
     }
 }
 
@@ -390,7 +405,9 @@ void ws_out(Ws *ws, uint16_t port, uint8_t value)
         unsigned shift = (port & 1) * 8;
         ws->timer_reload[timer] = (ws->timer_reload[timer] & ~(255u << shift)) |
                                   ((unsigned)value << shift);
-        ws->timer_count[timer] = ws->timer_reload[timer];
+        // BizHawk's core reloads the live count only on the high byte of the period.
+        if (port & 1)
+            ws->timer_count[timer] = ws->timer_reload[timer];
         return;
     }
     switch (mapper_port(ws, port)) {
