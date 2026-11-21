@@ -366,6 +366,11 @@ WsStep ws_step_with_video(Ws *ws, WsLineSink sink, void *context)
         return WS_STEP_OK;
     }
 
+    if (ws->instruction_sink) {
+        uint32_t pc = ws_address(ws->cs, ws->ip);
+        ws->instruction_sink(ws->instruction_context, pc, ws_rom_offset(ws, pc));
+    }
+
     unsigned start_flags = ws->flags;
     uint16_t start_ip = ws->ip;
     const uint16_t *segment = NULL;
