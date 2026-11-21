@@ -7,6 +7,29 @@
 typedef struct { uint8_t *bytes; } Rom;
 static uint8_t read_rom(void *ctx, uint32_t offset) { return ((Rom *)ctx)->bytes[offset]; }
 
+// One video frame is 159 lines of 256 clocks at 3.072 MHz, and the audio chip
+// produces one sample every 128 clocks: 318 stereo sample pairs per frame.
+#define AUDIO_FRAME_PAIRS (WS_AUDIO_RATE * 40704 / 3072000)
+
+// Samples accumulate here per frame and are queued on the audio device once per
+// presented frame; the queue's drain then paces the replay at the WonderSwan's
+// native 75.47 fps, so picture and sound run in real time together.
+static Sint16 audio_buffer[AUDIO_FRAME_PAIRS * 4];
+static unsigned audio_pairs;
+static SDL_AudioDeviceID audio_device;
+
+static void audio_sink(void *context, uint8_t speaker, int16_t left, int16_t right)
+{
+    (void)context; (void)speaker;   // the watch plays the headphone mix, not the mono speaker
+    audio_buffer[2 * audio_pairs] = left;
+    audio_buffer[2 * audio_pairs + 1] = right;
+    if (++audio_pairs == sizeof(audio_buffer) / sizeof(audio_buffer[0]) / 2) {
+        if (audio_device)
+            SDL_QueueAudio(audio_device, audio_buffer, audio_pairs * 4);
+        audio_pairs = 0;
+    }
+}
+
 // The frame buffer is filled line by line, at line entry — the BizHawk sampling point of
 // the bizhawk-timing replay, so the window shows exactly the movie's aligned frame.
 static uint8_t framebuffer[WS_HEIGHT][WS_WIDTH * 3];
@@ -67,6 +90,19 @@ int main(int argc, char **argv)
         }
     }
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) { fprintf(stderr, "%s\n", SDL_GetError()); return 2; }
+    SDL_AudioSpec want = {0};
+    want.freq = WS_AUDIO_RATE;
+    want.format = AUDIO_S16SYS;
+    want.channels = 2;
+    want.samples = 512;
+    SDL_AudioSpec have;
+    audio_device = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
+    if (audio_device) {
+        SDL_PauseAudioDevice(audio_device, 0);
+        ws.audio.sink = audio_sink;
+    } else {
+        fprintf(stderr, "audio: %s (watch without sound, paced at 60 fps)\n", SDL_GetError());
+    }
     SDL_Window *window = SDL_CreateWindow("m0boy WonderSwan TAS", SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED, WS_WIDTH * 3, WS_HEIGHT * 3, SDL_WINDOW_SHOWN);
     SDL_Renderer *renderer = SDL_CreateRenderer(window, -1,
@@ -128,7 +164,17 @@ int main(int argc, char **argv)
             snprintf(title, sizeof(title), "m0boy WonderSwan TAS — frame %u", frame);
         SDL_SetWindowTitle(window, title);
         present_frame(renderer, texture);
-        SDL_Delay(16);
+        if (audio_device) {
+            SDL_QueueAudio(audio_device, audio_buffer, audio_pairs * 4);
+            audio_pairs = 0;
+            // Real-time pacing: hold each frame until the audio queue has drained
+            // below one frame of samples, so the replay runs at the WonderSwan's
+            // native 75.47 fps together with its sound.
+            while (SDL_GetQueuedAudioSize(audio_device) > AUDIO_FRAME_PAIRS * 4)
+                SDL_Delay(1);
+        } else {
+            SDL_Delay(16);
+        }
     }
     if (running) {
         SDL_Event event;
