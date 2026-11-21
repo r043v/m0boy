@@ -569,6 +569,7 @@ void md_full_frame(MdFull *m, int native) {
             hint_done = 1;
         }
         run_slice(m, md_line_end(m, line), native);
+        md_full_sound_line(m, line);
         if (line >= VBLANK_LINES) {
             /* the frontend hook first (the ESP32 one captures the line's
              * registers for its second core), then the reference row */

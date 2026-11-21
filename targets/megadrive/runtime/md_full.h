@@ -142,6 +142,7 @@ void md_full_sound_write(MdFull *m, uint32_t addr, uint8_t value);
 uint8_t md_full_sound_read(MdFull *m, uint32_t addr);
 void md_full_sound_control(MdFull *m, unsigned reset_line, uint8_t value);
 void md_full_sound_frame(MdFull *m);
+void md_full_sound_line(MdFull *m, unsigned line);
 /* Moves up to max stereo frames (44.1 kHz, L then R) into samples. */
 unsigned md_full_audio_read(MdFull *m, int16_t *samples, unsigned max);
 /* Bench counters (MD_PERF builds only). */

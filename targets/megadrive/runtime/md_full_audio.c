@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include "md_full.h"
 #include <string.h>
 
@@ -123,8 +124,10 @@ static void z80_run(MdFull *m, uint64_t until) {
      * the frame phase advances by each step's own clocks (a step is far
      * below one frame, so one conditional subtract keeps the modulo). */
     uint32_t at = (uint32_t)(z80_time(m) % FRAME_MASTER);
+    static int irq_off = -1;   /* DP_MD_GENS_Z80IRQ: Gens raises /INT 168 Z80 cycles before the end of its V-int line (60 cycles in), not at its start */
+    if (irq_off < 0) irq_off = getenv("DP_MD_GENS_Z80IRQ") ? 60 * 15 : 0;
     while (z->cycles < target && !z->fault) {
-        z->irq = at >= VINT_MASTER && at < VINT_MASTER + VINT_LENGTH;
+        z->irq = at >= VINT_MASTER + irq_off && at < VINT_MASTER + VINT_LENGTH;
         at += z80_step(z) * 15u;
         MD_PERF_ADD(m, p_z80);
         if (at >= FRAME_MASTER) at -= FRAME_MASTER;
@@ -214,8 +217,15 @@ uint8_t md_full_sound_read(MdFull *m, uint32_t addr) {
 
 /* reset_line 0: bus request (A11100), 1: reset (A11200, 1 = running). */
 void md_full_sound_control(MdFull *m, unsigned reset_line, uint8_t value) {
-    const uint64_t now = m68k_time(m);
-    z80_run(m, now);
+    uint64_t now = m68k_time(m);
+    static int gstart = -1;   /* DP_MD_GENS_Z80START: Starscream's odometer in a write is the instruction's start; a skip sets the Z80 odometer exactly (may go back) */
+    if (gstart < 0) gstart = getenv("DP_MD_GENS_Z80START") != NULL;
+    if (gstart) {
+        const uint32_t spent = (uint32_t)(m->cycles - m->insn_cycles);
+        now -= (uint64_t)spent * 7u;
+        if (!m->z80_reset || m->z80_bus || m->sound_cpu.fault) m->sound_cpu.cycles = now / 15u;
+        else z80_run(m, now);
+    } else z80_run(m, now);
     if (!reset_line) {
         if (value) { m->busreq_st = !m->z80_bus; m->busreq_cnt = m->insn_cycles; }   /* Gens: bus granted CYCLE_FOR_TAKE_Z80_BUS_GENESIS (16) cycles after the request */
         m->z80_bus = value;
@@ -231,6 +241,13 @@ void md_full_sound_control(MdFull *m, unsigned reset_line, uint8_t value) {
         md_ym_reset(&m->ym);
     }
     m->z80_reset = value;
+}
+
+/* Gens runs the Z80 up to the end of every line (when running), whatever the 68000 touched.  DP_MD_GENS_Z80LINE=1. */
+void md_full_sound_line(MdFull *m, unsigned line) {
+    static int on = -1;
+    if (on < 0) on = getenv("DP_MD_GENS_Z80LINE") != NULL;
+    if (on) z80_run(m, (uint64_t)m->frames * FRAME_MASTER + (uint64_t)(line + 1u) * 3420u);
 }
 
 void md_full_sound_frame(MdFull *m) {
