@@ -28,20 +28,23 @@
  * The write cursor is shared: switching keeps what is queued, the other
  * path's position restarts from it (within a frame the sound continues).
  */
-#include "m0_audio.h"
 #include "m0_clock.h"
 #include "meta_dma.h"
 #include "m0_target.h"
+#include "m0_audio.h"
 
 #include "meta_hw.h"
 
 #include <string.h>
 
+#ifdef META_AUDIO_PUSH_RATE
+#define AUDIO_TOP (48000000u / META_AUDIO_PUSH_RATE)
+#else
 extern "C" {
 #include "gbl.h"
 }
-
 #define AUDIO_TOP 2177u
+#endif
 #define AUDIO_RATE (48000000u / AUDIO_TOP)
 #define DAC_MID 512u
 /* 8-bit sample (128 = silence) to DAC value around mid: volume 4 (the
@@ -52,6 +55,7 @@ static uint8_t volume = 4;
 void m0_audio_set_volume(uint8_t v) { volume = v > 8 ? 8 : v; }
 uint8_t m0_audio_volume(void) { return volume; }
 
+#ifndef META_AUDIO_PUSH_RATE
 static uint32_t frac;
 
 static unsigned frame_samples(void) { return m0_audio_frame_samples(AUDIO_RATE, &frac); }
@@ -66,6 +70,8 @@ static void drop_samples(unsigned n) {
         n -= k;
     }
 }
+
+#endif
 
 /* PA02 to the DAC (function B), referenced to AVCC with its output on the
  * pin as the Arduino core set it, holding mid-scale.  CTRLB can only be
@@ -132,8 +138,15 @@ static uint16_t ring[RING] __attribute__((aligned(4)));
 /* Write cursor, shared by the paths: head = written % RING, kept without
  * dividing.  DMA accounting: written/played, counted from the start. */
 static uint32_t written, played;
+#ifdef META_AUDIO_PUSH_RATE
+static volatile unsigned head;
+#else
 static unsigned head;
-static uint32_t last_us, cycles;
+#endif
+static uint32_t last_us;
+#if META_AUDIO_DMA
+static uint32_t cycles;
+#endif
 /* Interrupt path: what TC4 has played. */
 static volatile uint16_t ring_tail;
 
@@ -230,7 +243,9 @@ static void irq_output_on(void) {
 void m0_audio_init(void) {
     dac_start();
     for (unsigned i = 0; i < RING; i++) ring[i] = DAC_MID;
+#ifndef META_AUDIO_PUSH_RATE
     gbl_apu_set_rate(AUDIO_RATE);
+#endif
     written = played = 0;
     head = 0;
     ring_tail = 0;
@@ -245,6 +260,19 @@ void m0_audio_init(void) {
     last_us = m0_micros();
 }
 
+#ifdef META_AUDIO_PUSH_RATE
+static_assert(!META_AUDIO_DMA, "Push audio uses the TC4 interrupt");
+
+void m0_audio_push(uint8_t sample) {
+    unsigned at = head;
+    unsigned next = at + 1 == RING ? 0 : at + 1;
+    if (next == ring_tail)
+        return;
+    ring[at] = DAC_VALUE(sample);
+    __DMB();
+    head = next;
+}
+#else
 void m0_audio_frame(void) {
     unsigned n = frame_samples();
     uint32_t now = m0_micros(), dt = now - last_us;
@@ -320,6 +348,8 @@ void m0_audio_frame(void) {
     __enable_irq();
 #endif
 }
+
+#endif
 
 void m0_audio_idle(void) {}
 

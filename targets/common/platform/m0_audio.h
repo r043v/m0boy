@@ -9,6 +9,10 @@ extern "C" {
 #endif
 
 void m0_audio_init(void);
+#ifdef META_AUDIO_PUSH_RATE
+/* Queue one unsigned PCM sample, 128 = silence. */
+void m0_audio_push(uint8_t sample);
+#endif
 void m0_audio_frame(void);  /* once per emulated frame */
 void m0_audio_idle(void);   /* called while waiting for frame pacing */
 void m0_audio_set_volume(uint8_t v); /* 0..8, 4 = default */

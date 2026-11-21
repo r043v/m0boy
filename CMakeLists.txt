@@ -20,6 +20,16 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 add_subdirectory(recompiler)
+add_library(m0boy_ws_runtime STATIC targets/wonderswan/runtime/ws.c
+    targets/wonderswan/runtime/ws_cpu.c targets/wonderswan/runtime/ws_video.c
+    targets/wonderswan/runtime/ws_eeprom.c targets/wonderswan/runtime/ws_uart.c
+    targets/wonderswan/runtime/ws_audio.c targets/wonderswan/runtime/ws_rtc.c
+    targets/wonderswan/runtime/ws_flash.c)
+target_include_directories(m0boy_ws_runtime PUBLIC targets/wonderswan/runtime)
+target_compile_definitions(m0boy_ws_runtime PUBLIC WS_ENABLE_BIZHAWK_TIMING=1)
+add_executable(ws_host targets/wonderswan/host/ws_host.c)
+target_include_directories(ws_host PRIVATE targets/common/host targets/common/runtime)
+target_link_libraries(ws_host PRIVATE m0boy_ws_runtime)
 
 add_library(m0boy_m0plus_runtime STATIC targets/m0plus/runtime/m0_cpu.c
     targets/m0plus/runtime/m0_machine.c)
@@ -78,6 +88,21 @@ endif()
 option(BUILD_TESTS "Build the META and Pokitto target tests" OFF)
 if(BUILD_TESTS)
     enable_testing()
+    add_executable(ws_uart_test targets/wonderswan/tests/ws_uart_test.c)
+    target_link_libraries(ws_uart_test PRIVATE m0boy_ws_runtime)
+    add_test(NAME wonderswan_uart COMMAND ws_uart_test)
+    add_executable(ws_cpu_test targets/wonderswan/tests/ws_cpu_test.c)
+    target_link_libraries(ws_cpu_test PRIVATE m0boy_ws_runtime)
+    add_test(NAME wonderswan_cpu COMMAND ws_cpu_test)
+    add_executable(ws_rtc_test targets/wonderswan/tests/ws_rtc_test.c)
+    target_link_libraries(ws_rtc_test PRIVATE m0boy_ws_runtime)
+    add_test(NAME wonderswan_rtc COMMAND ws_rtc_test)
+    add_executable(ws_mapper_test targets/wonderswan/tests/ws_mapper_test.c)
+    target_link_libraries(ws_mapper_test PRIVATE m0boy_ws_runtime)
+    add_test(NAME wonderswan_mapper COMMAND ws_mapper_test)
+    add_executable(ws_color_test targets/wonderswan/tests/ws_color_test.c)
+    target_link_libraries(ws_color_test PRIVATE m0boy_ws_runtime)
+    add_test(NAME wonderswan_color COMMAND ws_color_test)
     add_executable(test_snes_runtime tests/test_snes_runtime.c
         targets/snes/runtime/snes.c targets/snes/runtime/snes_cpu.c targets/snes/runtime/snes_ppu.c targets/snes/runtime/snes_smp.c targets/snes/runtime/snes_dsp.c targets/snes/runtime/snes_dsp1.c targets/snes/runtime/snes_fx.c targets/snes/runtime/snes_sa1.c)
     add_test(NAME snes_runtime_bus_interrupt COMMAND test_snes_runtime)
