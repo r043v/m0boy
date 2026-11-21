@@ -1,7 +1,7 @@
 # m0boy
 
 **Game Boy, SG-1000, Game Gear, Master System, MSX, NES, PICO-8, Vectrex, PC
-Engine, Mega Drive and SNES games compiled into native firmwares for small
+Engine, Mega Drive, Neo Geo Pocket and SNES games compiled into native firmwares for small
 handhelds (Gamebuino META, Pokitto, ESPboy, and, newer, Gamebuino AKA and
 ODROID-GO) and into SDL2 programs for the PC.**
 
@@ -137,11 +137,18 @@ has not been compared with a console (see the Mega Drive notes).
 | PC Engine (HuCards, HuC6280 recompiler + interpreter; experimental) | ✅ | — | — | — | ✅ | — | ✅ |
 | Vectrex (≤ 32 KiB, system ROM; experimental) | — | ✅ | — | — | ✅ | — | ✅ |
 | Mega Drive (bounded M68k profile; experimental) | ✅ | — | — | — | ✅ | — | ✅ |
+| Neo Geo Pocket / Neo Geo Pocket Color (interpreter, K2GE colour and mono; experimental) | ✅ | — | — | — | — | — | ✅ |
 | SNES (65816 recompiler; experimental) | ✅ | — | — | — | — | — | ✅ |
 | M0+ source: a META firmware (`--system meta`) | — | — | — | — | ✅ | — | ✅ |
 | M0+ source: a Pokitto firmware (`--system pokitto`) | — | — | — | — | — | — | ✅ |
 
 ✅ = the capability matrix allows generation (`m0recomp --list-systems`); — = refused. A check is a statement about generation, not about playability: what has been run, on what, and with which evidence label (checked on the host, gm0, device, estimate) is in each system's notes and in `docs/META_STATUS_2026-09-30.md`. The Mega Drive is no longer a META target.
+
+Neo Geo Pocket (`--system ngp`): the TLCS-900H interpreter runs the cartridge
+whole (mono and colour through the K2GE, the T6W28 sound, the sound Z80, the
+BIOS workspace synthesised); the saves persist in a `.ngpflash` file. The
+TLCS-900H → C emitter follows later. deepeel (0.429.0) explores the same
+cartridges statically. See `docs/NGP.fr.md`.
 
 SNES (`--system snes`): the 65816 is recompiled to C with a context walk, with
 a per-line PPU/HDMA/IRQ, an SPC700 interpreter and BRR DSP, DSP-1, SuperFX and
@@ -157,7 +164,7 @@ hardware coverage and limitations. AKA firmware execution is not available yet.
 See [multi-system notes](docs/MULTI_SYSTEM.fr.md).
 
 The `--target pc` SDL2 backend is available for Game Boy, SG-1000, Game Gear,
-Master System, MSX, NES, PICO-8, PC Engine, Vectrex, Mega Drive and SNES (experimental). These projects share gamepad
+Master System, MSX, NES, PICO-8, PC Engine, Vectrex, Mega Drive, Neo Geo Pocket and SNES (experimental). These projects share gamepad
 and joystick hotplug, an unfiltered image by default, F8 display filters,
 F10 scaling and F11 fullscreen. Each system keeps its own keyboard button
 names and audio core. The NES PC window displays the same 160×128 panel image
@@ -475,7 +482,7 @@ card; `EMU_INPUT` scripts buttons (`frame:keys:frames,...`).
 | `compile.sh`, `tools/meta-compiler/` | batch conversion (shell, Node) |
 | `tests/`, `targets/meta/tests/` | tests |
 | `targets/common/consoles/esp32/`, `targets/consoles/{aka,odroid,pc}/` | shared ESP32 core and the AKA, ODROID-GO and PC drivers |
-| `targets/{nes,pce,vectrex,megadrive,snes,msx,m0plus}/` | the other cores' runtimes and harnesses |
+| `targets/{nes,pce,vectrex,megadrive,snes,msx,ngp,m0plus}/` | the other cores' runtimes and harnesses |
 | `tools/` | `meta-usb.py`, profiles and play search, AKA emulator, sweeps |
 | `docs/` | French guide, development notes |
 

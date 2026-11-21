@@ -141,7 +141,6 @@ struct ngp_t {
     /* the harness reads these */
     uint32_t last_pc, last_good_pc; /* the wild fetch and where it came from */
     uint32_t executed;
-    uint8_t coverage;
 };
 
 /* the machine instance; M0_TL makes a thread-local flavour for deepeel */
@@ -166,6 +165,7 @@ uint8_t ngp_gfx_read(uint32_t addr);
 void ngp_gfx_write(uint32_t addr, uint8_t v);
 
 uint8_t ngp_read(uint32_t addr);
+uint8_t ngp_peek(uint32_t addr);   /* the read with no side effect (flash status latch untouched) */
 void ngp_write(uint32_t addr, uint8_t v);
 uint16_t ngp_read16(uint32_t addr);
 void ngp_write16(uint32_t addr, uint16_t v);

@@ -14,6 +14,7 @@
 #define M0_TL
 #endif
 #include "ngp.h"
+#include "ngp_trace.h"
 
 /* flags in sr */
 #define F_S 0x80
@@ -214,10 +215,61 @@ static uint32_t pop32(void){ const uint32_t v = ngp_read32(REGXSP); REGXSP += 4;
 
 /* ---- fetch --------------------------------------------------------------------- */
 
-static uint8_t fetch8(void)  { return ngp_read(machine.cpu.pc++); }
-static uint16_t fetch16(void){ const uint16_t v = ngp_read16(machine.cpu.pc); machine.cpu.pc += 2; return v; }
-static uint32_t fetch24(void){ const uint32_t lo = ngp_read16(machine.cpu.pc); machine.cpu.pc += 2; return lo | ((uint32_t)fetch8() << 16); }
-static uint32_t fetch32(void){ const uint32_t v = ngp_read32(machine.cpu.pc); machine.cpu.pc += 4; return v; }
+#ifdef NGP_TRACE
+/* data accesses go through the tracer; the fetch functions mark themselves so
+ * the opcode bytes stay unobserved (the kernel counts data accesses only) */
+static M0_TL int dp_fetching;
+static uint8_t dp_rd8(uint32_t a)  { const uint8_t v = ngp_read(a);   if (!dp_fetching) ngp_trace_read(a, v); return v; }
+static uint16_t dp_rd16(uint32_t a){ const uint16_t v = ngp_read16(a); if (!dp_fetching) { ngp_trace_read(a, (uint8_t)v); ngp_trace_read(a + 1, (uint8_t)(v >> 8)); } return v; }
+static uint32_t dp_rd32(uint32_t a){ const uint32_t v = ngp_read32(a); if (!dp_fetching) { ngp_trace_read(a, (uint8_t)v); ngp_trace_read(a + 1, (uint8_t)(v >> 8)); ngp_trace_read(a + 2, (uint8_t)(v >> 16)); ngp_trace_read(a + 3, (uint8_t)(v >> 24)); } return v; }
+static void dp_wr8(uint32_t a, uint8_t v)   { ngp_write(a, v); ngp_trace_write(a, v); }
+static void dp_wr16(uint32_t a, uint16_t v) { ngp_write16(a, v); ngp_trace_write(a, (uint8_t)v); ngp_trace_write(a + 1, (uint8_t)(v >> 8)); }
+static void dp_wr32(uint32_t a, uint32_t v) { ngp_write32(a, v); ngp_trace_write(a, (uint8_t)v); ngp_trace_write(a + 1, (uint8_t)(v >> 8)); ngp_trace_write(a + 2, (uint8_t)(v >> 16)); ngp_trace_write(a + 3, (uint8_t)(v >> 24)); }
+#define ngp_read(a) dp_rd8(a)
+#define ngp_read16(a) dp_rd16(a)
+#define ngp_read32(a) dp_rd32(a)
+#define ngp_write(a, v) dp_wr8((a), (v))
+#define ngp_write16(a, v) dp_wr16((a), (v))
+#define ngp_write32(a, v) dp_wr32((a), (v))
+#endif
+
+static uint8_t fetch8(void) {
+#ifdef NGP_TRACE
+    dp_fetching = 1; const uint8_t v = ngp_read(machine.cpu.pc++); dp_fetching = 0; return v;
+#else
+    return ngp_read(machine.cpu.pc++);
+#endif
+}
+static uint16_t fetch16(void) {
+#ifdef NGP_TRACE
+    dp_fetching = 1;
+#endif
+    const uint16_t v = ngp_read16(machine.cpu.pc); machine.cpu.pc += 2;
+#ifdef NGP_TRACE
+    dp_fetching = 0;
+#endif
+    return v;
+}
+static uint32_t fetch24(void) {
+#ifdef NGP_TRACE
+    dp_fetching = 1;
+#endif
+    const uint32_t lo = ngp_read16(machine.cpu.pc); machine.cpu.pc += 2;
+#ifdef NGP_TRACE
+    dp_fetching = 0;
+#endif
+    return lo | ((uint32_t)fetch8() << 16);
+}
+static uint32_t fetch32(void) {
+#ifdef NGP_TRACE
+    dp_fetching = 1;
+#endif
+    const uint32_t v = ngp_read32(machine.cpu.pc); machine.cpu.pc += 4;
+#ifdef NGP_TRACE
+    dp_fetching = 0;
+#endif
+    return v;
+}
 
 /* ---- arithmetic ---------------------------------------------------------------- */
 
@@ -1309,8 +1361,12 @@ int32_t ngp_step(void) {
         }
         ngp_last_good = pc;
     }
-    first = fetch8();
-    decode_addr(first);
+    {
+        const uint32_t pc = machine.cpu.pc;
+        first = fetch8();
+        NGP_TRACE_HOOK(pc, first);
+        decode_addr(first);
+    }
     switch (first) {
         case 0x00: cycles = 2; break;                                    /* NOP */
         case 0x01: cycles = 4; break;                                    /* NORMAL */

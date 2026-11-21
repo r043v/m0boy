@@ -1,7 +1,7 @@
 # m0boy
 
 **Des jeux Game Boy, SG-1000, Game Gear, Master System, MSX, NES, PICO-8,
-Vectrex, PC Engine, Mega Drive et SNES compilés en firmwares natifs pour de
+Vectrex, PC Engine, Mega Drive, Neo Geo Pocket et SNES compilés en firmwares natifs pour de
 petites consoles (Gamebuino META, Pokitto, ESPboy, et plus récemment Gamebuino
 AKA et ODROID-GO) et en programmes SDL2 pour le PC.**
 
@@ -74,11 +74,18 @@ telles quelles à `m0recomp`.
 | PC Engine (HuCards, recompilateur HuC6280 + interpréteur ; expérimental) | ✅ | — | — | — | ✅ | — | ✅ |
 | Vectrex (≤ 32 Kio, ROM système ; expérimental) | — | ✅ | — | — | ✅ | — | ✅ |
 | Mega Drive (profil M68k borné ; expérimental) | ✅ | — | — | — | ✅ | — | ✅ |
+| Neo Geo Pocket / Neo Geo Pocket Color (interpréteur, K2GE couleur et mono ; expérimental) | ✅ | — | — | — | — | — | ✅ |
 | SNES (recompilateur 65816 ; expérimental) | ✅ | — | — | — | — | — | ✅ |
 | Source M0+ : un firmware META (`--system meta`) | — | — | — | — | ✅ | — | ✅ |
 | Source M0+ : un firmware Pokitto (`--system pokitto`) | — | — | — | — | — | — | ✅ |
 
 ✅ = la matrice de capacités autorise la génération (`m0recomp --list-systems`) ; — = refusé. Une coche dit que le projet se génère, pas que le jeu est jouable : ce qui a été exécuté, sur quoi et avec quelle étiquette de preuve (vérifié sur l'hôte, gm0, console, estimé) est dans les notes de chaque système et dans `docs/META_STATUS_2026-09-30.md`. Le Mega Drive n'est plus une cible META.
+
+Neo Geo Pocket (`--system ngp`) : l'interpréteur TLCS-900H exécute la
+cartouche entière (mono et couleur par le K2GE, le son T6W28, le Z80 son,
+l'espace de travail BIOS synthétisé) ; les sauvegardes persistent dans un
+fichier `.ngpflash`. L'émetteur TLCS-900H → C suit plus tard. deepeel
+(0.429.0) explore statiquement les mêmes cartouches. Voir `docs/NGP.fr.md`.
 
 SNES (`--system snes`) : le 65816 est recompilé en C avec une marche de
 contextes, un PPU/HDMA/IRQ par ligne, un interpréteur SPC700 et un DSP BRR ;
@@ -87,7 +94,7 @@ leurs étiquettes, sont dans `docs/SNES_STATUS_2026-10-31.md` et
 `docs/SNES.fr.md`.
 
 La cible PC (`--target pc`) ajoute une fenêtre SDL2 pour Game Boy, SG-1000,
-Game Gear, Master System, MSX, NES, PICO-8, PC Engine, Vectrex, Mega Drive et SNES (expérimental).
+Game Gear, Master System, MSX, NES, PICO-8, PC Engine, Vectrex, Mega Drive, Neo Geo Pocket et SNES (expérimental).
 Les projets partagent les manettes, filtres d'image (F8), échelle (F10) et
 plein écran (F11). Le NES PC affiche l'image 160×128 du panneau META ; les
 autres cœurs gardent leur géométrie propre.

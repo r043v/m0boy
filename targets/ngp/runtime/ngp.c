@@ -9,6 +9,7 @@
 #define M0_TL
 #endif
 #include "ngp.h"
+#include "ngp_trace.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -133,6 +134,10 @@ static void dma_update(unsigned channel) {
     const uint8_t mode = (uint8_t)((machine.dma_m[channel] & 0x1C) >> 2);
     const uint8_t size = (uint8_t)(machine.dma_m[channel] & 3);
     if (!machine.dma_c[channel]) return;
+#ifdef NGP_TRACE
+    const unsigned width = size == 0 ? 1u : size == 1 ? 2u : 4u;
+    if (mode == 2 || mode == 3) ngp_trace_dma(machine.dma_s[channel], width);   /* the source walks: the bytes the hardware read */
+#endif
     switch (mode) {
         case 0: /* destination INC, I/O to memory */
             if (size == 0) { ngp_write(machine.dma_d[channel], ngp_read(machine.dma_s[channel])); machine.dma_d[channel] += 1; }
@@ -398,6 +403,20 @@ static void io_write(uint32_t addr, uint8_t v) {
 }
 
 /* ---- the bus ---------------------------------------------------------------- */
+
+/* the read without the flash status latch's side effect: the explorers and
+ * the state tools peek, the CPU reads */
+uint8_t ngp_peek(uint32_t addr) {
+    uint32_t off;
+    addr &= 0xFFFFFF;
+    if (addr < 0x100) return io_read(addr);
+    if (addr >= 0x4000 && addr < 0x8000) return machine.ram[addr - 0x4000];
+    if (addr >= 0x8000 && addr < 0xC000) return ngp_gfx_read(addr);
+    off = flash_offset(addr);
+    if (off != 0xFFFFFFFFu) return off < machine.rom_size ? machine.rom[off] : 0;
+    if ((addr & 0xFF0000) == 0xFF0000) return machine.bios[addr & 0xFFFF];
+    return 0;
+}
 
 uint8_t ngp_read(uint32_t addr) {
     uint32_t off;

@@ -2454,7 +2454,10 @@ int m0recomp_main(int argc, char* argv[]) {
                   << "\nrom_bytes=" << cartridge->rom_bytes
                   << "\nwork_ram_bytes=" << source.work_ram_bytes
                   << "\ncartridge_ram_bytes=" << cartridge->cartridge_ram_bytes
-                  << "\nmapper=" << cartridge->mapper << "\n";
+                  << "\nmapper=" << cartridge->mapper;
+        if (source.id == m0boy::SystemId::ngp)
+            std::cout << "\ncolour=" << (cartridge->colour ? "yes" : "no");
+        std::cout << "\n";
         return 0;
     }
     if (source.cpu == m0boy::CpuId::m0plus) {

@@ -57,16 +57,12 @@ bool generate(const std::filesystem::path& cartridge, const GenerateOptions& o,
             error = note;
             return false;
         }
-        /* the image, padded to the flash's erase granularity (a whole number
-         * of 256-byte pages, what the windows map) */
-        std::ifstream file(cartridge, std::ios::binary);
-        if (!file) {
-            error = "Cannot open " + cartridge.string();
-            return false;
-        }
-        std::ostringstream buffer;
-        buffer << file.rdbuf();
-        const std::string data = buffer.str();
+        /* the image (the loader's padding prefix stripped, see load_flash),
+         * padded to the flash's erase granularity (a whole number of
+         * 256-byte pages, what the windows map) */
+        const std::string raw = load_flash(cartridge, error);
+        if (raw.empty()) return false;
+        const std::string data = raw;
         const size_t rom_bytes = data.size();
 
         const auto tpl = o.meta_templates.parent_path() / "ngp";
@@ -107,7 +103,7 @@ bool generate(const std::filesystem::path& cartridge, const GenerateOptions& o,
         /* the runtime: the machine, the TLCS-900H core, the K2GE, the T6W28,
          * the sound Z80 (the core shares the SG-1000 runtime's chip) and the
          * BIOS.  The hash header rides next to ngp.h so both mains see it. */
-        for (const char* name : { "ngp.c", "ngp.h", "ngp_cpu.c", "ngp_gfx.c",
+        for (const char* name : { "ngp.c", "ngp.h", "ngp_trace.h", "ngp_cpu.c", "ngp_gfx.c",
                                   "ngp_psg.c", "ngp_z80.c", "ngp_bios.c" })
             copy_template(tpl / "runtime" / name, src / name);
         copy_template(tpl / "host" / "ngp_hash.h", src / "ngp_hash.h");
@@ -123,7 +119,7 @@ bool generate(const std::filesystem::path& cartridge, const GenerateOptions& o,
 
         const std::string sources =
             "${SRC}/ngp.c ${SRC}/ngp_cpu.c ${SRC}/ngp_gfx.c ${SRC}/ngp_psg.c "
-            "${SRC}/ngp_z80.c ${SRC}/ngp_bios.c ${SRC}/z80.c" + std::string(ext_rom ? "" : " ${SRC}/ngp_cart.c");
+            "${SRC}/ngp_z80.c ${SRC}/ngp_bios.c ${SRC}/z80.c ${SRC}/ngp_cart.c";
 
         if (pc_window) {
             /* the SDL2 window: the shell next to src/, the cartridge embedded */
@@ -175,7 +171,7 @@ bool generate(const std::filesystem::path& cartridge, const GenerateOptions& o,
                   "set(SRC ${CMAKE_CURRENT_SOURCE_DIR}/../src)\n"
                   "add_executable(" + o.name + "_host ngp_host.c " + sources + ")\n"
                   "target_include_directories(" + o.name + "_host PRIVATE ${SRC})\n"
-                  "target_compile_definitions(" + o.name + "_host PRIVATE " + (ext_rom ? "NGP_ROM_FROM_FILE" : "NGP_EMBEDDED") + ")\n"
+                  "target_compile_definitions(" + o.name + "_host PRIVATE " + (ext_rom ? "M0_ROM_EXTERNAL" : "NGP_EMBEDDED") + ")\n"
                   "target_compile_options(" + o.name + "_host PRIVATE -w)\n"
                   "target_link_libraries(" + o.name + "_host PRIVATE m)\n");
             write(marker, target_name + "\n");

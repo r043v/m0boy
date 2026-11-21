@@ -1,14 +1,22 @@
 /* Neo Geo Pocket host harness: a cartridge image in the machine, N frames
  * out, and the run's fingerprint (CPU, the work RAM, the video RAMs, the
  * picture) — the same contract shape as the other runtimes.  The
- * interpreter is the reference a recompiled project must match; --coverage
- * writes the interpreter's executions per address for the generator. */
+ * interpreter is the reference a recompiled project must match. */
 #include "../runtime/ngp.h"
 #include "m0_host_util.h"
 #include "ngp_hash.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef M0_ROM_EXTERNAL /* the cartridge is loaded at run time (m0_rom_ext.h) */
+#include "m0_rom_ext.h"
+#include "ngp_rom_id.h"
+extern const uint8_t *ngp_rom_data; /* set at start-up from the ROM file */
+extern const unsigned ngp_rom_size;
+#elif !defined(NGP_EMBEDDED)
+/* the checkout harness: the cartridge comes from the command line */
+#endif
 
 static uint16_t image[NGP_SCREEN_H][NGP_SCREEN_W];
 static FILE *audio_file;
@@ -146,6 +154,9 @@ static void state_load(const char *path) {
 }
 
 int main(int argc, char **argv) {
+#ifdef M0_ROM_EXTERNAL
+    m0_romx_args(&argc, argv); /* --rom FILE, before the program's own parsing */
+#endif
     const char *rom_path = NULL, *shot = NULL, *wav_path = NULL;
     const char *ram_out = NULL, *ram_in = NULL, *save_state = NULL, *load_state = NULL;
     int gfx_dump = 0;
@@ -172,7 +183,7 @@ int main(int argc, char **argv) {
         else if (a[0] == '-') { fprintf(stderr, "unknown option %s\n", a); return 1; }
         else rom_path = a;
     }
-#ifndef NGP_EMBEDDED
+#if !defined(NGP_EMBEDDED) && !defined(M0_ROM_EXTERNAL)
     if (!rom_path) {
         fprintf(stderr,
             "usage: ngp_host ROM.ngp [options]\n"
@@ -187,7 +198,13 @@ int main(int argc, char **argv) {
     }
 #endif
     {
-#ifdef NGP_EMBEDDED
+#ifdef M0_ROM_EXTERNAL
+        (void)rom_path;
+        if (!(ngp_rom_data = m0_romx_load(NGP_ROM_EXPECT_SIZE, NGP_ROM_EXPECT_CRC32, NGP_ROM_NAME))) return 2;
+        rom_size = ngp_rom_size;
+        rom = malloc(rom_size);
+        memcpy(rom, ngp_rom_data, rom_size);
+#elif defined(NGP_EMBEDDED)
         (void)rom_path;
         extern const uint8_t ngp_rom_data[];
         extern const unsigned ngp_rom_size;
@@ -225,13 +242,14 @@ int main(int argc, char **argv) {
         fprintf(stderr, "input script %s\n", input_script);
         return 1;
     }
-    {
-        char default_flash[1024];
-        if (!ram_in && !ram_out) {
-            snprintf(default_flash, sizeof default_flash, "%s.ngpflash", rom_path);
-            flash_load(default_flash);
-        } else if (ram_in) flash_load(ram_in);
+    char default_flash[1024];
+    if (rom_path) snprintf(default_flash, sizeof default_flash, "%s.ngpflash", rom_path);
+    else { /* embedded or loaded at run time: the saves ride with the executable */
+        const char *b = strrchr(argv[0], '/');
+        snprintf(default_flash, sizeof default_flash, "%s.ngpflash", b ? b + 1 : argv[0]);
     }
+    if (!ram_in && !ram_out) flash_load(default_flash);
+    else if (ram_in) flash_load(ram_in);
     if (load_state) state_load(load_state);
     if (wav_path) wav_open(wav_path, wav_rate);
     if (trace_count) {
@@ -335,11 +353,7 @@ int main(int argc, char **argv) {
         }
     }
     if (ram_out) flash_write(ram_out);
-    else {
-        char default_flash[1024];
-        snprintf(default_flash, sizeof default_flash, "%s.ngpflash", rom_path);
-        flash_write(default_flash);
-    }
+    else flash_write(default_flash);
     if (shot) ppm_write(shot);
     if (wav_path) wav_close();
     extern uint32_t ngp_irq_count, ngp_vint_count;

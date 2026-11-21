@@ -48,6 +48,7 @@ struct CartridgeInfo {
     size_t rom_bytes;
     size_t cartridge_ram_bytes;
     std::string mapper;
+    bool colour = false; /* Neo Geo Pocket Color: the header's mode byte 0x10 */
 };
 
 using InspectCartridge = std::optional<CartridgeInfo> (*)(

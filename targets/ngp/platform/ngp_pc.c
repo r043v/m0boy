@@ -28,19 +28,44 @@ extern const unsigned ngp_rom_size;
 
 #define AUDIO_RATE 44100u
 
+/* the flash saves: <program>.ngpflash beside the executable (or --ram-out/
+ * --ram-in), the same file shape as the desktop harness writes */
+static void pc_put(void *ctx, const void *data, uint32_t n) { fwrite(data, 1, n, (FILE *)ctx); }
+static int pc_get(void *ctx, void *data, uint32_t n) { return fread(data, 1, n, (FILE *)ctx) == n; }
+
+static int pc_flash_write(const char *path) {
+    FILE *f = fopen(path, "wb");
+    if (!f) { fprintf(stderr, "flash save %s\n", path); return 0; }
+    const uint32_t bytes = ngp_flash_bytes();
+    int ok = fwrite(&bytes, 4, 1, f) == 1;
+    ngp_flash_io(f, pc_put, NULL);
+    ok &= fclose(f) == 0;
+    return ok;
+}
+
+static void pc_flash_load(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return;
+    uint32_t bytes = 0;
+    if (fread(&bytes, 4, 1, f) == 1 && bytes == ngp_flash_bytes()) ngp_flash_io(f, NULL, pc_get);
+    fclose(f);
+}
+
 int main(int argc, char **argv) {
 #ifdef M0_ROM_EXTERNAL
     m0_romx_args(&argc, argv);
     if (!(ngp_rom_data = m0_romx_load(NGP_ROM_EXPECT_SIZE, NGP_ROM_EXPECT_CRC32, NGP_ROM_NAME))) return 2;
 #endif
     unsigned limit = 0;
-    const char *ppm = NULL, *input_path = NULL, *record_path = NULL;
+    const char *ppm = NULL, *input_path = NULL, *record_path = NULL, *ram_out = NULL, *ram_in = NULL;
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--frames") && i + 1 < argc)
             limit = (unsigned)strtoul(argv[++i], NULL, 10);
         else if (!strcmp(argv[i], "--ppm") && i + 1 < argc) ppm = argv[++i];
         else if (!strcmp(argv[i], "--input") && i + 1 < argc) input_path = argv[++i];
         else if (!strcmp(argv[i], "--record-input") && i + 1 < argc) record_path = argv[++i];
+        else if (!strcmp(argv[i], "--ram-out") && i + 1 < argc) ram_out = argv[++i];
+        else if (!strcmp(argv[i], "--ram-in") && i + 1 < argc) ram_in = argv[++i];
         else {
             fprintf(stderr, "usage: ngp_pc [--frames N] [--ppm shot.ppm] [--input f] [--record-input f]\n");
             return 2;
@@ -81,6 +106,13 @@ int main(int argc, char **argv) {
         ngp_bios_install();
         ngp_load_rom(rom, ngp_rom_size);
         ngp_reset();
+    }
+    {
+        char default_flash[1024];
+        const char *b = strrchr(argv[0], '/');
+        snprintf(default_flash, sizeof default_flash, "%s.ngpflash", b ? b + 1 : argv[0]);
+        if (ram_in) pc_flash_load(ram_in);
+        else pc_flash_load(default_flash);
     }
 
     int running = 1;
@@ -145,6 +177,13 @@ int main(int argc, char **argv) {
         }
         ok;
     });
+    {
+        char default_flash[1024];
+        const char *b = strrchr(argv[0], '/');
+        snprintf(default_flash, sizeof default_flash, "%s.ngpflash", b ? b + 1 : argv[0]);
+        if (ram_out) { if (!pc_flash_write(ram_out)) return 1; }
+        else if (!pc_flash_write(default_flash)) return 1;
+    }
     printf("frames=%u pc=%06x run_hash=%08x\n", machine.frames, machine.cpu.pc,
            ngp_run_hash(ngp_frame()));
     if (record) {

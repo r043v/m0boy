@@ -12,25 +12,49 @@
 #include <sstream>
 
 namespace m0boy::ngp {
+namespace {
 
-std::optional<CartridgeInfo> inspect(const std::filesystem::path& path, std::string& error) {
+bool header_ok(const std::string& data, size_t ho) {
+    if (data.size() < ho + 0x30) return false;
+    const uint32_t pc = (uint32_t)data[ho + 0x1C] | ((uint32_t)data[ho + 0x1D] << 8) | ((uint32_t)data[ho + 0x1E] << 16);
+    const uint8_t mode = data[ho + 0x23];
+    return pc >= 0x200000 && pc < 0xA00000 && !(mode & ~0x10u);
+}
+
+} // namespace
+
+/* The flash image: some dumps carry a prefix (a loader's padding), the header
+ * then sits at 0x20100; it is stripped here so the image maps flat from
+ * 0x200000, for the header reads of inspect() and for generation after. */
+std::string load_flash(const std::filesystem::path& path, std::string& error) {
     std::ifstream file(path, std::ios::binary);
     if (!file) {
         error = "Cannot open " + path.string();
-        return std::nullopt;
+        return {};
     }
     std::ostringstream buffer;
     buffer << file.rdbuf();
-    const std::string data = buffer.str();
+    std::string data = buffer.str();
     if (data.size() < 0x30) {
         error = path.string() + ": too small for a Neo Geo Pocket header ("
                 + std::to_string(data.size()) + " bytes)";
-        return std::nullopt;
+        return {};
     }
+    if (data.size() > 4 * 1024 * 1024 + 0x20100) {
+        error = path.string() + ": larger than the 4 MiB flash the cartridges carry";
+        return {};
+    }
+    if (!header_ok(data, 0) && header_ok(data, 0x20100)) data.erase(0, 0x20100);
     if (data.size() > 4 * 1024 * 1024) {
         error = path.string() + ": larger than the 4 MiB flash the cartridges carry";
-        return std::nullopt;
+        return {};
     }
+    return data;
+}
+
+std::optional<CartridgeInfo> inspect(const std::filesystem::path& path, std::string& error) {
+    const std::string data = load_flash(path, error);
+    if (data.empty()) return std::nullopt;
     const auto* rom = reinterpret_cast<const uint8_t*>(data.data());
     /* the entry point lives in the cartridge windows (0x200000 up) */
     const uint32_t start_pc = rom[0x1C] | (rom[0x1D] << 8) | ((uint32_t)rom[0x1E] << 16);
@@ -75,6 +99,7 @@ std::optional<CartridgeInfo> inspect(const std::filesystem::path& path, std::str
     info.rom_bytes = data.size();
     info.cartridge_ram_bytes = 0; /* saves live in the cartridge's flash */
     info.mapper = "flash2M";
+    info.colour = (mode & 0x10u) != 0;
     return info;
 }
 

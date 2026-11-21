@@ -347,7 +347,7 @@ int main(int argc, char** argv) {
     fs::path cov, png, rt;
     fs::path ddir = rom.parent_path() / (name + ".deepeel");
     bool have = locate(ddir, cov, png, rt) || locate(rom.parent_path(), cov, png, rt);
-    static const std::set<std::string> covered = {"gameboy", "nes", "pce", "megadrive", "sg1000", "gg", "sms", "msx"};
+    static const std::set<std::string> covered = {"gameboy", "nes", "pce", "megadrive", "sg1000", "gg", "sms", "msx", "ngp"};
     if (have) say("coverage found: " + cov.string());
     else if (!no_deepeel && covered.count(system)) {
         std::vector<std::string> dargs = {rom.string(), "--out", ddir.string(), "--jobs", std::to_string(jobs)};
@@ -405,6 +405,10 @@ int main(int argc, char** argv) {
         if (!rt.empty()) gen.insert(gen.end(), {"--rtcode", rt.string()});
     } else if (system == "nes" || system == "pce") {
         gen.push_back("--meta-static");
+    } else if (have && system == "ngp") {
+        // the projects still interpret (the TLCS-900H emitter follows): deepeel's
+        // coverage rides beside the ROM (cov + map PNG + rtcode) for the reports
+        say(cov.string() + ": " + std::to_string(fs::file_size(cov)) + " bytes of coverage kept beside the ROM");
     }
     gen.insert(gen.end(), extra.begin(), extra.end());
     if (int rc = m0recomp_call(gen)) die("m0recomp failed (" + std::to_string(rc) + ")");

@@ -11,6 +11,8 @@
 namespace m0boy::ngp {
 
 std::optional<CartridgeInfo> inspect(const std::filesystem::path&, std::string&);
+/* the flash image, the loader's padding prefix stripped when the header sits at 0x20100 */
+std::string load_flash(const std::filesystem::path&, std::string& error);
 
 /* Project generation, after the PCE generator's plan: the cartridge image
  * embedded as C data, the interpreter runtime, the desktop harness and the

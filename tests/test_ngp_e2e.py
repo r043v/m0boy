@@ -100,6 +100,40 @@ def main():
     generated_hash = exercise(host, mono, root, 'gen')
     assert generated_hash == interp_hash, (generated_hash, interp_hash)
 
+    # the colour cart as a generated project: palettes through the K2GE
+    cproject = root / 'project-c'
+    run(cli, '--system', 'ngp', colour, '--target', 'desktop',
+        '--output-prefix', 'synthc', '-o', cproject)
+    chost = build_host(cproject, root / 'build-c')
+    exercise(chost, colour, root, 'gen_c', expect_colour=True)
+
+    # the flash saves: the host writes <program>.ngpflash next to itself and
+    # the file round-trips (--ram-out then --ram-in, byte for byte)
+    for out in (root / 'gen_a.ngpflash',):
+        out.unlink(missing_ok=True)
+    run(host, mono, '--frames', 10, '--ram-out', root / 'f1.ngpflash')
+    run(host, mono, '--frames', 10, '--ram-in', root / 'f1.ngpflash',
+        '--ram-out', root / 'f2.ngpflash')
+    assert (root / 'f1.ngpflash').read_bytes() == (root / 'f2.ngpflash').read_bytes(), 'flash round trip'
+    # the default save: <host>.ngpflash in the working directory, not "(null)"
+    run(host, '--frames', 5)
+    assert (Path.cwd() / (host.name + '.ngpflash')).exists() or \
+        (host.parent / (host.name + '.ngpflash')).exists(), 'default flash file'
+    # the cartridge loaded at run time (the project carries no ROM bytes)
+    ext_project = root / 'project-ext'
+    run(cli, '--system', 'ngp', mono, '--target', 'desktop', '--rom-external',
+        '--output-prefix', 'synthx', '-o', ext_project)
+    assert 'M0_ROM_EXTERNAL' in (ext_project / 'host' / 'CMakeLists.txt').read_text()
+    assert 'const uint8_t ngp_rom_data[]' not in (ext_project / 'src' / 'ngp_cart.c').read_text(), \
+        'the rom-external project still embeds the cartridge'
+    ext_host = build_host(ext_project, root / 'build-ext')
+    res = subprocess.run([str(ext_host), '--frames', '5'], capture_output=True, text=True)
+    assert res.returncode != 0 and 'ROM not found' in res.stderr, res  # refuses without the cartridge
+    shutil.copy(mono, ext_host.parent / 'synthetic.ngp')
+    ext_out = run(ext_host, '--frames', 60)
+    _, _, ext_hash = summary_fields(ext_out)
+    assert ext_hash == interp_hash, (ext_hash, interp_hash)
+
     # the PC window, head first, when SDL2 is present
     have_sdl2 = shutil.which('pkg-config') is None or \
         subprocess.run(['pkg-config', '--exists', 'sdl2']).returncode == 0
