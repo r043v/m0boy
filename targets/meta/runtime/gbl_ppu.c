@@ -782,6 +782,8 @@ void gbl_cgb_pal_reset(void) {
 uint8_t gbl_cgb_pal_rd(uint8_t n) {
     uint32_t k = (n >> 1) & 1u;
     if (!(n & 1)) return (uint8_t)(0x40 | gbl_cgb_ps[k]);
+    gbl_ppu_sync(gbr.cyc); /* the blocking test reads the live PPU mode */
+    if (lcd_on && mode == 3) return 0xFF; /* palette RAM reads 0xFF in mode 3 */
     return gbl_cgb_pal[k][gbl_cgb_ps[k] & 63u];
 }
 
@@ -790,9 +792,11 @@ void gbl_cgb_pal_wr(uint8_t n, uint8_t v) {
     if (!(n & 1)) { gbl_cgb_ps[k] = v & 0xBFu; return; }
     gbl_ppu_sync(gbr.cyc); /* lines already due keep the old colours */
     uint8_t ps = gbl_cgb_ps[k];
-    gbl_cgb_pal[k][ps & 63u] = v;
+    if (!lcd_on || mode != 3) { /* palette writes are ignored in mode 3 */
+        gbl_cgb_pal[k][ps & 63u] = v;
+        gbl_ppu_content_changed();
+    }
     if (ps & 0x80) gbl_cgb_ps[k] = (uint8_t)(0x80 | ((ps + 1u) & 63u));
-    gbl_ppu_content_changed();
 }
 
 static void draw_line_cgb(uint16_t *out, uint8_t lcdc, int window, uint32_t h, const uint8_t *sel, int n) {
