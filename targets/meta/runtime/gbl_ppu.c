@@ -14,6 +14,8 @@
 #include "gbl_timing_layout.h"
 
 #include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define LCDC gbl_io[0x40]
@@ -366,12 +368,17 @@ int select_many(uint8_t *sel, uint32_t lo, uint32_t hi) {
     uint8_t cand[40];
     int nc = 0, n = 0;
     for (uint32_t k = lo; k < hi; k++) cand[nc++] = oam_by_y[k];
-    /* Hardware keeps the first ten in OAM order. */
+    /* The kept ten are the first in OAM order (CGB: the lowest OAM indices —
+     * X never ranks on the CGB, so the truncation cannot use it either). */
     for (int a = 1; a < nc; a++) {
         uint8_t v = cand[a];
         int b = a;
         while (b > 0 && cand[b - 1] > v) { cand[b] = cand[b - 1]; b--; }
         cand[b] = v;
+    }
+    if (gbl_cgb) {
+        for (int k = 0; k < 10; k++) sel[k] = cand[k];   /* already index-sorted */
+        return 10;
     }
     nc = 10;
     for (int k = 0; k < nc; k++) {
@@ -840,6 +847,7 @@ static void draw_line_cgb(uint16_t *out, uint8_t lcdc, int window, uint32_t h, c
         if (attr & 0x40) row = h - 1 - row;
         if (h == 16) tile &= 0xFEu;
         const uint8_t *td = vram + ((attr & 8u) ? 0x2000u : 0u) + tile * 16u + row * 2u;
+        unsigned drawn = 0;
         for (int i = 0; i < 8; i++) {
             int x = (int)o[1] - 8 + i;
             if (x < 0 || x >= 160 || taken[x]) continue;
@@ -847,8 +855,17 @@ static void draw_line_cgb(uint16_t *out, uint8_t lcdc, int window, uint32_t h, c
             uint32_t ci = ((td[0] >> c) & 1u) | (((td[1] >> c) & 1u) << 1);
             if (!ci) continue;
             taken[x] = 1;
+            drawn++;
             if ((lcdc & 1) && bgci[x] && ((attr & 0x80) || bgpri[x])) continue;
             out[x] = cgb_rgb(gbl_cgb_pal[1], attr & 7u, ci);
+        }
+        {   /* GBL_SPRITE_LOG: a selected sprite that drew nothing (or lost the
+             * BG priority fight on every column) — the invisible-sprite cases */
+            static int8_t spr_log = -1;
+            if (spr_log < 0) spr_log = getenv("GBL_SPRITE_LOG") && *getenv("GBL_SPRITE_LOG") == '1';
+            if (spr_log && !drawn)
+                fprintf(stderr, "spr f%u ly%u none: %u(x%u t%u b%u a%02x)\n", gbl_frame, ly,
+                        s2[k], o[1], tile, (attr >> 3) & 1u, attr);
         }
     }
 }
@@ -878,6 +895,40 @@ __attribute__((noinline)) void render_line(void) {
 
     if (!gbl_skip_render) {
         if (lcdc & 0x02) n = select_sprites(sel, h);
+#if GBL_CGB
+        /* GBL_SPRITE_LOG=1: per line, the sprites the display skips — the
+         * candidates beyond the ten kept, then (draw_line_cgb) the selected
+         * ones that drew no pixel.  Diagnosis of sprite-fidelity divergences. */
+        {
+            static int8_t spr_log = -1;
+            if (spr_log < 0) spr_log = getenv("GBL_SPRITE_LOG") && *getenv("GBL_SPRITE_LOG") == '1';
+            if (spr_log) {
+                fprintf(stderr, "spr f%u ly%u n%d sel:", gbl_frame, ly, n);
+                for (int k = 0; k < n; k++) fprintf(stderr, " %u", sel[k]);
+                if (P.spr_ly == ly) {   /* the candidate window of this line */
+                    fprintf(stderr, " cand %u-%u drop:", P.spr_lo, P.spr_hi);
+                    for (uint32_t k = P.spr_lo; k < P.spr_hi; k++) {
+                        uint8_t i = oam_by_y[k];
+                        int kept = 0;
+                        for (int j = 0; j < n; j++) kept |= sel[j] == i;
+                        if (!kept) fprintf(stderr, " %u(x%u)", i, gbl_oam[i * 4 + 1]);
+                    }
+                }
+                fprintf(stderr, "\n");
+            }
+        }
+        /* GBL_PAL_LOG=1: the BG palette RAM once per frame (palette-fidelity diagnosis). */
+        {
+            static int8_t pal_log = -1;
+            if (pal_log < 0) pal_log = getenv("GBL_PAL_LOG") && *getenv("GBL_PAL_LOG") == '1';
+            if (pal_log && gbl_cgb && ly == 0) {
+                char hx[257]; static const char hc[] = "0123456789abcdef";
+                for (int i = 0; i < 128; i++) { hx[i*2] = hc[gbl_cgb_pal[0][i] >> 4]; hx[i*2+1] = hc[gbl_cgb_pal[0][i] & 15]; }
+                hx[256] = 0;
+                fprintf(stderr, "pal f%u %s\n", (unsigned)gbl_frame, hx);
+            }
+        }
+#endif
 #if GBL_LINE_SIGNATURE
         if (GBL_CGB_ON || gbl_platform_line_check(ly, line_signature(lcdc, window, sel, n, h)))
 #endif

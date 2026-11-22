@@ -8,6 +8,8 @@
 #include "gbl_timing_layout.h"
 
 #include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 gbl_cpu_t gbr;
@@ -1696,10 +1698,14 @@ void gbl_io_wr(uint8_t n, uint8_t v) {
     case 0x0F: gbl_sync(); IF = v & 0x1F; gbl_update_evt(); return;
 #if GBL_CGB
     case 0x4F:
-        if (gbl_cgb && gbl_vbk != (v & 1u)) {
-            gbl_ppu_sync(gbr.cyc);
-            gbl_vbk = v & 1u;
-            map_pages();
+        if (gbl_cgb) {
+            { static int8_t dlog = -1; if (dlog < 0) dlog = getenv("GBL_SPRITE_LOG") && *getenv("GBL_SPRITE_LOG") == '1';
+              if (dlog) fprintf(stderr, "vbk f%u w %02x -> %u (pc %04x)\n", gbl_frame, v, v & 1u, gbr.pc); }
+            if (gbl_vbk != (v & 1u)) {
+                gbl_ppu_sync(gbr.cyc);
+                gbl_vbk = v & 1u;
+                map_pages();
+            }
         }
         return;
     case 0x51: case 0x52: case 0x53: case 0x54: case 0x55:
@@ -1754,6 +1760,8 @@ void gbl_io_wr(uint8_t n, uint8_t v) {
 #if GBL_CGB
 /* One 16-byte block of a VRAM DMA (GDMA or HDMA). */
 static void hdma_block(void) {
+    { static int8_t dlog = -1; if (dlog < 0) dlog = getenv("GBL_SPRITE_LOG") && *getenv("GBL_SPRITE_LOG") == '1';
+      if (dlog) fprintf(stderr, "hdma blk f%u src %04x dst %04x vbk %u\n", gbl_frame, hdma_src, hdma_dst, gbl_vbk); }
     for (unsigned i = 0; i < 16; i++) {
         uint8_t v = gbl_rd((uint16_t)(hdma_src + i));
         gbl_vram_wr((uint16_t)((hdma_dst + i) & 0x1FFFu), v);
@@ -1781,10 +1789,16 @@ static void hdma_write(uint8_t n, uint8_t v) {
         if (gbl_hdma_active && !(v & 0x80)) { gbl_hdma_active = 0; gbl_hdma_pend = 0; gbl_update_evt(); return; }
         hdma_len = v & 0x7F;
         if (v & 0x80) {
+            { static int8_t dlog = -1; if (dlog < 0) dlog = getenv("GBL_SPRITE_LOG") && *getenv("GBL_SPRITE_LOG") == '1';
+              if (dlog) fprintf(stderr, "hdma arm f%u src %04x dst %04x len %u vbk %u\n",
+                                gbl_frame, hdma_src, hdma_dst, (unsigned)hdma_len + 1u, gbl_vbk); }
             gbl_hdma_active = 1;
             gbl_ppu_sync(gbr.cyc);
             if (gbl_ppu_in_hblank()) gbl_hdma_pend = 1;
         } else {
+            { static int8_t dlog = -1; if (dlog < 0) dlog = getenv("GBL_SPRITE_LOG") && *getenv("GBL_SPRITE_LOG") == '1';
+              if (dlog) fprintf(stderr, "hdma gdma f%u src %04x dst %04x len %u vbk %u\n",
+                                gbl_frame, hdma_src, hdma_dst, (unsigned)hdma_len + 1u, gbl_vbk); }
             for (unsigned b = 0; b <= hdma_len; b++) hdma_block();
             gbr.cyc += 4; /* one CPU M-cycle at the end of the transfer */
             hdma_len = 0x7F;
