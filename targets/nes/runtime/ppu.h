@@ -57,6 +57,10 @@ typedef struct {
     uint32_t hit_mismatch; /* lines where the two renderers' sprite-0 differ */
 #endif
     uint16_t frame;
+    /* vblanks still to be skipped after power-on (the PPU's warm-up): the
+     * flag and its NMI stay off.  0 after nes_ppu_reset; a frontend that
+     * wants the warm-up sets it. */
+    uint8_t warmup;
     void *host;
 } nes_ppu_t;
 

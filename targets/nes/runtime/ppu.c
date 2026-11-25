@@ -72,6 +72,7 @@ void nes_ppu_reset(nes_ppu_t *ppu) {
     ppu->x = ppu->w = 0;
     ppu->buffer = 0;
     ppu->frame = 0;
+    ppu->warmup = 0;
     ppu->oam_dirty = 1;
     pal_dirty = 0xFFFFFFFFu;
     nt_writes++; /* the nametables may have been cleared behind the PPU */
@@ -737,6 +738,7 @@ static uint8_t reference_line(nes_ppu_t *ppu, unsigned line) {
 
 int nes_ppu_line(nes_ppu_t *ppu, unsigned line) {
     if (line == 241) {
+        if (ppu->warmup) { ppu->warmup--; return 0; }
         ppu->status |= ST_VBLANK;
         return (ppu->ctrl & CTRL_NMI) ? 1 : 0;
     }
