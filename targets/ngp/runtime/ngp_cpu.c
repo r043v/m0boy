@@ -1163,6 +1163,35 @@ static void reg_ops(uint8_t op) {
             }
             cycles = 7; return;
         }
+        case 0x40: case 0x41: case 0x42: case 0x43: /* MUL RR,r */
+        case 0x44: case 0x45: case 0x46: case 0x47:
+        case 0x48: case 0x49: case 0x4A: case 0x4B: /* MULS RR,r */
+        case 0x4C: case 0x4D: case 0x4E: case 0x4F: {
+            const uint8_t t = rr_nibble(op); /* the pair is named by the opcode's low bits */
+            const int sign = (op & 0x08) != 0;
+            if (t == 0x80 || size == 2) { machine.cpu.fault = 1; cycles = 2; return; }
+            if (size == 0) {
+                const uint16_t a = ngp_code_w(t) & 0xFF, b = ngp_code_b(rCode);
+                ngp_code_w_set(t, sign ? (uint16_t)((int16_t)(int8_t)a * (int8_t)b) : (uint16_t)(a * b));
+                cycles = 18;
+            } else {
+                const uint32_t a = ngp_code_l(t) & 0xFFFF, b = ngp_code_w(rCode);
+                ngp_code_l_set(t, sign ? (uint32_t)((int32_t)(int16_t)a * (int16_t)b) : a * b);
+                cycles = 26;
+            }
+            return;
+        }
+        case 0x50: case 0x51: case 0x52: case 0x53: /* DIV RR,r */
+        case 0x54: case 0x55: case 0x56: case 0x57:
+        case 0x58: case 0x59: case 0x5A: case 0x5B: /* DIVS RR,r */
+        case 0x5C: case 0x5D: case 0x5E: case 0x5F: {
+            const uint8_t t = rr_nibble(op);
+            const int sign = (op & 0x08) != 0;
+            if (t == 0x80 || size == 2) { machine.cpu.fault = 1; cycles = 2; return; }
+            if (size == 0) { ngp_code_w_set(t, sign ? divs_b((int16_t)ngp_code_w(t), (int8_t)ngp_code_b(rCode)) : div_b(ngp_code_w(t), ngp_code_b(rCode))); cycles = sign ? 24 : 22; }
+            else { ngp_code_l_set(t, sign ? divs_w((int32_t)ngp_code_l(t), (int16_t)ngp_code_w(rCode)) : div_w(ngp_code_l(t), ngp_code_w(rCode))); cycles = sign ? 32 : 30; }
+            return;
+        }
         case 0x60: case 0x61: case 0x62: case 0x63: /* INC #3,r */
         case 0x64: case 0x65: case 0x66: case 0x67:
         case 0x68: case 0x69: case 0x6A: case 0x6B: /* DEC #3,r */
