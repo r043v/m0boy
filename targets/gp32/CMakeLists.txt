@@ -26,6 +26,7 @@ set(M0_GP32_BIOS "" CACHE FILEPATH "GP32 BIOS for SmartMedia boot")
 set(M0_GP32_SMC "" CACHE FILEPATH "SmartMedia image to boot instead of game.fxe")
 option(M0_GP32_DUMP_AUDIO "Capture audio to audio.wav in run_headless" OFF)
 set(M0_GP32_STANDALONE_SMC "" CACHE FILEPATH "Embed a SmartMedia image and launch it as a standalone game")
+set(M0_GP32_STANDALONE_FXE "" CACHE FILEPATH "Load an embedded FXE from the embedded SmartMedia image")
 
 # Apply the fixes to generated copies so the pinned checkout can be shared.
 function(gp32_read_source name variable)
@@ -92,6 +93,33 @@ gp32_replace(gp32_core_source
         if (tolower(first) != (unsigned char)basename[0]) continue;
         char lit[64];
         if (!direct_read_cstr(g, saddr, lit, sizeof(lit))) continue;
+]=])
+gp32_replace(gp32_core_source
+    "    gp32_status_t st = gp32_load_fxe_image(g, &img);\n    fxe_image_free(&img);\n    return st;\n}\n\ngp32_status_t gp32_load_fpk(gp32_t *g, const char *path) {"
+    [=[
+    gp32_status_t st = gp32_load_fxe_image(g, &img);
+    fxe_image_free(&img);
+    return st;
+}
+
+gp32_status_t gp32_load_fxe_data_with_smartmedia(gp32_t *g, const void *data, size_t size, const char *label) {
+    if (!g || !data || !size) return GP32_ERR_INVALID_ARGUMENT;
+    fxe_image_t img;
+    char e[256] = {0};
+    if (!fxe_load_buffer((const uint8_t *)data, size, label ? label : "embedded FXE", &img, e, sizeof(e))) {
+        seterr(g, "%s", e[0] ? e : "FXE load failed");
+        return GP32_ERR_BAD_IMAGE;
+    }
+    gp32_status_t st = gp32_load_fxe_image_internal(g, &img, 1, 1, 1, 0);
+    if (st == GP32_OK) {
+        direct_init_smc_gpio(g);
+        direct_scan_file_hle(g);
+    }
+    fxe_image_free(&img);
+    return st;
+}
+
+gp32_status_t gp32_load_fpk(gp32_t *g, const char *path) {
 ]=])
 
 # Keep device IRQ delivery close to the LCD lines polled by guest code.
@@ -304,13 +332,17 @@ if(M0_GP32_WINDOW)
     if(M0_GP32_STANDALONE_SMC)
         find_package(Python3 REQUIRED COMPONENTS Interpreter)
         set(gp32_standalone_header "${CMAKE_CURRENT_BINARY_DIR}/gp32_standalone_assets.h")
+        set(gp32_embed_args "${M0_GP32_STANDALONE_SMC}" "${gp32_standalone_header}")
+        if(M0_GP32_STANDALONE_FXE)
+            list(APPEND gp32_embed_args "${M0_GP32_STANDALONE_FXE}")
+        endif()
         execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/embed_smc.py"
-            "${M0_GP32_STANDALONE_SMC}" "${gp32_standalone_header}" RESULT_VARIABLE gp32_embed_result)
+            ${gp32_embed_args} RESULT_VARIABLE gp32_embed_result)
         if(NOT gp32_embed_result EQUAL 0)
             message(FATAL_ERROR "Could not embed standalone SmartMedia image")
         endif()
         gp32_replace(gp32_sdl_source "#include \"gp32emu/gp32.h\""
-            "#include \"gp32emu/gp32.h\"\n#include \"gp32_standalone_assets.h\"\n#define MINIZ_HEADER_FILE_ONLY\n#define MINIZ_NO_ARCHIVE_APIS\n#include \"miniz.h\"")
+            "#include \"gp32emu/gp32.h\"\n#include \"gp32_standalone_assets.h\"\n#define MINIZ_HEADER_FILE_ONLY\n#define MINIZ_NO_ARCHIVE_APIS\n#include \"miniz.h\"\nextern gp32_status_t gp32_load_fxe_data_with_smartmedia(gp32_t *, const void *, size_t, const char *);")
         gp32_replace(gp32_sdl_source
             "    app_options_t args;\n    if (!parse_args(argc, argv, &args)) {"
             "    app_options_t args;\n#ifdef GP32_STANDALONE\n    (void)argc; (void)argv;\n    memset(&args, 0, sizeof(args)); args.scale = 2u; args.rotate = 1;\n#else\n    if (!parse_args(argc, argv, &args)) {")
@@ -328,9 +360,25 @@ if(M0_GP32_WINDOW)
         fprintf(stderr, "Could not unpack embedded game data\\n");
         free(embedded_smc); gp32_destroy(g); return 1;
     }
+#ifdef GP32_STANDALONE_FXE
+    gp32_status_t embedded_status = gp32_load_smartmedia_data(g, embedded_smc, embedded_size);
+    free(embedded_smc);
+    uint8_t *embedded_fxe = (uint8_t *)malloc(GP32_EMBEDDED_FXE_SIZE);
+    mz_ulong embedded_fxe_size = GP32_EMBEDDED_FXE_SIZE;
+    if (embedded_status == GP32_OK && (!embedded_fxe ||
+        mz_uncompress(embedded_fxe, &embedded_fxe_size, gp32_embedded_fxe_z,
+                      GP32_EMBEDDED_FXE_COMPRESSED_SIZE) != MZ_OK ||
+        embedded_fxe_size != GP32_EMBEDDED_FXE_SIZE)) {
+        fprintf(stderr, "Could not unpack embedded FXE\\n"); embedded_status = GP32_ERR_BAD_IMAGE;
+    }
+    if (embedded_status == GP32_OK)
+        embedded_status = gp32_load_fxe_data_with_smartmedia(g, embedded_fxe, embedded_fxe_size, "Pinball Dreams");
+    free(embedded_fxe);
+#else
     gp32_status_t embedded_status = gp32_load_smartmedia_direct_data(
         g, embedded_smc, embedded_size, "embedded game");
     free(embedded_smc);
+#endif
     if (embedded_status != GP32_OK) {
         fprintf(stderr, "Embedded game load failed: %s\\n", gp32_get_error(g));
         gp32_destroy(g); return 1;
@@ -339,6 +387,9 @@ if(M0_GP32_WINDOW)
 ]=])
         target_include_directories(gp32_sdl3 PRIVATE "${CMAKE_CURRENT_BINARY_DIR}" "${GP32EMU_DIR}/src/third_party/zip")
         target_compile_definitions(gp32_sdl3 PRIVATE GP32_STANDALONE=1)
+        if(M0_GP32_STANDALONE_FXE)
+            target_compile_definitions(gp32_sdl3 PRIVATE GP32_STANDALONE_FXE=1)
+        endif()
     endif()
     string(REPLACE "input_script ? gp32_input_script_frame(input_script, frame_index) : physical_buttons"
         "physical_buttons | (input_script ? gp32_input_script_frame(input_script, frame_index) : 0)"
