@@ -353,6 +353,14 @@ static uint32_t eram_bank(void) {
 }
 #endif
 
+/* A weak default the frontend may replace.  noipa: a link-time optimised partial link of the runtime alone (ld -r)
+ * only sees this body, and without it GCC folds it into the callers: the frontend's definition is never called. */
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 8
+#define GBL_WEAK_HOOK __attribute__((weak, noipa))
+#else
+#define GBL_WEAK_HOOK __attribute__((weak))
+#endif
+
 /* ---- MBC3 RTC ------------------------------------------------------------
  * Cartridge types 0F/10: RAM bank number 08-0C selects the five registers
  * instead of a RAM bank (00 arms the latch at 6000-7FFF, 01 snapshots).
@@ -370,7 +378,7 @@ static uint32_t eram_bank(void) {
  * in the .SAV (the file is GBL_SAVE_BYTES long, 512 more than
  * GBL_ERAM_SIZE when GBL_RTC); the ESPboy has no RTC. */
 #if GBL_RTC && GBL_MBC == 3 && !defined(ESP8266)
-uint32_t __attribute__((weak)) gbl_platform_rtc(void) { return 0; }
+GBL_WEAK_HOOK uint32_t gbl_platform_rtc(void) { return 0; }
 extern uint32_t gbl_save_last_change; /* defined below, in both branches */
 
 static struct {
@@ -2154,7 +2162,7 @@ uint16_t gbl_pop(void) {
 /* ---- interrupts and execution ------------------------------------------- */
 
 uint8_t gbl_safe_request;
-__attribute__((weak)) void gbl_platform_safe_point(void) {}
+GBL_WEAK_HOOK void gbl_platform_safe_point(void) {}
 
 #if GBL_DEBUG_RESTART
 #if defined(__arm__)
