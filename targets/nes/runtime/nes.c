@@ -102,7 +102,7 @@ void nes_init(const uint8_t *prg, uint32_t prg_bytes,
 #if !NES_NO_PRG_RAM
     for (unsigned i = 0; i < sizeof nes->wram; i++) nes->wram[i] = 0;
 #endif
-    static uint8_t nametable[2048], palette[32];
+    static M0_TL uint8_t nametable[2048], palette[32];
     for (unsigned i = 0; i < sizeof nametable; i++) nametable[i] = 0;
     for (unsigned i = 0; i < sizeof palette; i++) palette[i] = 0;
     nes->prg = prg;
@@ -156,6 +156,7 @@ void nes_reset(void) {
     nes->pad_reads = 0;
     nes->dots = 0;
     nes->line = 0;
+    nes->line_left = 0;
 }
 
 uint32_t nes_state_bytes(void) {
@@ -216,6 +217,7 @@ void nes_frame(void) {
     /* the strobe takes the pads' state once, at the frame's start */
     if (nes->strobe) { nes->shift[0] = nes->input; nes->shift[1] = nes->input2; }
     nes->line = 0;
+    nes->line_left = 0;
     nes_frame_rest();
 }
 
@@ -225,21 +227,35 @@ void nes_frame(void) {
  * un-run line, the frame's dots carry over. */
 void nes_frame_rest(void) {
     nes_t *nes = &machine;
-    for (; nes->line < 262; nes->line++) {
+    while (nes->line < 262) {
         /* 341 PPU dots = 113 CPU cycles and two thirds: the thirds add up
          * across lines, as they do on the machine (341 = 113*3 + 2, no
          * division: ARMv6-M would call __aeabi_uidiv) */
         const unsigned line = nes->line;
-        uint32_t step = 113u;
-        nes->dots += 2u;
-        if (nes->dots >= 3u) { nes->dots -= 3u; step++; }
+        uint32_t step = nes->line_left;   /* what a cut line still owes */
+        if (!step) {
+            step = 113u;
+            nes->dots += 2u;
+            if (nes->dots >= 3u) { nes->dots -= 3u; step++; }
+        }
         const uint32_t cpu_until = nes->cpu.cycles + step;
         nes6502_run(&nes->cpu, cpu_until);
-        if (nes_ppu_line(&nes->ppu, line)) nes->cpu.nmi_edge = 1;
 #ifdef NES_TRACE
-        if (nes_trace.stop) { nes->line++; break; } /* the observer froze the
-            * CPU mid-frame: this line's PPU step is skipped, the observer's
-            * snapshot keeps machine.line past it */
+        /* the observer froze the CPU mid-line: the line stays open, its PPU
+         * step runs once the remaining cycles have been spent */
+        if (nes_trace.stop && (int32_t)(cpu_until - nes->cpu.cycles) > 0) {
+            nes->line_left = cpu_until - nes->cpu.cycles;
+            break;
+        }
+#endif
+        nes->line_left = 0;
+        const int vblank = nes_ppu_line(&nes->ppu, line);
+        if (vblank) nes->cpu.nmi_edge = 1;
+        nes->line++;
+#ifdef NES_TRACE
+        /* also hands back on a raised NMI, still pending: the next slice would
+         * serve it before the observer could see it. The frame resumes here. */
+        if (nes_trace.stop || vblank) break;
 #endif
     }
 }

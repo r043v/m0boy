@@ -670,7 +670,7 @@ static const struct { size_t offset, bytes; } state_fields[] = {
 };
 
 uint32_t ngp_state_bytes(void) {
-    uint32_t bytes = 4, i;
+    uint32_t bytes = 4 + NGP_Z80_STATE_BYTES, i;
     for (i = 0; i < sizeof state_fields / sizeof *state_fields; i++) {
         /* a span that crossed a pointer or ran off the struct: refuse
          * rather than memcpy garbage over the machine */
@@ -689,9 +689,9 @@ void ngp_state_io(void *data, uint32_t bytes, int load) {
     if (load) {
         uint32_t tag;
         memcpy(&tag, p, 4); p += 4;
-        if (tag != 0x4E475031u) return; /* "NGP1": an old state, ignore */
+        if (tag != 0x4E475032u) return; /* "NGP2": an older layout, ignore */
     } else {
-        const uint32_t tag = 0x4E475031u;
+        const uint32_t tag = 0x4E475032u;
         memcpy(p, &tag, 4); p += 4;
     }
     for (i = 0; i < sizeof state_fields / sizeof *state_fields; i++) {
@@ -700,4 +700,5 @@ void ngp_state_io(void *data, uint32_t bytes, int load) {
         else memcpy(p, (uint8_t *)&machine + state_fields[i].offset, total);
         p += total;
     }
+    ngp_z80_state_io(p, load);   /* last: the Z80 registers, kept outside `machine` */
 }

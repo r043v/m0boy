@@ -64,6 +64,7 @@ typedef struct {
                             * 4-bit counters (the ninth read onward reports 1) */
     uint32_t dots;         /* PPU dots into the current line's CPU slice */
     uint32_t line;
+    uint32_t line_left;    /* CPU cycles a line cut by an observer still owes, 0 between lines */
     uint32_t frames;       /* completed nes_frame calls (the m0input probe) */
 #ifdef NES_PPU_REFERENCE
     /* the reference renderer's lines (the host harness), 264 pixels in

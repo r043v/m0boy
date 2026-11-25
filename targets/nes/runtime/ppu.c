@@ -214,8 +214,8 @@ static const uint8_t *sprite_pattern(const nes_ppu_t *ppu, const uint8_t *oam, u
 #define PAIR_BYTES 528u /* 66 stream words of two lines; the last group's
                          * third word pair is still inside */
 #define ROW_AT(s) ((((s) >> 2) << 3) | ((s) & 3u)) /* stream byte -> offset */
-static uint8_t pairs[PAIR_BYTES] __attribute__((aligned(4)));
-static uint8_t probe[PAIR_BYTES] __attribute__((aligned(4))); /* sprite-0 lines of hidden frames */
+static M0_TL uint8_t pairs[PAIR_BYTES] __attribute__((aligned(4)));
+static M0_TL uint8_t probe[PAIR_BYTES] __attribute__((aligned(4))); /* sprite-0 lines of hidden frames */
 static M0_TL uint8_t row_x[2];               /* each pair line's fine x */
 static M0_TL uint32_t expand[256];           /* lo nibble | hi nibble << 4 -> 4 bytes */
 static M0_TL uint8_t flip8[256];             /* bit reversal: horizontal flip */
@@ -230,7 +230,7 @@ static M0_TL unsigned panel_row;             /* the row being filled */
 static M0_TL unsigned panel_open;            /* the row has its first line (pair slot 1 next) */
 
 static void tables_init(void) {
-    static int ready;
+    static M0_TL int ready;   /* the tables below are per thread */
     if (ready) return;
     for (unsigned i = 0; i < 256; i++) {
         uint32_t w = 0;
