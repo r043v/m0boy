@@ -9,6 +9,12 @@ if(NOT EXISTS "${GP32EMU_DIR}/include/gp32emu/gp32.h")
 endif()
 
 set(GP32EMU_BUILD_SDL3 "${M0_GP32_WINDOW}")
+if(M0_GP32_WINDOW AND SDL3_DIR)
+    find_package(SDL3 REQUIRED CONFIG)
+    if(NOT TARGET SDL3::SDL3 AND TARGET SDL3::SDL3-static)
+        add_library(SDL3::SDL3 ALIAS SDL3::SDL3-static)
+    endif()
+endif()
 add_subdirectory("${GP32EMU_DIR}" gp32emu)
 set_target_properties(gp32_headless PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
@@ -19,6 +25,7 @@ set(M0_GP32_FRAMES 180 CACHE STRING "Number of frames for run_headless")
 set(M0_GP32_BIOS "" CACHE FILEPATH "GP32 BIOS for SmartMedia boot")
 set(M0_GP32_SMC "" CACHE FILEPATH "SmartMedia image to boot instead of game.fxe")
 option(M0_GP32_DUMP_AUDIO "Capture audio to audio.wav in run_headless" OFF)
+set(M0_GP32_STANDALONE_SMC "" CACHE FILEPATH "Embed a SmartMedia image and launch it as a standalone game")
 
 # Apply the fixes to generated copies so the pinned checkout can be shared.
 function(gp32_read_source name variable)
@@ -294,6 +301,45 @@ if(M0_GP32_WINDOW)
     set(gp32_sdl_main "${GP32EMU_DIR}/src/sdl3_main.c")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${gp32_sdl_main}")
     file(READ "${gp32_sdl_main}" gp32_sdl_source)
+    if(M0_GP32_STANDALONE_SMC)
+        find_package(Python3 REQUIRED COMPONENTS Interpreter)
+        set(gp32_standalone_header "${CMAKE_CURRENT_BINARY_DIR}/gp32_standalone_assets.h")
+        execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/embed_smc.py"
+            "${M0_GP32_STANDALONE_SMC}" "${gp32_standalone_header}" RESULT_VARIABLE gp32_embed_result)
+        if(NOT gp32_embed_result EQUAL 0)
+            message(FATAL_ERROR "Could not embed standalone SmartMedia image")
+        endif()
+        gp32_replace(gp32_sdl_source "#include \"gp32emu/gp32.h\""
+            "#include \"gp32emu/gp32.h\"\n#include \"gp32_standalone_assets.h\"\n#define MINIZ_HEADER_FILE_ONLY\n#define MINIZ_NO_ARCHIVE_APIS\n#include \"miniz.h\"")
+        gp32_replace(gp32_sdl_source
+            "    app_options_t args;\n    if (!parse_args(argc, argv, &args)) {"
+            "    app_options_t args;\n#ifdef GP32_STANDALONE\n    (void)argc; (void)argv;\n    memset(&args, 0, sizeof(args)); args.scale = 2u; args.rotate = 1;\n#else\n    if (!parse_args(argc, argv, &args)) {")
+        gp32_replace(gp32_sdl_source "        return 2;\n    }\n\n    gp32_options_t opt;"
+            "        return 2;\n    }\n#endif\n\n    gp32_options_t opt;")
+        gp32_replace(gp32_sdl_source "    gp32_set_jit(g, args.jit_enabled && !args.trace);"
+            [=[
+    gp32_set_jit(g, args.jit_enabled && !args.trace);
+#ifdef GP32_STANDALONE
+    uint8_t *embedded_smc = (uint8_t *)malloc(GP32_EMBEDDED_SMC_SIZE);
+    mz_ulong embedded_size = GP32_EMBEDDED_SMC_SIZE;
+    if (!embedded_smc || mz_uncompress(embedded_smc, &embedded_size, gp32_embedded_smc_z,
+                                       GP32_EMBEDDED_SMC_COMPRESSED_SIZE) != MZ_OK ||
+        embedded_size != GP32_EMBEDDED_SMC_SIZE) {
+        fprintf(stderr, "Could not unpack embedded game data\\n");
+        free(embedded_smc); gp32_destroy(g); return 1;
+    }
+    gp32_status_t embedded_status = gp32_load_smartmedia_direct_data(
+        g, embedded_smc, embedded_size, "embedded game");
+    free(embedded_smc);
+    if (embedded_status != GP32_OK) {
+        fprintf(stderr, "Embedded game load failed: %s\\n", gp32_get_error(g));
+        gp32_destroy(g); return 1;
+    }
+#endif
+]=])
+        target_include_directories(gp32_sdl3 PRIVATE "${CMAKE_CURRENT_BINARY_DIR}" "${GP32EMU_DIR}/src/third_party/zip")
+        target_compile_definitions(gp32_sdl3 PRIVATE GP32_STANDALONE=1)
+    endif()
     string(REPLACE "input_script ? gp32_input_script_frame(input_script, frame_index) : physical_buttons"
         "physical_buttons | (input_script ? gp32_input_script_frame(input_script, frame_index) : 0)"
         gp32_sdl_source "${gp32_sdl_source}")
