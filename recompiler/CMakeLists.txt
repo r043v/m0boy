@@ -26,6 +26,7 @@ set_target_properties(m0boy_cpu_m0plus PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(m0boy_frontends STATIC
     src/system.cpp
+    src/system/gp32/cartridge.cpp
     src/system/gameboy/cartridge.cpp
     src/system/gameboy/frontend.cpp
     src/system/sg1000/cartridge.cpp

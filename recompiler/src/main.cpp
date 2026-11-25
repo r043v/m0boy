@@ -173,8 +173,8 @@ void print_usage(const char* program) {
     std::cout << "  --trace               Trace execution analysis (very verbose)\n";
     std::cout << "  --limit <n>           Limit analysis to n instructions\n";
     std::cout << "  -j, --jobs <n>        Parallel workers for codegen and batch generation (0=auto)\n";
-    std::cout << "  --system auto|gameboy|sg1000|gg|sms|pico8|msx|nes|pce|vectrex|megadrive|snes|meta|pokitto  Source console (default auto; raw firmware needs explicit system)\n";
-    std::cout << "  --cpu sm83|z80|6502|huc6280|6809|m68k|m0plus  Check the CPU required by the source console\n";
+    std::cout << "  --system auto|gameboy|sg1000|gg|sms|pico8|msx|nes|pce|vectrex|megadrive|snes|ngp|gp32|meta|pokitto  Source console (default auto; raw firmware needs explicit system)\n";
+    std::cout << "  --cpu sm83|z80|6502|huc6280|6809|m68k|m0plus|arm920t  Check the CPU required by the source console\n";
     std::cout << "  --list-systems       List source consoles, CPUs and available pipelines\n";
     std::cout << "  --list-targets       List destination consoles and their hardware facts\n";
     std::cout << "  --info               Inspect a cartridge without generating code\n";
@@ -2458,6 +2458,42 @@ int m0recomp_main(int argc, char* argv[]) {
         if (source.id == m0boy::SystemId::ngp)
             std::cout << "\ncolour=" << (cartridge->colour ? "yes" : "no");
         std::cout << "\n";
+        return 0;
+    }
+    if (source.id == m0boy::SystemId::gp32) {
+        if (disasm_only || analyze_only) {
+            std::cerr << "Error: GP32 supports emulation only\n";
+            return 1;
+        }
+        if (!source.supports(*m0boy::parse_target(target))) {
+            std::cerr << "Error: GP32 supports desktop and pc targets\n";
+            return 1;
+        }
+        std::string error;
+        if (!source.inspect(rom_path, error)) {
+            std::cerr << "Error: " << error << "\n";
+            return 1;
+        }
+        const fs::path output = output_dir.empty()
+            ? fs::path("output") / (fs::path(rom_path).stem().string() + "_gp32_" + target) : fs::path(output_dir);
+        const fs::path project = resolve_meta_dir(argv[0], meta_dir).parent_path() / "gp32";
+        try {
+            fs::create_directories(output / "smartmedia/GAME");
+            fs::create_directories(output / "smartmedia/GPMM");
+            // The option is declared by the template after cmake_minimum_required.
+            std::ofstream defaults(output / "gp32_defaults.cmake");
+            defaults << "set(M0_GP32_WINDOW_DEFAULT " << (target == "pc" ? "ON" : "OFF") << ")\n";
+            defaults.close();
+            if (!defaults)
+                throw std::runtime_error("Cannot write GP32 project defaults");
+            for (const char* file : {"CMakeLists.txt", "make_card.py", "sdl_input.c"})
+                fs::copy_file(project / file, output / file, fs::copy_options::overwrite_existing);
+            fs::copy_file(rom_path, output / "game.fxe", fs::copy_options::overwrite_existing);
+        } catch (const std::runtime_error& e) {
+            std::cerr << "Error: " << e.what() << "\n";
+            return 1;
+        }
+        std::cout << "GP32 interpreter project: " << output << "\n";
         return 0;
     }
     if (source.cpu == m0boy::CpuId::m0plus) {
