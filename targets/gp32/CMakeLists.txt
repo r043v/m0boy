@@ -324,7 +324,7 @@ if(M0_GP32_WINDOW)
             "#include \"gp32emu/gp32.h\"\n#include \"gp32_standalone_assets.h\"\n#define MINIZ_HEADER_FILE_ONLY\n#define MINIZ_NO_ARCHIVE_APIS\n#include \"miniz.h\"")
         gp32_replace(gp32_sdl_source
             "    app_options_t args;\n    if (!parse_args(argc, argv, &args)) {"
-            "    app_options_t args;\n#ifdef GP32_STANDALONE\n    (void)argc; (void)argv;\n    memset(&args, 0, sizeof(args)); args.scale = 2u; args.rotate = 1;\n#else\n    if (!parse_args(argc, argv, &args)) {")
+            "    app_options_t args;\n#ifdef GP32_STANDALONE\n    (void)argc; (void)argv;\n    memset(&args, 0, sizeof(args)); args.scale = 2u; args.rotate = 1;\n    args.enable_joystick = 1; args.enable_joystick_axis = 1;\n#else\n    if (!parse_args(argc, argv, &args)) {")
         gp32_replace(gp32_sdl_source "        return 2;\n    }\n\n    gp32_options_t opt;"
             "        return 2;\n    }\n#endif\n\n    gp32_options_t opt;")
         gp32_replace(gp32_sdl_source "    gp32_set_jit(g, args.jit_enabled && !args.trace);"
