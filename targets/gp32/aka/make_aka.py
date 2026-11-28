@@ -2,7 +2,8 @@
 """Write a PlatformIO project running one GP32 FXE, GXB or ZPK on the Gamebuino AKA.
 
     make_aka.py APPLICATION OUTPUT_DIRECTORY [--fast-pages N,N,... | --page-profile FILE [--fast-count N]]
-                [--aot app_aot.c] [--card NAME.SMC] [--no-iram]
+                [--aot app_aot.c]
+                [--card NAME.SMC | --card-folder PATH] [--no-iram]
 
 The project embeds the application: it holds ROM data and must not be
 published.  The guest's 8 MiB SDRAM is split into 16 KiB pages: --fast-pages
@@ -14,6 +15,9 @@ the runtime are linked into IRAM unless --no-iram is given.  --aot
 builds the application recompiled by runtime/recompile.py (--hybrid) in place of
 the plain interpreter.  --card names the SmartMedia image the firmware opens on
 the SD card (root or one folder below), for applications that need one.
+--card-folder names instead a folder of the SD card to present as the card: no
+image to prepare, and what the program saves appears there as files (8.3 names,
+32 MiB at most).
 """
 import argparse
 import shutil
@@ -95,7 +99,9 @@ def main():
     parser.add_argument("--fast-count", type=int, default=4)
     parser.add_argument("--no-iram", action="store_true")
     parser.add_argument("--aot", type=Path)
-    parser.add_argument("--card")
+    card = parser.add_mutually_exclusive_group()
+    card.add_argument("--card")
+    card.add_argument("--card-folder")
     args = parser.parse_args()
     if args.page_profile:
         # "page uses shown": the pages on the screen have their own placement.
@@ -119,6 +125,9 @@ def main():
     src = out / "src"
     (out / "boards").mkdir(parents=True, exist_ok=True)
     src.mkdir(exist_ok=True)
+    # A project generated again may have had the other kind of card.
+    for name in ("gp32_aka_card.c", "m0_fat.c", "esp32_sd.cpp", "gp32_vcard.c"):
+        (src / name).unlink(missing_ok=True)
     for name in ("arm920t", "s3c2400", "s3c2400_bus", "gp32_hle", "gp32_exec", "gp32_smc"):
         shutil.copy(RUNTIME / (name + ".c"), src)
     for header in RUNTIME.glob("*.h"):
@@ -130,10 +139,12 @@ def main():
                  TARGETS / "common/platform/m0_target.h", TARGETS / "common/platform/m0_lcd.h",
                  TARGETS / "common/platform/m0_menu.h", TARGETS / "common/runtime/m0_scale.h",
                  TARGETS / "common/runtime/m0_divide.h",
-                 *((HERE / "gp32_aka_card.c", HERE / "gp32_aka_card.h",
-                    TARGETS / "common/platform/m0_fat.c", TARGETS / "common/platform/m0_fat.h",
+                 *((HERE / "gp32_aka_card.c", HERE / "gp32_aka_card.h")
+                   if args.card or args.card_folder else ()),
+                 *((TARGETS / "common/platform/m0_fat.c", TARGETS / "common/platform/m0_fat.h",
                     TARGETS / "common/platform/m0_sd.h",
-                    TARGETS / "common/consoles/esp32/esp32_sd.cpp") if args.card else ())):
+                    TARGETS / "common/consoles/esp32/esp32_sd.cpp") if args.card else ()),
+                 *((RUNTIME / "gp32_vcard.c",) if args.card_folder else ())):
         if path.exists():
             shutil.copy(path, src)
     flags, sources = "", "+<*>"
@@ -165,6 +176,13 @@ def main():
         defines += '#define GP32_AKA_CARD_NAME83 "%s"\n' % name83(args.card)
         defines += '#define GP32_AKA_CARD_FILE "%s"\n' % args.card.upper()
         flags += " -DM0_GP32_PAGED_CARD"
+    if args.card_folder:
+        folder = args.card_folder.strip("/")
+        if not folder or not folder.isascii() or any(c in folder for c in '"\\\n'):
+            parser.error("--card-folder takes a plain path inside the SD card")
+        defines += '#define GP32_AKA_CARD_FOLDER "%s"\n' % folder
+        defines += '#define GP32_AKA_CARD_FILE "%s"\n' % folder
+        flags += " -DM0_GP32_PAGED_CARD -DM0_GP32_VCARD_NODES=256"
     (out / "payload.bin").write_bytes(payload)
     (src / "gp32_payload.h").write_text(
         "#include <stddef.h>\n#include <stdint.h>\n"

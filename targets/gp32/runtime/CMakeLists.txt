@@ -125,6 +125,13 @@ if(BUILD_TESTS OR (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND BUILD_
     target_link_libraries(test_s3c2400 PRIVATE m0_s3c2400)
     add_test(NAME s3c2400 COMMAND test_s3c2400)
 
+    # The directory-backed card of the consoles, tested where POSIX is native.
+    if(UNIX)
+        add_executable(test_vcard test_vcard.c gp32_vcard.c gp32_smc.c)
+        target_compile_definitions(test_vcard PRIVATE M0_GP32_PAGED_CARD)
+        add_test(NAME vcard COMMAND test_vcard)
+    endif()
+
     add_executable(test_resample test_resample.c)
     if(NOT MSVC)
         target_link_libraries(test_resample PRIVATE m)

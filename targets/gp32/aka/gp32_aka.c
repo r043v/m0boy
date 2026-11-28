@@ -473,6 +473,10 @@ static uint16_t buttons(void)
 static void fatal(const char *text)
 {
     esp_rom_printf("gp32: %s\n", text);
+#ifdef M0_GP32_PAGED_CARD
+    if (soc && soc->smc.image) /* what the program saved stays */
+        gp32_aka_card_close();
+#endif
     while (!m0_display_idle())
         delay(1);
     m0_lcd_flush();
@@ -509,9 +513,15 @@ int m0boy_console_main(void)
     gp32_hle_set_directory(soc, GP32_PAYLOAD_DIRECTORY);
 #endif
 #ifdef M0_GP32_PAGED_CARD
+#ifdef GP32_AKA_CARD_FOLDER
+    size_t card_size = gp32_aka_card_open(GP32_AKA_CARD_FOLDER);
+#else
     size_t card_size = gp32_aka_card_open(GP32_AKA_CARD_NAME83);
+#endif
     if (!card_size || !gp32_smc_attach(&soc->smc, gp32_card_bytes(0, false), card_size, true))
-        fatal("no SmartMedia image " GP32_AKA_CARD_FILE " on the SD card");
+        fatal("no SmartMedia card " GP32_AKA_CARD_FILE " on the SD card");
+    esp_rom_printf("gp32: card " GP32_AKA_CARD_FILE ", %u bytes of PSRAM free\n",
+                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 #endif
     soc->cycles_per_instruction = M0_GP32_AKA_CPI;
     soc->audio = (S3c2400Audio){sample, 0};
@@ -549,6 +559,9 @@ int m0boy_console_main(void)
             ++drawn;
         }
         s3c2400_set_buttons(soc, buttons());
+#ifdef M0_GP32_PAGED_CARD
+        gp32_aka_card_service(now);
+#endif
         m0_watchdog_feed();
         if (now - report >= 2000000) {
             /* Formatted first: some board emulators print the format only. */
