@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include "md_full.h"
+#include "m0_divide.h"
 #include <string.h>
 
 /* One clock for every sound part: the NTSC master clock. The 68000 and the
@@ -74,6 +75,18 @@ static void audio_emit(MdFull *m, int left, int right) {
     }
 }
 
+/* last + (now - last) * f / (FM_MASTER * AUDIO_RATE), truncated toward zero,
+ * in 32-bit divisions.  f and the span are multiples of 75: f / 75 is an exact
+ * product by the inverse of 75, and the rest of the span is 64 * 9261. */
+_Static_assert(MASTER_HZ % 75 == 0 && FM_MASTER * AUDIO_RATE == 75 * 64 * 9261, "audio span");
+static int between(int last, int now, uint32_t f) {
+    const uint32_t part = f * 0x962fc963u; /* f / 75 */
+    const int delta = now - last;
+    const uint32_t size = delta < 0 ? 0u - (uint32_t)delta : (uint32_t)delta;
+    const int step = (int)((uint32_t)((uint64_t)size * part >> 6) / 9261u);
+    return last + (delta < 0 ? -step : step);
+}
+
 /* Produces every FM sample that ends at or before master clock `until`.
  * Output frame k sits at k * MASTER_HZ (scaled by AUDIO_RATE); that
  * position is tracked in audio_next, so a sample emits without any
@@ -96,9 +109,8 @@ static void audio_run(MdFull *m, uint64_t until) {
         const int now[2] = {fm[0] * 3 / 4 + psg, fm[1] * 3 / 4 + psg};
         const uint64_t start = m->audio_time * AUDIO_RATE;
         for (; m->audio_next <= start + (uint64_t)FM_MASTER * AUDIO_RATE; m->audio_next += MASTER_HZ) {
-            const int64_t f = (int64_t)(m->audio_next - start), span = (int64_t)FM_MASTER * AUDIO_RATE;
-            audio_emit(m, (int)(m->audio_last[0] + (now[0] - m->audio_last[0]) * f / span),
-                          (int)(m->audio_last[1] + (now[1] - m->audio_last[1]) * f / span));
+            const uint32_t f = (uint32_t)(m->audio_next - start);
+            audio_emit(m, between(m->audio_last[0], now[0], f), between(m->audio_last[1], now[1], f));
         }
         m->audio_last[0] = now[0];
         m->audio_last[1] = now[1];
@@ -109,13 +121,22 @@ static void audio_run(MdFull *m, uint64_t until) {
 /* ---- Z80 and its bus --------------------------------------------------- */
 
 static uint64_t z80_time(const MdFull *m) { return m->sound_cpu.cycles * 15u; }
+/* master clocks in whole Z80 clocks */
+static uint64_t z80_clocks(uint64_t master) { uint32_t rest; return m0_div64_16(master, 15u, &rest); }
+/* z80_time % FRAME_MASTER, which is 15 * (cycles % (FRAME_MASTER / 15)) */
+_Static_assert(FRAME_MASTER % 15 == 0 && FRAME_MASTER / 15 < 65536, "frame phase");
+static uint32_t z80_frame_phase(const MdFull *m) {
+    uint32_t rest;
+    (void)m0_div64_16(m->sound_cpu.cycles, FRAME_MASTER / 15, &rest);
+    return rest * 15u;
+}
 
 static void z80_run(MdFull *m, uint64_t until) {
     z80_t *z = &m->sound_cpu;
 #if defined(MD_PERF)
     if (m->no_z80) return;
 #endif
-    const uint64_t target = until / 15u;
+    const uint64_t target = z80_clocks(until);
     if (!m->z80_reset || m->z80_bus || z->fault) {
         if (z->cycles < target) z->cycles = target;
         return;
@@ -123,7 +144,7 @@ static void z80_run(MdFull *m, uint64_t until) {
     /* /INT is held for about one line from the start of vertical blank;
      * the frame phase advances by each step's own clocks (a step is far
      * below one frame, so one conditional subtract keeps the modulo). */
-    uint32_t at = (uint32_t)(z80_time(m) % FRAME_MASTER);
+    uint32_t at = z80_frame_phase(m);
     static int irq_off = -1;   /* DP_MD_GENS_Z80IRQ: Gens raises /INT 168 Z80 cycles before the end of its V-int line (60 cycles in), not at its start */
     if (irq_off < 0) irq_off = getenv("DP_MD_GENS_Z80IRQ") ? 60 * 15 : 0;
     while (z->cycles < target && !z->fault) {
@@ -223,7 +244,7 @@ void md_full_sound_control(MdFull *m, unsigned reset_line, uint8_t value) {
     if (gstart) {
         const uint32_t spent = (uint32_t)(m->cycles - m->insn_cycles);
         now -= (uint64_t)spent * 7u;
-        if (!m->z80_reset || m->z80_bus || m->sound_cpu.fault) m->sound_cpu.cycles = now / 15u;
+        if (!m->z80_reset || m->z80_bus || m->sound_cpu.fault) m->sound_cpu.cycles = z80_clocks(now);
         else z80_run(m, now);
     } else z80_run(m, now);
     if (!reset_line) {

@@ -376,7 +376,7 @@ int select_many(uint8_t *sel, uint32_t lo, uint32_t hi) {
         while (b > 0 && cand[b - 1] > v) { cand[b] = cand[b - 1]; b--; }
         cand[b] = v;
     }
-    if (gbl_cgb) {
+    if (GBL_CGB_ON) {
         for (int k = 0; k < 10; k++) sel[k] = cand[k];   /* already index-sorted */
         return 10;
     }

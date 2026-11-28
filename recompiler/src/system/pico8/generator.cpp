@@ -80,6 +80,7 @@ bool generate(const fs::path& cartridge, const GenerateOptions& o, std::string& 
         for (const char* name : { "p8rt.c", "p8rt.h", "p8gfx.c", "p8gfx.h", "p8lib.c", "p8main.c", "p8main.h", "p8_audio.h",
                                   "p8_audio.c", "fix32.h", "trigtables.h", "p8_font.h", "p8_rom.h", "p8_natives.def", "p8_consts.def" })
             copy_template(tpl / "runtime" / name, src / name);
+        copy_template(o.meta_templates.parent_path() / "common" / "runtime" / "m0_divide.h", src / "m0_divide.h");
         std::ostringstream config;
         config << "#pragma once\n";
         /* what the 32 KiB of RAM leave once the screen (8 KiB), the drivers and a few KiB of C stack
