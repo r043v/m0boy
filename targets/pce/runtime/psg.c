@@ -56,10 +56,22 @@ void psg_write(psg_t *p, unsigned at, uint8_t value) {
     }
 }
 
-/* the channels' sample clock, 12 fractional bits, per output sample */
-static uint32_t wave_step(unsigned freq, unsigned rate) {
-    if (!freq) freq = 4096;
-    return (uint32_t)(((uint64_t)PSG_CLOCK << 12) / ((uint64_t)freq * rate));
+/* The channels' sample clock, 12 fractional bits, per output sample:
+   clock / (period * rate).  It only moves with a register or with the output
+   rate, so it is divided then and kept; the two divisions in a row floor to the
+   same value as the single one.  Slots 0 to 5 are the waves, 6 and 7 the noises. */
+static uint32_t clock_step(unsigned slot, unsigned period, unsigned rate) {
+    static struct { uint32_t rate, base, period[8], step[8]; } kept;
+    if (rate != kept.rate) {
+        kept.rate = rate;
+        kept.base = (uint32_t)(((uint64_t)PSG_CLOCK << 12) / rate);
+        memset(kept.period, 0, sizeof kept.period); /* no period is 0 */
+    }
+    if (period != kept.period[slot]) {
+        kept.period[slot] = period;
+        kept.step[slot] = kept.base / period;
+    }
+    return kept.step[slot];
 }
 
 static int channel_sample(psg_t *p, unsigned c, unsigned rate) {
@@ -69,8 +81,7 @@ static int channel_sample(psg_t *p, unsigned c, unsigned rate) {
         /* the noise: an 18-bit LFSR (the tap pair is an approximation,
          * the polynomial of the chip is not published) */
         const unsigned nf = (p->ch[c].noise & 0x1F) + 1;
-        p->ch[c].acc += (uint32_t)(((uint64_t)PSG_CLOCK << 12) /
-                                    ((uint64_t)nf * rate));
+        p->ch[c].acc += clock_step(c + 2, nf, rate);
         while (p->ch[c].acc >> 12) {
             p->ch[c].acc -= 1u << 12;
             const unsigned fb = ((p->lfsr >> 17) ^ (p->lfsr >> 12)) & 1;
@@ -80,7 +91,7 @@ static int channel_sample(psg_t *p, unsigned c, unsigned rate) {
     }
     if (control & 0x40) /* DDA: the last written sample, held */
         return (int)p->ch[c].dda - 16;
-    p->ch[c].acc += wave_step(p->ch[c].frequency, rate);
+    p->ch[c].acc += clock_step(c, p->ch[c].frequency ? p->ch[c].frequency : 4096, rate);
     if (p->ch[c].acc >> 12) {
         p->ch[c].waveform_index = (p->ch[c].waveform_index + (p->ch[c].acc >> 12)) & 0x1F;
         p->ch[c].acc &= 0x0FFF;

@@ -60,6 +60,7 @@ void generate_full_native(const std::vector<uint8_t> &rom, const GenerateOptions
     fs::remove(o.output / "rom.md");
     for (const char *n : {"md_full.h", "md_full_cpu.c", "md_full_bus.c", "md_full_video.c", "md_full_audio.c", "md_ym2612.h", "md_ym2612.c", "md_m68k_time.h", "md_m68k_ops.h"})
         copy_template(tpl / "runtime" / n, src / n);
+    copy_template(o.targets_dir / "common/runtime/m0_divide.h", src / "m0_divide.h");
     if (o.target == TargetId::aka)
         copy_template(tpl / "runtime/md_video_asm.S", src / "md_video_asm.S");
     for (const char *n : {"z80.h", "z80.c", "z80_ops.h"})

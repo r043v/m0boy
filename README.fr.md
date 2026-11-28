@@ -7,7 +7,9 @@ AKA et ODROID-GO) et en programmes SDL2 pour le PC.**
 
 *English version: [README.md](README.md).*
 
-m0boy n'est pas un émulateur. Il traduit le code du jeu lui-même en C,
+La GP32 fonctionne en émulation sur PC. Voir [le guide GP32](docs/GP32.fr.md).
+
+Pour les systèmes recompilés, m0boy traduit le code du jeu en C,
 compile ce C pour le processeur de la console et le lie à un petit runtime qui
 remplace le matériel d'origine (vidéo, son, timers, mappers). Le code que le
 recompilateur n'a pas pu prouver ou n'a jamais vu tourner passe par un petit

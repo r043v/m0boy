@@ -24,6 +24,8 @@ typedef sg1000_t sg_psg_t;
 #define SG_PSG(name) sg1000_##name
 #endif
 
+#include "m0_divide.h"
+
 #define SG_CLOCK 3579545u
 static const uint8_t level[16] = { 30, 24, 19, 15, 12, 10, 8, 6, 5, 4, 3, 2, 2, 1, 1, 0 };
 
@@ -44,7 +46,7 @@ void SG_PSG(audio_rate)(unsigned rate) {
  * live values: the M0+ keeps them in registers), then mixed.  The PSG ticks
  * (clock / 16) of each sample come from one Bresenham pass per block, shared
  * by the four channels; a silent channel only advances its counter (one
- * division).  The result equals producing the channels sample by sample. */
+ * division, in steps of the quotient's bits without a divider).  The result equals producing the channels sample by sample. */
 #define SG_AUDIO_BLOCK 128
 
 /* count after `total` ticks of a channel of this period, and the number of
@@ -52,8 +54,9 @@ void SG_PSG(audio_rate)(unsigned rate) {
 static inline uint32_t skip_ticks(int32_t *count, int32_t period, uint32_t total) {
     int32_t c = *count - (int32_t)total;
     if (c > 0) { *count = c; return 0; }
-    const uint32_t k = (uint32_t)(-c) / (uint32_t)period + 1;
-    *count = c + (int32_t)(k * (uint32_t)period);
+    uint32_t rest;
+    const uint32_t k = m0_udivmod((uint32_t)(-c), (uint32_t)period, &rest) + 1;
+    *count = (int32_t)((uint32_t)period - rest);
     return k;
 }
 
@@ -170,8 +173,14 @@ void SG_PSG(audio_catchup)(void) {
         uint32_t chunk = elapsed > 65536 ? 65536 : elapsed;
         elapsed -= chunk;
         const uint32_t phase = s->audio_phase + chunk * s->audio_rate;
+#if M0_DIVIDE32
         n += phase / SG_CLOCK;
         s->audio_phase = phase % SG_CLOCK;
+#else
+        uint32_t rest = phase; /* one turn per sample the block then produces */
+        while (rest >= SG_CLOCK) { rest -= SG_CLOCK; n++; }
+        s->audio_phase = rest;
+#endif
     }
     if (n) produce(s, n);
 }

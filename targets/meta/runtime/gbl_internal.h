@@ -23,6 +23,7 @@ void gbl_cgb_pal_reset(void);
 uint8_t gbl_cgb_pal_rd(uint8_t n);
 void gbl_cgb_pal_wr(uint8_t n, uint8_t v);
 extern uint8_t gbl_key1, gbl_cgb, gbl_vbk, gbl_svbk;
+int gbl_cgb_oam_dma_active(void);
 #endif
 static inline void gbl_ppu_sync(uint32_t now) {
     if ((int32_t)(now - gbl_ppu_due) >= 0) gbl_ppu_advance(now);

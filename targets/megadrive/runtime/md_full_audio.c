@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "md_full.h"
+#include "m0_divide.h"
 #include <string.h>
 
 /* One clock for every sound part: the NTSC master clock. The 68000 and the
@@ -75,6 +76,18 @@ static void audio_emit(MdFull *m, int left, int right) {
     }
 }
 
+/* last + (now - last) * f / (FM_MASTER * AUDIO_RATE), truncated toward zero,
+ * in 32-bit divisions.  f and the span are multiples of 75: f / 75 is an exact
+ * product by the inverse of 75, and the rest of the span is 64 * 9261. */
+_Static_assert(MASTER_HZ % 75 == 0 && FM_MASTER * AUDIO_RATE == 75 * 64 * 9261, "audio span");
+static int between(int last, int now, uint32_t f) {
+    const uint32_t part = f * 0x962fc963u; /* f / 75 */
+    const int delta = now - last;
+    const uint32_t size = delta < 0 ? 0u - (uint32_t)delta : (uint32_t)delta;
+    const int step = (int)((uint32_t)((uint64_t)size * part >> 6) / 9261u);
+    return last + (delta < 0 ? -step : step);
+}
+
 /* Produces every FM sample that ends at or before master clock `until`.
  * Output frame k sits at k * MASTER_HZ (scaled by AUDIO_RATE); that
  * position is tracked in audio_next, so a sample emits without any
@@ -97,9 +110,8 @@ static void audio_run(MdFull *m, uint64_t until) {
         const int now[2] = {fm[0] * 3 / 4 + psg, fm[1] * 3 / 4 + psg};
         const uint64_t start = m->audio_time * AUDIO_RATE;
         for (; m->audio_next <= start + (uint64_t)FM_MASTER * AUDIO_RATE; m->audio_next += MASTER_HZ) {
-            const int64_t f = (int64_t)(m->audio_next - start), span = (int64_t)FM_MASTER * AUDIO_RATE;
-            audio_emit(m, (int)(m->audio_last[0] + (now[0] - m->audio_last[0]) * f / span),
-                          (int)(m->audio_last[1] + (now[1] - m->audio_last[1]) * f / span));
+            const uint32_t f = (uint32_t)(m->audio_next - start);
+            audio_emit(m, between(m->audio_last[0], now[0], f), between(m->audio_last[1], now[1], f));
         }
         m->audio_last[0] = now[0];
         m->audio_last[1] = now[1];

@@ -45,6 +45,8 @@ static void codec(uint8_t reg, uint8_t value) {
     Wire.write(value);
     ESP_ERROR_CHECK(Wire.endTransmission() == 0 ? ESP_OK : ESP_FAIL);
 }
+static uint8_t shoulders; /* L1, R1, as read with the last buttons */
+extern "C" uint8_t esp32_shoulders(void) { return shoulders; }
 extern "C" uint8_t esp32_buttons(void) {
     uint16_t raw = 0;
     for (unsigned i = 0; i < 2; i++) {
@@ -52,6 +54,7 @@ extern "C" uint8_t esp32_buttons(void) {
         raw |= uint16_t(Wire.read()) << (8 * i);
     }
     uint16_t keys = (raw ^ 0xffc4) & 0xffc6; /* RUN active high, others active low */
+    shoulders = uint8_t((keys & 0x0080 ? M0_SHOULDER_L : 0) | (keys & 0x0040 ? M0_SHOULDER_R : 0));
     uint8_t out = 0;
     if (keys & 0x0400) out |= M0_MB_DOWN;
     if (keys & 0x0800) out |= M0_MB_LEFT;
@@ -76,11 +79,24 @@ extern "C" void esp32_restart(void) { ESP.restart(); for (;;) {} }
  * native RGB565; the i80 peripheral swaps the bytes of each one on the wire
  * (swap_color_bytes, as the official library does) — no software swap. */
 static esp_lcd_panel_io_handle_t panel;
+/* GP32 orientation, done by the panel alone: 0x40 (MX) mirrors the columns,
+ * 0x80 (MY) the rows, 0xc0 turns the picture by half a turn.  MV (0x20) stays
+ * clear.  0 follows from the landscape setting 0x60 of the other frontends;
+ * not yet seen on a console. */
+#ifndef M0_GP32_AKA_MADCTL
+#define M0_GP32_AKA_MADCTL 0x00u
+#endif
 /* What the panel is set to: the init below sends these very values, and gm0
  * reads them to model the glass (MADCTL bit 3 = BGR, i80 byte swap). */
 extern "C" const struct m0_aka_lcd_setup {
     uint8_t madctl, colmod, swap_color_bytes, inversion;
-} m0_aka_lcd __attribute__((used)) = {uint8_t(0x60u | (AKA_LCD_BGR ? 0x08u : 0u)), 0x55, 1, 1};
+} m0_aka_lcd __attribute__((used)) = {
+#if __has_include("gp32_config.h")
+    /* The panel's own portrait order: the GP32's LCD lines are its rows. */
+    uint8_t(M0_GP32_AKA_MADCTL | (AKA_LCD_BGR ? 0x08u : 0u)), 0x55, 1, 1};
+#else
+    uint8_t(0x60u | (AKA_LCD_BGR ? 0x08u : 0u)), 0x55, 1, 1};
+#endif
 static SemaphoreHandle_t color_done;
 /* free slots of the async wide path: the producer takes one per queued
  * batch, the transfer-done ISR gives it back.  The count matches the
@@ -135,7 +151,11 @@ extern "C" void m0_lcd_init(void) {
     config.bus_width = 8;
     /* the largest transfer is a batch of eight 320-pixel rows (md_esp32.cpp,
      * vx): esp_lcd asserts when one transfer outgrows this */
+#if __has_include("gp32_config.h")
+    config.max_transfer_bytes = 16 * 480; /* sixteen rows of the portrait panel */
+#else
     config.max_transfer_bytes = 8 * sizeof line;
+#endif
     config.psram_trans_align = 64;
     config.sram_trans_align = 64;
     ESP_ERROR_CHECK(esp_lcd_new_i80_bus(&config, &bus));
@@ -183,7 +203,7 @@ extern "C" uint32_t m0_lcd_send_rows(const void *buf, uint8_t row0, uint8_t rows
     return ++lcd_seq;
 }
 extern "C" uint32_t m0_lcd_done_seq(void) { return lcd_seq; }
-#if __has_include("md_config.h") || __has_include("vx_config.h") || __has_include("pce_config.h")
+#if __has_include("md_config.h") || __has_include("vx_config.h") || __has_include("pce_config.h") || __has_include("gp32_config.h")
 /* The Mega Drive's and the Vectrex's 320-column rows go out 1:1 (no
  * 160-column rescale); the rows already sit in the panel's RGB565 wire
  * order.  The async path sets the address window once per frame, then
@@ -222,13 +242,74 @@ extern "C" void m0_lcd_wide_flush(void) {
     while (uxSemaphoreGetCount(wide_slots) < WIDE_QUEUE) vTaskDelay(1);
 }
 #endif
+#if __has_include("gp32_config.h")
+/* The GP32 frontend draws from core 0 while the machine runs on core 1.
+ * A batch (at most eight rows, in internal memory) goes out as one window and
+ * one transfer, left in flight: the caller converts the next batch into
+ * another buffer, and the following send first waits for this one. */
+static bool batch_pending;
+extern "C" void m0_lcd_flush(void) {
+    if (batch_pending) {
+        xSemaphoreTake(color_done, portMAX_DELAY);
+        batch_pending = false;
+    }
+}
+static void batch_window(unsigned row0, unsigned rows) {
+    const unsigned last = row0 + rows - 1;
+    const uint8_t x[] = {0, 0, 0, 239};
+    const uint8_t r[] = {uint8_t(row0 >> 8), uint8_t(row0), uint8_t(last >> 8), uint8_t(last)};
+    command(0x2a, x, sizeof x);
+    command(0x2b, r, sizeof r);
+}
+extern "C" void m0_lcd_send_batch(const void *batch, unsigned row0, unsigned rows) {
+    m0_lcd_flush();
+    batch_window(row0, rows);
+    ESP_ERROR_CHECK(esp_lcd_panel_io_tx_color(panel, 0x2c, batch, rows * 480u));
+    batch_pending = true;
+}
+static TaskHandle_t display_handle, display_starter;
+static void (*display_draw)(void);
+static bool display_busy;
+static void display_task(void *) {
+    /* Initialised here, so that the transfer interrupts land on this core. */
+    m0_lcd_init();
+    m0_lcd_fill(0);
+    xTaskNotifyGive(display_starter);
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        display_draw();
+        __atomic_store_n(&display_busy, false, __ATOMIC_RELEASE);
+    }
+}
+extern "C" void m0_display_start(void (*draw)(void)) {
+    display_draw = draw;
+    display_starter = xTaskGetCurrentTaskHandle();
+    ESP_ERROR_CHECK(xTaskCreatePinnedToCore(display_task, "m0display", 4096, nullptr, 2,
+                                            &display_handle, 0) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+}
+extern "C" int m0_display_idle(void) { return !__atomic_load_n(&display_busy, __ATOMIC_ACQUIRE); }
+extern "C" void m0_display_post(void) {
+    __atomic_store_n(&display_busy, true, __ATOMIC_RELEASE);
+    xTaskNotifyGive(display_handle);
+}
+#endif
 extern "C" int m0_lcd_busy(void) { return 0; }
 extern "C" int m0_lcd_release(void) { return 1; }
 extern "C" void m0_lcd_wait(void) {}
 extern "C" void m0_lcd_end_frame(void) {}
 extern "C" void m0_lcd_fill(uint16_t color) {
     for (auto &pixel : line) pixel = color;
+#if __has_include("gp32_config.h")
+    m0_lcd_flush();
+    for (unsigned y = 0; y < 320; y++) {
+        batch_window(y, 1);
+        ESP_ERROR_CHECK(esp_lcd_panel_io_tx_color(panel, 0x2c, line, 480));
+        xSemaphoreTake(color_done, portMAX_DELAY);
+    }
+#else
     for (unsigned y = 0; y < 240; y++) draw_line(y);
+#endif
 }
 
 extern "C" void esp32_audio_pull(uint8_t *, unsigned);
@@ -281,8 +362,13 @@ extern "C" void esp32_audio_start(unsigned hz) {
             {22,0},{24,0},{25,0},{9,0x20},{16,0},{46,0},{48,0x20},{45,2}
         };
         for (const auto &r : path) codec(r[0], r[1]);
-        ESP_ERROR_CHECK(xTaskCreate(audio_task, "m0audio", 3072, nullptr, 5,
-                                   &audio_task_handle) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
+#if __has_include("gp32_config.h")
+        const BaseType_t core = 0; /* the machine keeps core 1 to itself */
+#else
+        const BaseType_t core = tskNO_AFFINITY;
+#endif
+        ESP_ERROR_CHECK(xTaskCreatePinnedToCore(audio_task, "m0audio", 3072, nullptr, 5,
+                                   &audio_task_handle, core) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
     }
     audio_enabled = true;
 }

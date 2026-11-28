@@ -11,8 +11,8 @@
 
 namespace m0boy {
 
-enum class CpuId { sm83, z80, lua, m6502, huc6280, m6809, m68k, w65c816, tlcs900h, m0plus };
-enum class SystemId { gameboy, sg1000, gamegear, mastersystem, pico8, msx, nes, pce, vectrex, megadrive, snes, ngp, meta, pokitto };
+enum class CpuId { sm83, z80, lua, m6502, huc6280, m6809, m68k, w65c816, tlcs900h, m0plus, arm920t };
+enum class SystemId { gameboy, sg1000, gamegear, mastersystem, pico8, msx, nes, pce, vectrex, megadrive, snes, ngp, meta, pokitto, gp32 };
 enum class TargetId { desktop, meta, pokitto, espboy, pc, odroid, aka };
 
 struct CpuDescriptor {
@@ -117,6 +117,9 @@ namespace snes {
 std::optional<CartridgeInfo> inspect(const std::filesystem::path&, std::string&);
 }
 namespace ngp {
+std::optional<CartridgeInfo> inspect(const std::filesystem::path&, std::string&);
+}
+namespace gp32 {
 std::optional<CartridgeInfo> inspect(const std::filesystem::path&, std::string&);
 }
 namespace m0plus {

@@ -268,7 +268,8 @@ void ws_audio_clock(Ws *ws, unsigned clocks)
                 unsigned output = audio->io[0x11];
                 // Speaker DAC wraps after its programmable right shift.
                 unsigned speaker = ((left + right) >> ((output >> 1) & 3)) & 255;
-                speaker = speaker * audio->io[0x1e] / 3;
+                /* / 3, exact below 98304: the product stays under 65026 */
+                speaker = speaker * audio->io[0x1e] * 43691u >> 17;
                 // The headphone output ignores the speaker/headphone enable bits —
                 // BizHawk's core always plays the mix — and re-centres every 4-bit wave
                 // sample on the DAC's mid-scale, sample - 8 per unit of volume.

@@ -8,6 +8,8 @@
 #include "gbl_timing_layout.h"
 
 #include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 gbl_cpu_t gbr;
@@ -20,6 +22,16 @@ static uint16_t hdma_src, hdma_dst;
 static uint8_t hdma_len; /* FF55 low bits: blocks left - 1 */
 static void hdma_service(void);
 static void hdma_write(uint8_t n, uint8_t v);
+#if GBL_CGB
+/* CGB OAM DMA: the transfer starts 8 cycles after the $FF46 write and
+ * moves one byte every 4 cycles (160 bytes over 640); a rewrite restarts
+ * it. Progress lives here so save states resume mid-transfer. */
+static uint16_t cgb_dma_src, cgb_dma_next_src;
+static uint32_t cgb_dma_start_at, cgb_dma_restart_at;
+static uint8_t cgb_dma_pos, cgb_dma_running, cgb_dma_restart, cgb_dma_inside;
+static void cgb_dma_sync(void);
+static void cgb_dma_start(uint16_t src);
+#endif
 /* Banked addresses: VRAM bank 1 sits at +$2000; WRAM bank n (1..7) at
  * n * $1000, so D000 with SVBK=1 is the DMG layout. */
 #define VOFF(o) ((uint16_t)((o) + (gbl_vbk ? 0x2000u : 0u)))
@@ -341,6 +353,14 @@ static uint32_t eram_bank(void) {
 }
 #endif
 
+/* A weak default the frontend may replace.  noipa: a link-time optimised partial link of the runtime alone (ld -r)
+ * only sees this body, and without it GCC folds it into the callers: the frontend's definition is never called. */
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 8
+#define GBL_WEAK_HOOK __attribute__((weak, noipa))
+#else
+#define GBL_WEAK_HOOK __attribute__((weak))
+#endif
+
 /* ---- MBC3 RTC ------------------------------------------------------------
  * Cartridge types 0F/10: RAM bank number 08-0C selects the five registers
  * instead of a RAM bank (00 arms the latch at 6000-7FFF, 01 snapshots).
@@ -358,7 +378,7 @@ static uint32_t eram_bank(void) {
  * in the .SAV (the file is GBL_SAVE_BYTES long, 512 more than
  * GBL_ERAM_SIZE when GBL_RTC); the ESPboy has no RTC. */
 #if GBL_RTC && GBL_MBC == 3 && !defined(ESP8266)
-uint32_t __attribute__((weak)) gbl_platform_rtc(void) { return 0; }
+GBL_WEAK_HOOK uint32_t gbl_platform_rtc(void) { return 0; }
 extern uint32_t gbl_save_last_change; /* defined below, in both branches */
 
 static struct {
@@ -1440,9 +1460,20 @@ void gbl_sync_serial(uint32_t now) {
 #if !GBL_TIMING_ASM /* else gbl_timing_asm.S */
 void gbl_sync(void) {
     uint32_t now = gbr.cyc;
+#if GBL_CGB
+    if (gbl_cgb) cgb_dma_sync();
+#endif
     gbl_ppu_sync(now);
 #if GBL_CGB
     if (gbl_hdma_pend) hdma_service();
+    /* An HDMA block stalls the CPU while the other devices keep running. */
+    if (now != gbr.cyc) {
+        now = gbr.cyc;
+#if GBL_CGB
+        if (gbl_cgb) cgb_dma_sync();
+#endif
+        gbl_ppu_sync(now);
+    }
 #endif
     timer_sync(now);
     gbl_sync_serial(now);
@@ -1675,10 +1706,14 @@ void gbl_io_wr(uint8_t n, uint8_t v) {
     case 0x0F: gbl_sync(); IF = v & 0x1F; gbl_update_evt(); return;
 #if GBL_CGB
     case 0x4F:
-        if (gbl_cgb && gbl_vbk != (v & 1u)) {
-            gbl_ppu_sync(gbr.cyc);
-            gbl_vbk = v & 1u;
-            map_pages();
+        if (gbl_cgb) {
+            { static int8_t dlog = -1; if (dlog < 0) dlog = getenv("GBL_SPRITE_LOG") && *getenv("GBL_SPRITE_LOG") == '1';
+              if (dlog) fprintf(stderr, "vbk f%u w %02x -> %u (pc %04x)\n", gbl_frame, v, v & 1u, gbr.pc); }
+            if (gbl_vbk != (v & 1u)) {
+                gbl_ppu_sync(gbr.cyc);
+                gbl_vbk = v & 1u;
+                map_pages();
+            }
         }
         return;
     case 0x51: case 0x52: case 0x53: case 0x54: case 0x55:
@@ -1708,6 +1743,9 @@ void gbl_io_wr(uint8_t n, uint8_t v) {
 #endif
         if (v >= 0xE0 && !GBL_CGB_ON) src = (uint16_t)(src - 0x2000u); /* DMG: $E0-$FF sources read the WRAM echo */
 #endif
+#if GBL_CGB
+        if (gbl_cgb) { cgb_dma_start(src); gbl_io[0x46] = v; return; } /* spread transfer, see cgb_dma_sync */
+#endif
 #if GBL_OAM_DMA_BUS
         dma_start(src); /* the copy itself happens when the transfer begins */
 #else
@@ -1730,6 +1768,8 @@ void gbl_io_wr(uint8_t n, uint8_t v) {
 #if GBL_CGB
 /* One 16-byte block of a VRAM DMA (GDMA or HDMA). */
 static void hdma_block(void) {
+    { static int8_t dlog = -1; if (dlog < 0) dlog = getenv("GBL_SPRITE_LOG") && *getenv("GBL_SPRITE_LOG") == '1';
+      if (dlog) fprintf(stderr, "hdma blk f%u src %04x dst %04x vbk %u\n", gbl_frame, hdma_src, hdma_dst, gbl_vbk); }
     for (unsigned i = 0; i < 16; i++) {
         uint8_t v = gbl_rd((uint16_t)(hdma_src + i));
         gbl_vram_wr((uint16_t)((hdma_dst + i) & 0x1FFFu), v);
@@ -1757,10 +1797,16 @@ static void hdma_write(uint8_t n, uint8_t v) {
         if (gbl_hdma_active && !(v & 0x80)) { gbl_hdma_active = 0; gbl_hdma_pend = 0; gbl_update_evt(); return; }
         hdma_len = v & 0x7F;
         if (v & 0x80) {
+            { static int8_t dlog = -1; if (dlog < 0) dlog = getenv("GBL_SPRITE_LOG") && *getenv("GBL_SPRITE_LOG") == '1';
+              if (dlog) fprintf(stderr, "hdma arm f%u src %04x dst %04x len %u vbk %u\n",
+                                gbl_frame, hdma_src, hdma_dst, (unsigned)hdma_len + 1u, gbl_vbk); }
             gbl_hdma_active = 1;
             gbl_ppu_sync(gbr.cyc);
             if (gbl_ppu_in_hblank()) gbl_hdma_pend = 1;
         } else {
+            { static int8_t dlog = -1; if (dlog < 0) dlog = getenv("GBL_SPRITE_LOG") && *getenv("GBL_SPRITE_LOG") == '1';
+              if (dlog) fprintf(stderr, "hdma gdma f%u src %04x dst %04x len %u vbk %u\n",
+                                gbl_frame, hdma_src, hdma_dst, (unsigned)hdma_len + 1u, gbl_vbk); }
             for (unsigned b = 0; b <= hdma_len; b++) hdma_block();
             gbr.cyc += 4; /* one CPU M-cycle at the end of the transfer */
             hdma_len = 0x7F;
@@ -1849,6 +1895,77 @@ static void dma_start(uint16_t src) {
     dma_s[dma_n] = st; dma_e[dma_n] = st + 640; dma_src[dma_n] = src; dma_n++;
 }
 #endif
+#if GBL_CGB
+/* The three DMA source buses (cartridge, VRAM, WRAM): a CPU access on the
+ * bus the CGB OAM DMA is reading sees the byte in flight. */
+static unsigned cgb_dma_bus(uint16_t a) {
+    if (a < 0x8000 || (a >= 0xA000 && a < 0xC000)) return 1;
+    if (a < 0xA000) return 2;
+    return 3;
+}
+static uint8_t cgb_dma_source_read(uint16_t a) {
+    if (a >= 0x8000u && a < 0xA000u)
+        return gbl_vram[(a - 0x8000u) + (gbl_vbk ? 0x2000u : 0u)];
+    return gbl_rd(a >= 0xE000u ? (uint16_t)(a - 0x2000u) : a);
+}
+static void cgb_dma_sync(void) {
+    if (cgb_dma_inside) return;
+    cgb_dma_inside = 1;
+    uint32_t limit = gbr.cyc;
+    if (cgb_dma_restart && (int32_t)(limit - cgb_dma_restart_at) >= 0)
+        limit = cgb_dma_restart_at - 1u;
+    if (cgb_dma_running && (int32_t)(limit - cgb_dma_start_at) >= 0) {
+        uint32_t target = (limit - cgb_dma_start_at) / 4u + 1u;
+        if (target > 0xA0u) target = 0xA0u;
+        while (cgb_dma_pos < target) {
+            uint16_t src = (uint16_t)(cgb_dma_src + cgb_dma_pos);
+            uint8_t value = cgb_dma_source_read(src);
+            if (gbl_oam[cgb_dma_pos] != value) {
+                gbl_oam[cgb_dma_pos] = value;
+                gbl_oam_dirty = 1;
+                gbl_ppu_content_changed();
+            }
+            cgb_dma_pos++;
+        }
+        if (cgb_dma_pos == 0xA0u) cgb_dma_running = 0;
+    }
+    if (cgb_dma_restart && (int32_t)(gbr.cyc - cgb_dma_restart_at) >= 0) {
+        cgb_dma_src = cgb_dma_next_src;
+        cgb_dma_start_at = cgb_dma_restart_at;
+        cgb_dma_pos = 0;
+        cgb_dma_running = 1;
+        cgb_dma_restart = 0;
+        cgb_dma_inside = 0;
+        cgb_dma_sync();
+        return;
+    }
+    cgb_dma_inside = 0;
+}
+static void cgb_dma_start(uint16_t src) {
+    cgb_dma_sync();
+    cgb_dma_next_src = src;
+    cgb_dma_restart_at = gbr.cyc + 8u;
+    cgb_dma_restart = 1;
+}
+int gbl_cgb_oam_dma_active(void) {
+    if (!gbl_cgb) return 0;
+    cgb_dma_sync();
+    return cgb_dma_running || cgb_dma_restart;
+}
+static int cgb_dma_conflict(uint16_t addr, uint8_t *value) {
+    if (!gbl_cgb || cgb_dma_inside) return 0;
+    cgb_dma_sync();
+    if (!cgb_dma_running || addr >= 0xFF00) return 0;
+    if (addr >= 0xFE00) { *value = 0xFF; return 1; }
+    if (cgb_dma_bus(addr) != cgb_dma_bus(cgb_dma_src)) return 0;
+    unsigned pos = cgb_dma_pos ? cgb_dma_pos - 1u : 0u;
+    uint16_t src = (uint16_t)(cgb_dma_src + pos);
+    cgb_dma_inside = 1;
+    *value = cgb_dma_source_read(src);
+    cgb_dma_inside = 0;
+    return 1;
+}
+#endif
 /* Unmapped pages (IO, OAM, HRAM, MBC registers, streamed ROM...); also the
  * tail of the assembly gbl_rd. */
 uint8_t gbl_rd_slow(uint16_t a) {
@@ -1892,6 +2009,9 @@ uint8_t gbl_rd_slow(uint16_t a) {
 #if !(GBL_CORE_ASM && defined(__ARM_ARCH_6M__)) /* else gbl_core_asm.S */
 uint8_t gbl_rd(uint16_t a) {
     GBL_ERAM_TRACE(a, 0);
+#if GBL_CGB
+    { uint8_t dv; if (cgb_dma_conflict(a, &dv)) return dv; }
+#endif
 #if GBL_OAM_DMA_BUS
     { uint8_t dv; if (dma_conflict(a, &dv)) return dv; }
 #endif
@@ -1923,6 +2043,9 @@ void gbl_vram_wr(uint16_t off, uint8_t v) {
 #if !(GBL_CORE_ASM && defined(__ARM_ARCH_6M__)) /* else gbl_core_asm.S */
 void gbl_wr(uint16_t a, uint8_t v) {
     GBL_ERAM_TRACE(a, eram_load(eram_offset(a)) != v);
+#if GBL_CGB
+    { uint8_t dv; if (cgb_dma_conflict(a, &dv)) return; }
+#endif
 #if GBL_OAM_DMA_BUS
     { uint8_t dv; if (dma_conflict(a, &dv)) return; }
 #endif
@@ -2039,7 +2162,7 @@ uint16_t gbl_pop(void) {
 /* ---- interrupts and execution ------------------------------------------- */
 
 uint8_t gbl_safe_request;
-__attribute__((weak)) void gbl_platform_safe_point(void) {}
+GBL_WEAK_HOOK void gbl_platform_safe_point(void) {}
 
 #if GBL_DEBUG_RESTART
 #if defined(__arm__)
@@ -2432,6 +2555,10 @@ void gbl_reset(void) {
 #if GBL_CGB
     gbl_cgb_pal_reset();
     gbl_hdma_active = 0; gbl_hdma_pend = 0; hdma_len = 0x7F; hdma_src = hdma_dst = 0;
+#if GBL_CGB
+    cgb_dma_running = 0; cgb_dma_restart = 0; cgb_dma_pos = 0; cgb_dma_inside = 0;
+    cgb_dma_src = cgb_dma_next_src = 0; cgb_dma_start_at = cgb_dma_restart_at = 0;
+#endif
     gbl_cgb = 0; gbl_vbk = 0; gbl_svbk = 1; gbl_key1 = 0; gbl_dshift = 0;
 #endif
     memset(gbl_wram, 0, sizeof(gbl_wram));
@@ -2518,6 +2645,16 @@ static void state_mem(gbl_state_fn io, void *ctx, int load) {
     io(gbl_cgb_pal, sizeof(gbl_cgb_pal), ctx);
     io(gbl_cgb_ps, sizeof(gbl_cgb_ps), ctx);
     io(&gbl_dshift, sizeof(gbl_dshift), ctx);
+#if GBL_CGB
+    io(&cgb_dma_src, sizeof(cgb_dma_src), ctx);
+    io(&cgb_dma_next_src, sizeof(cgb_dma_next_src), ctx);
+    io(&cgb_dma_start_at, sizeof(cgb_dma_start_at), ctx);
+    io(&cgb_dma_restart_at, sizeof(cgb_dma_restart_at), ctx);
+    io(&cgb_dma_pos, sizeof(cgb_dma_pos), ctx);
+    io(&cgb_dma_running, sizeof(cgb_dma_running), ctx);
+    io(&cgb_dma_restart, sizeof(cgb_dma_restart), ctx);
+    if (load) cgb_dma_inside = 0;
+#endif
 #endif
 #if GBL_ERAM_SIZE > 0 && GBL_ERAM_ON_SD
     /* The cartridge RAM is the save file: copied through the sector cache's

@@ -664,7 +664,7 @@ void sg1000_filter_line(const uint8_t *pixels, uint16_t *out) {
 
 /* the sprites of the previous line, for the pair drawn with it */
 static M0_TL sprite_t prev_spr[4];
-static unsigned prev_n, prev_y = ~0u;
+static M0_TL unsigned prev_n, prev_y = ~0u;
 
 /* Device row from two source lines (ya, ya + 1) of one tile row: tiles
  * whose two lines share their colour byte are filtered once with the mean

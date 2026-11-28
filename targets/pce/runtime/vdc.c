@@ -286,7 +286,7 @@ static void draw_sprites(vdc_t *v) {
     /* the sprites compose into a scratch row first (the first of the list
      * wins), 16-pixel blocks at a time: only the blocks a sprite touches
      * are cleared, painted and merged into the background */
-    static uint16_t sprite_line[1056] __attribute__((aligned(8)));
+    static M0_TL uint16_t sprite_line[1056] __attribute__((aligned(8)));
     const unsigned width = v->row_width;
     uint64_t touched = 0;
 

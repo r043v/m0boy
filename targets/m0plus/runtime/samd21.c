@@ -85,14 +85,21 @@ static void st7735(Samd21 *b, uint8_t v) {
 static uint32_t sercom4_hz(const Samd21 *b) {
     return b->gclk6_pll && b->dpll_on ? (uint32_t)(b->dpll_ldr + 1u) * 1000000u : SAMD21_CPU_HZ;
 }
-static uint32_t spi_byte_cycles(const Samd21 *b) {
-    uint32_t hz = sercom4_hz(b);
-    return (uint32_t)(((uint64_t)16u * ((b->spi_baud & 255u) + 1u) * SAMD21_CPU_HZ + hz / 2u) / hz);
+/* A byte's time, in cycles or in thirds of a cycle.  Both are 64-bit divisions
+ * that only move with the clock or the baud register: divided then, and kept. */
+static uint32_t spi_byte_time(const Samd21 *b, uint32_t scale) {
+    static struct { uint32_t hz, baud, scale, time; } kept[2];
+    const uint32_t hz = sercom4_hz(b), baud = b->spi_baud & 255u, at = scale == 48u;
+    if (hz != kept[at].hz || baud != kept[at].baud || scale != kept[at].scale) {
+        kept[at].hz = hz;
+        kept[at].baud = baud;
+        kept[at].scale = scale;
+        kept[at].time = (uint32_t)(((uint64_t)scale * (baud + 1u) * SAMD21_CPU_HZ + hz / 2u) / hz);
+    }
+    return kept[at].time;
 }
-static uint32_t spi_byte_thirds(const Samd21 *b) {
-    uint32_t hz = sercom4_hz(b);
-    return (uint32_t)(((uint64_t)48u * ((b->spi_baud & 255u) + 1u) * SAMD21_CPU_HZ + hz / 2u) / hz);
-}
+static uint32_t spi_byte_cycles(const Samd21 *b) { return spi_byte_time(b, 16u); }
+static uint32_t spi_byte_thirds(const Samd21 *b) { return spi_byte_time(b, 48u); }
 static uint8_t pad_byte_24(uint8_t v) {
     return (uint8_t)(((v >> 1) & 0x3fu) | (v & 1u) << 6 | (v & 0x80u));
 }

@@ -18,6 +18,7 @@ constexpr std::array cpu_table = {
     CpuDescriptor{CpuId::m68k, "m68k", false}, // bounded compiler decoder, no --disasm listing yet
     CpuDescriptor{CpuId::w65c816, "w65c816", false}, // SNES 5A22; every byte is a defined opcode
     CpuDescriptor{CpuId::tlcs900h, "tlcs900h", false}, // Neo Geo Pocket; the runtime decodes it
+    CpuDescriptor{CpuId::arm920t, "arm920t", false},
     CpuDescriptor{CpuId::m0plus, "m0plus", true},
 };
 
@@ -59,6 +60,7 @@ constexpr std::array snes_targets = {TargetId::desktop, TargetId::pc};
 // Neo Geo Pocket: the interpreter on the desktop harness, the PC's SDL2
 // window and the consoles (the 160x152 frame and the ~28 KiB of guest RAM
 // fit every console; the consoles wait on the generator, not the RAM).
+constexpr std::array gp32_targets = {TargetId::desktop, TargetId::pc};
 constexpr std::array ngp_targets = {TargetId::desktop, TargetId::pc};
 constexpr std::array<TargetId, 0> no_targets {};
 
@@ -104,6 +106,8 @@ constexpr std::array system_table = {
      * 19 KiB of VRAM and palettes, the 160x152 frame and the line buffers. */
     SystemDescriptor{SystemId::ngp, "ngp", CpuId::tlcs900h, 0x0000,
                      12288, 40960, ngp::inspect, ngp_targets},
+    SystemDescriptor{SystemId::gp32, "gp32", CpuId::arm920t, 0,
+                     8 * 1024 * 1024, 8 * 1024 * 1024, gp32::inspect, gp32_targets},
     SystemDescriptor{SystemId::meta, "meta", CpuId::m0plus, 0x4004,
                      32768, 32768, m0plus::inspect_meta, meta_source_targets},
     SystemDescriptor{SystemId::pokitto, "pokitto", CpuId::m0plus, 0x0004,
@@ -204,6 +208,7 @@ std::optional<SystemId> detect_system(const std::filesystem::path& path) {
     if (ext == ".pce") return SystemId::pce;
     if (ext == ".vec") return SystemId::vectrex;
     if (ext == ".md" || ext == ".gen") return SystemId::megadrive;
+    if (ext == ".fxe") return SystemId::gp32;
     if (ext == ".sfc" || ext == ".smc" || ext == ".swc") return SystemId::snes;
     if (ext == ".ngp" || ext == ".ngc" || ext == ".ngd") return SystemId::ngp;
     if (ext == ".rom") { // a MSX ROM starts with "AB"

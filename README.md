@@ -7,7 +7,9 @@ ODROID-GO) and into SDL2 programs for the PC.**
 
 *Version française : [README.fr.md](README.fr.md).*
 
-m0boy is not an emulator. It translates a game's own code into C, compiles
+GP32 FXE executables run through the PC interpreter. See the [GP32 guide](docs/GP32.fr.md).
+
+For the recompiled systems, m0boy translates a game's own code into C, compiles
 that C for the handheld's processor and links it with a compact runtime that
 stands in for the original hardware (video, sound, timers, mappers). Code the
 recompiler could not prove or never saw running falls back to a small

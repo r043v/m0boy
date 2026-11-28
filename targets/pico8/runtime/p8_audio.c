@@ -2,6 +2,7 @@
 #include "p8_audio.h"
 #include "p8gfx.h"
 #include "p8rt.h"
+#include "m0_divide.h"
 #include <string.h>
 
 #define CHANNELS 4
@@ -17,7 +18,7 @@ enum { E_NONE, E_SLIDE, E_VIBRATO, E_DROP, E_FADEIN, E_FADEOUT, E_ARP_FAST, E_AR
 
 typedef struct {
     uint8_t mode, sfx, note, end;
-    uint32_t position;      /* samples since the start of the sfx */
+    uint32_t into;          /* samples played of the current note */
     uint32_t phase;         /* oscillator, one cycle = 2^32 */
     uint32_t samples_per_note;
     uint32_t inc;           /* phase step of the current note and effect */
@@ -60,7 +61,7 @@ static void channel_start(Chan *c, int n, int start, int end, int mode) {
     c->end = (uint8_t)end;
     c->samples_per_note = (uint32_t)((uint64_t)sample_rate * (sfx_speed(n) + 1) / 128u);
     if (!c->samples_per_note) c->samples_per_note = 1;
-    c->position = (uint32_t)start * c->samples_per_note;
+    c->into = 0;
     c->held_key = 0xffff;
 }
 
@@ -140,9 +141,16 @@ static inline int wave(const Chan *c, uint32_t ph16) {
     const int a = c->amplitude;
     switch (c->waveform) {
     case W_TRIANGLE: return ph16 < 32768 ? a - (int)((a * ph16) >> 14) : -a + (int)((a * (ph16 - 32768)) >> 14);
-    case W_TILTED_SAW: /* up for 85 % of the cycle, then down */
-        return ph16 < 55705 ? -a + (int)(((uint32_t)(((2 * a) << 16) / 55705u) * ph16) >> 16)
-                            : a - (int)(((uint32_t)(((2 * a) << 16) / 9831u) * (ph16 - 55705)) >> 16);
+    case W_TILTED_SAW: { /* up for 85 % of the cycle, then down; the slopes of the 8 volumes */
+#define UP(v) ((2u * MAX_VOLUME_STEP * (v) << 16) / 55705u)
+#define DOWN(v) ((2u * MAX_VOLUME_STEP * (v) << 16) / 9831u)
+        static const uint32_t up[8] = { UP(0), UP(1), UP(2), UP(3), UP(4), UP(5), UP(6), UP(7) };
+        static const uint32_t down[8] = { DOWN(0), DOWN(1), DOWN(2), DOWN(3), DOWN(4), DOWN(5), DOWN(6), DOWN(7) };
+#undef UP
+#undef DOWN
+        const unsigned v = (unsigned)a / MAX_VOLUME_STEP; /* a power of two */
+        return ph16 < 55705 ? -a + (int)((up[v] * ph16) >> 16) : a - (int)((down[v] * (ph16 - 55705)) >> 16);
+    }
     case W_SAW: return -a + (int)((2 * a * ph16) >> 16);
     case W_SQUARE: return ph16 < 32768 ? -a : a;
     case W_PULSE: return ph16 < 21845 ? a : -a;
@@ -168,8 +176,7 @@ static void update_note(Chan *c) {
     int eff_pitch = pitch, eff_volume = volume;
     c->waveform = (uint8_t)((data & 0x01c0) >> 6);
     if (effect != E_NONE) {
-        const uint32_t into = c->position % c->samples_per_note;
-        const int t = (int)(((uint64_t)into * 256) / c->samples_per_note); /* 0..255 */
+        const int t = (int)m0_ratio256(c->into, c->samples_per_note); /* 0..255 */
         switch (effect) {
         case E_SLIDE: {
             int prev = pitch;
@@ -185,8 +192,8 @@ static void update_note(Chan *c) {
         case E_DROP: eff_pitch = (pitch * (256 - t)) >> 8; break;
         case E_FADEIN: eff_volume = (volume * t) >> 8; break;
         case E_FADEOUT: eff_volume = (volume * (256 - t)) >> 8; break;
-        case E_ARP_FAST: { const int phase = ((t * 4) >> 8) % 3; eff_pitch = pitch + (phase == 1 ? 4 : phase == 2 ? 7 : 0); break; }
-        case E_ARP_SLOW: { const int phase = ((t * 2) >> 8) % 3; eff_pitch = pitch + (phase == 1 ? 4 : phase == 2 ? 7 : 0); break; }
+        case E_ARP_FAST: { const int q = (t * 4) >> 8, phase = q == 3 ? 0 : q; eff_pitch = pitch + (phase == 1 ? 4 : phase == 2 ? 7 : 0); break; }
+        case E_ARP_SLOW: { const int phase = (t * 2) >> 8; eff_pitch = pitch + (phase == 1 ? 4 : phase == 2 ? 7 : 0); break; }
         }
         if (eff_pitch < 0) eff_pitch = 0;
         if (eff_pitch > 63) eff_pitch = 63;
@@ -196,7 +203,9 @@ static void update_note(Chan *c) {
     const uint16_t key = (uint16_t)(eff_pitch | (eff_volume << 6) | (c->waveform << 9));
     if (key != c->held_key) { /* only when something changed */
         c->held_key = key;
-        c->inc = inc_base[eff_pitch % 12] << (eff_pitch / 12);
+        unsigned note = (unsigned)eff_pitch, octave = 0;
+        while (note >= 12) { note -= 12; octave++; }
+        c->inc = inc_base[note] << octave;
         c->amplitude = (int16_t)(MAX_VOLUME_STEP * eff_volume);
     }
 }
@@ -214,7 +223,7 @@ void p8_audio_render(uint8_t *buffer, unsigned n) {
                 update_note(c);
                 /* up to the end of the block, of the note, or 128 samples */
                 unsigned run = block - done;
-                const uint32_t left = c->samples_per_note - c->position % c->samples_per_note;
+                const uint32_t left = c->samples_per_note - c->into;
                 if (run > left) run = left;
                 if (c->amplitude && c->waveform != W_PHASER) {
                     uint32_t ph = c->phase;
@@ -222,8 +231,8 @@ void p8_audio_render(uint8_t *buffer, unsigned n) {
                     c->phase = ph;
                 } else c->phase += c->inc * run;
                 done += run;
-                c->position += run;
-                c->note = (uint8_t)(c->position / c->samples_per_note);
+                c->into += run;
+                if (c->into >= c->samples_per_note) { c->into = 0; c->note++; } /* a run stops at the note's end */
                 if (c->note >= c->end) channel_ended(c); /* may restart the channel on the next pattern */
             }
         }

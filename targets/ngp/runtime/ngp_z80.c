@@ -8,10 +8,11 @@
 #define M0_TL
 #endif
 #include "ngp.h"
+#include <stddef.h>
 #include <string.h>
 #include "z80_ops.h"
 
-static z80_t z80_cpu;
+static M0_TL z80_t z80_cpu;   /* one per machine instance, like `machine` */
 
 static uint8_t ngp_z80_read(void *u, uint16_t addr) {
     (void)u;
@@ -49,6 +50,19 @@ void ngp_z80_reset(void) {
     z80_cpu.in = ngp_z80_in;
     z80_cpu.out = ngp_z80_out;
     z80_reset(&z80_cpu);
+}
+
+/* the registers travel in the machine state: everything ahead of the host
+ * pointers, which each instance keeps as its own reset set them */
+_Static_assert(offsetof(z80_t, user) == NGP_Z80_STATE_BYTES, "NGP_Z80_STATE_BYTES");
+
+void ngp_z80_state_io(uint8_t *p, int load) {
+    if (!load) { memcpy(p, &z80_cpu, NGP_Z80_STATE_BYTES); return; }
+    memcpy(&z80_cpu, p, NGP_Z80_STATE_BYTES);
+    z80_cpu.read = ngp_z80_read;
+    z80_cpu.write = ngp_z80_write;
+    z80_cpu.in = ngp_z80_in;
+    z80_cpu.out = ngp_z80_out;
 }
 
 void ngp_z80_irq(void) { z80_cpu.irq = 1; }

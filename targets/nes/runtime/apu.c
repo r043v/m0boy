@@ -1,4 +1,7 @@
 #include "apu.h"
+#ifndef M0_TL
+#define M0_TL   /* deepeel builds with -DM0_TL=__thread */
+#endif
 
 /* The sampled APU: every output sample advances each channel by the CPU
  * cycles it spans (fractional cycles carried), and the envelope, length
@@ -332,7 +335,7 @@ void nes_apu_render(nes_apu_t *apu, uint8_t *dst, unsigned n, unsigned rate) {
      * the remainder once per rate (the frontends keep one rate), an add and
      * a compare per sample (sample_frac stays below rate); chunks short
      * enough for the marks array (eight envelope periods) */
-    static unsigned cached_rate, whole, part, chunk;
+    static M0_TL unsigned cached_rate, whole, part, chunk;
     if (rate != cached_rate) {
         cached_rate = rate;
         whole = NES_APU_CPU_HZ / rate;
@@ -341,7 +344,7 @@ void nes_apu_render(nes_apu_t *apu, uint8_t *dst, unsigned n, unsigned rate) {
         if (chunk > APU_CHUNK) chunk = APU_CHUNK;
         if (!chunk) chunk = 1;
     }
-    static apu_chunk ch;
+    static M0_TL apu_chunk ch;
     while (n) {
         ch.n = n < chunk ? n : chunk;
         ch.marks = 0;

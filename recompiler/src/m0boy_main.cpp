@@ -298,9 +298,10 @@ void make_tar(const fs::path& out, const std::vector<std::pair<fs::path, std::st
 }
 
 void usage() {
-    std::cerr << "usage: m0boy ROM [target] [--out DIR] [--jobs N] [--no-deepeel] [--system S] [-- m0recomp options]\n"
+    std::cerr << "usage: m0boy ROM [target] [--out DIR] [--jobs N] [--no-deepeel] [--system S] [--run] [-- m0recomp options]\n"
                  "  target: pc (default: this machine), meta, pokitto, espboy, odroid, aka\n"
-                 "  writes <ROM stem>.m0boy/<name>-<target>-release.tar.gz and -source.tar.gz\n";
+                 "  writes <ROM stem>.m0boy/<name>-<target>-release.tar.gz and -source.tar.gz\n"
+                 "  --run starts the GP32 emulator after building it\n";
 }
 
 }  // namespace
@@ -310,6 +311,7 @@ int main(int argc, char** argv) {
     unsigned jobs = 0; bool no_deepeel = false;
     std::vector<std::string> extra;
     bool passthru = false;
+    bool run_after = false;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         if (passthru) extra.push_back(a);
@@ -318,6 +320,7 @@ int main(int argc, char** argv) {
         else if (a == "--jobs" && i + 1 < argc) jobs = (unsigned)atoi(argv[++i]);
         else if (a == "--system" && i + 1 < argc) forced = argv[++i];
         else if (a == "--no-deepeel") no_deepeel = true;
+        else if (a == "--run") run_after = true;
         else if (a == "-h" || a == "--help") { usage(); return 0; }
         else if (a.rfind("--", 0) == 0) extra.push_back(a);
         else if (rom_arg.empty()) rom_arg = a;
@@ -331,10 +334,29 @@ int main(int argc, char** argv) {
     if (target.empty()) target = "pc";
 
     std::string system = detect_system(rom, forced);
+    if (run_after && system != "gp32") die("--run is currently available for GP32");
     std::string name = rom.stem().string();
-    fs::path out = out_arg.empty() ? rom.parent_path() / (name + ".m0boy") : fs::absolute(out_arg);
+    fs::path out = out_arg.empty()
+        ? (system == "gp32" ? fs::absolute("output") : rom.parent_path()) / (name + ".m0boy")
+        : fs::absolute(out_arg);
     fs::create_directories(out);
     say(rom.filename().string() + ": " + system + " -> " + target);
+
+    if (system == "gp32") {
+        const fs::path project = out / "project";
+        std::vector<std::string> args = {rom.string(), "--system", system, "--target", target,
+                                         "-o", project.string()};
+        args.insert(args.end(), extra.begin(), extra.end());
+        if (int rc = m0recomp_call(args)) die("m0recomp failed (" + std::to_string(rc) + ")");
+        const fs::path build = project / "build";
+        must({"cmake", "-G", "Ninja", "-S", project.string(), "-B", build.string(),
+              "-DCMAKE_BUILD_TYPE=Release"}, true);
+        must({"cmake", "--build", build.string(), "-j", std::to_string(jobs)}, true);
+        const std::string run_target = target == "pc" ? "run" : "run_headless";
+        if (run_after) must({"cmake", "--build", build.string(), "--target", run_target}, true);
+        else say("Run the GP32 emulator with ninja -C " + build.string() + " " + run_target);
+        return 0;
+    }
 
     // coverage: beside the ROM, else deepeel makes it
     auto locate = [&](const fs::path& dir, fs::path& cov, fs::path& png, fs::path& rt) {

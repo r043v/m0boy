@@ -919,7 +919,7 @@ bool generate(const fs::path& path, const GenerateOptions& o, GenerateStats& sta
         /* the Z80 engine both consoles run (the memory map differs, see
          * sg_gen.h), and the PSG sample generation sg_audio.c / gg_psg.c
          * include (sg_psg.h) */
-        for (const char* name : { "sg_gen.h", "sg_psg.h", "m0_scale.h", "m0_idle.h" })
+        for (const char* name : { "sg_gen.h", "sg_psg.h", "m0_divide.h", "m0_scale.h", "m0_idle.h" })
             copy_template(common_dir / "runtime" / name, src / name);
         if (gg) copy_template(common_dir / "runtime/m0_sega_mapper.h", src / "m0_sega_mapper.h");
         copy_template(common_dir / "runtime/m0_rom_codec.h", src / "m0_rom_codec.h");

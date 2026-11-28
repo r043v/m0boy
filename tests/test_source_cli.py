@@ -1,4 +1,5 @@
 """Synthetic cartridges only; check selection before legacy GB dispatch."""
+import struct
 import subprocess
 import sys
 import tempfile
@@ -22,6 +23,7 @@ assert "pce cpu=huc6280 inspect=yes disasm=yes codegen=desktop" in listing
 assert "vectrex cpu=6809 inspect=yes disasm=no codegen=meta,pc,aka" in listing
 assert "megadrive cpu=m68k inspect=yes disasm=no codegen=desktop,pc,aka" in listing
 assert "meta cpu=m0plus inspect=yes disasm=yes codegen=pc,aka" in listing
+assert "gp32 cpu=arm920t inspect=yes disasm=no codegen=desktop,pc" in listing
 assert "pokitto cpu=m0plus inspect=yes disasm=yes codegen=pc" in listing
 targets = run("--list-targets", contains='meta host=no ram=32K')
 assert 'desktop host=yes' in targets and 'pc host=yes' in targets
@@ -72,6 +74,25 @@ with tempfile.TemporaryDirectory() as temporary:
         firmware.write_bytes(image)
         run(firmware, "--system", system, "--info", ok=False,
             contains="invalid initial stack pointer")
+    fxe = root / "fixture.FXE"
+    header = struct.pack("<4sII32s", b"fxe ", 32, 0x454, b"GP32 fixture").ljust(1116, b"\0")
+    image = header + struct.pack("<II", 32, 1) + b"\xff" + bytes(32)
+    fxe.write_bytes(image)
+    info = run(fxe, "--info", contains="system=gp32\ncpu=arm920t")
+    assert "title=GP32 fixture" in info and "work_ram_bytes=8388608" in info
+    for target, window in (("desktop", "OFF"), ("pc", "ON")):
+        project = root / ("gp32-" + target)
+        run(fxe, "--target", target, "-o", project, contains="GP32 interpreter project")
+        assert (project / "game.fxe").read_bytes() == image
+        assert f"M0_GP32_WINDOW_DEFAULT {window}" in (project / "gp32_defaults.cmake").read_text()
+        assert (project / "smartmedia" / "GAME").is_dir()
+        assert (project / "smartmedia" / "GPMM").is_dir()
+        assert (project / "make_card.py").is_file()
+    run(fxe, "--target", "meta", ok=False, contains="supports desktop and pc")
+    run(fxe, "--disasm", ok=False, contains="supports emulation only")
+    fxe.write_bytes(image[:-1])
+    run(fxe, "--info", ok=False, contains="truncated payload")
+
     sg = root / "synthetic.SG"
     sg.write_bytes(bytes([0xc3, 0x00, 0x00]) + bytes(16381))
     info = run(sg, "--info", contains="system=sg1000\ncpu=z80")

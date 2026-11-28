@@ -455,6 +455,10 @@ void gbl_interp_block(void) {
         uint8_t n8;
         uint16_t n16;
         const uint8_t *page = gbl_rmap[pc >> 12];
+#if GBL_CGB
+        /* CGB OAM DMA: fetches leave the fast page so bus conflicts apply */
+        if (gbl_cgb_oam_dma_active()) page = 0;
+#endif
 #if GBL_OAM_DMA_BUS
         /* Reference mode: every fetch goes through gbl_rd, each byte at its
          * own M-cycle (opcode +0, first operand +4, second +8), so that OAM

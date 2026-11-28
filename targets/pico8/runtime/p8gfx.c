@@ -172,26 +172,47 @@ void p8_gfx_line(int x0, int y0, int x1, int y1, int col) {
 }
 
 /* circles and ovals: femto8's segment algorithm */
-static void oval_segment(int xc, int yc, int x, int y, int r, int xr, int yr, unsigned c, int mask) {
-    if (mask & 1) pset_world(xc + x * xr / r, yc + y * yr / r, c);
-    if (mask & 2) pset_world(xc - x * xr / r, yc + y * yr / r, c);
-    if (mask & 4) pset_world(xc + x * xr / r, yc - y * yr / r, c);
-    if (mask & 8) pset_world(xc - x * xr / r, yc - y * yr / r, c);
-    if (mask & 16) pset_world(xc + y * xr / r, yc + x * yr / r, c);
-    if (mask & 32) pset_world(xc - y * xr / r, yc + x * yr / r, c);
-    if (mask & 64) pset_world(xc + y * xr / r, yc - x * yr / r, c);
-    if (mask & 128) pset_world(xc - y * xr / r, yc - x * yr / r, c);
+/* v * k / r, truncated toward zero, for a v that moves one step at a time. */
+typedef struct { int q, rem, step_q, step_rem, sign; } OvalScale;
+
+static OvalScale oval_scale(int k, int r, int at_r) {
+    OvalScale s = { 0, 0, 0, k < 0 ? -k : k, k < 0 ? -1 : 1 };
+    if (at_r) s.q = s.step_rem; /* v == r */
+    while (s.step_rem >= r) { s.step_rem -= r; s.step_q++; }
+    return s;
+}
+static inline void oval_up(OvalScale *s, int r) {
+    s->q += s->step_q;
+    s->rem += s->step_rem;
+    if (s->rem >= r) { s->rem -= r; s->q++; }
+}
+static inline void oval_down(OvalScale *s, int r) {
+    s->q -= s->step_q;
+    s->rem -= s->step_rem;
+    if (s->rem < 0) { s->rem += r; s->q--; }
 }
 
-static void oval_fill_segment(int xc, int yc, int x, int y, int r, int xr, int yr, unsigned c, int mask) {
-    if (mask & 1) hline(xc, xc + x * xr / r, yc + y * yr / r, c);
-    if (mask & 2) hline(xc - x * xr / r, xc, yc + y * yr / r, c);
-    if (mask & 4) hline(xc, xc + x * xr / r, yc - y * yr / r, c);
-    if (mask & 8) hline(xc - x * xr / r, xc, yc - y * yr / r, c);
-    if (mask & 16) hline(xc, xc + y * xr / r, yc + x * yr / r, c);
-    if (mask & 32) hline(xc - y * xr / r, xc, yc + x * yr / r, c);
-    if (mask & 64) hline(xc, xc + y * xr / r, yc - x * yr / r, c);
-    if (mask & 128) hline(xc - y * xr / r, xc, yc - x * yr / r, c);
+/* x and y scaled by each radius: ax = x * xr / r, by = y * yr / r, and so on */
+static void oval_segment(int xc, int yc, int ax, int by, int ay, int bx, unsigned c, int mask) {
+    if (mask & 1) pset_world(xc + ax, yc + by, c);
+    if (mask & 2) pset_world(xc - ax, yc + by, c);
+    if (mask & 4) pset_world(xc + ax, yc - by, c);
+    if (mask & 8) pset_world(xc - ax, yc - by, c);
+    if (mask & 16) pset_world(xc + ay, yc + bx, c);
+    if (mask & 32) pset_world(xc - ay, yc + bx, c);
+    if (mask & 64) pset_world(xc + ay, yc - bx, c);
+    if (mask & 128) pset_world(xc - ay, yc - bx, c);
+}
+
+static void oval_fill_segment(int xc, int yc, int ax, int by, int ay, int bx, unsigned c, int mask) {
+    if (mask & 1) hline(xc, xc + ax, yc + by, c);
+    if (mask & 2) hline(xc - ax, xc, yc + by, c);
+    if (mask & 4) hline(xc, xc + ax, yc - by, c);
+    if (mask & 8) hline(xc - ax, xc, yc - by, c);
+    if (mask & 16) hline(xc, xc + ay, yc + bx, c);
+    if (mask & 32) hline(xc - ay, xc, yc + bx, c);
+    if (mask & 64) hline(xc, xc + ay, yc - bx, c);
+    if (mask & 128) hline(xc - ay, xc, yc - bx, c);
 }
 
 static void oval(int xc, int yc, int xr, int yr, int col, int fill) {
@@ -199,13 +220,17 @@ static void oval(int xc, int yc, int xr, int yr, int col, int fill) {
     if (r <= 0) return;
     const unsigned c = draw_color(col);
     int x = 0, y = r, d = 3 - 2 * r;
-    void (*seg)(int, int, int, int, int, int, int, unsigned, int) = fill ? oval_fill_segment : oval_segment;
-    seg(xc, yc, x, y, r, xr, yr, c, 0xff);
+    OvalScale xx = oval_scale(xr, r, 0), xy = oval_scale(yr, r, 0); /* x by each radius */
+    OvalScale yx = oval_scale(xr, r, 1), yy = oval_scale(yr, r, 1); /* y by each radius */
+    void (*seg)(int, int, int, int, int, int, unsigned, int) = fill ? oval_fill_segment : oval_segment;
+    seg(xc, yc, xx.sign * xx.q, yy.sign * yy.q, yx.sign * yx.q, xy.sign * xy.q, c, 0xff);
     while (y >= x) {
         x++;
-        if (d > 0) { y--; d = d + 4 * (x - y) + 10; }
+        oval_up(&xx, r);
+        oval_up(&xy, r);
+        if (d > 0) { y--; oval_down(&yx, r); oval_down(&yy, r); d = d + 4 * (x - y) + 10; }
         else d = d + 4 * x + 6;
-        seg(xc, yc, x, y, r, xr, yr, c, 0xff);
+        seg(xc, yc, xx.sign * xx.q, yy.sign * yy.q, yx.sign * yx.q, xy.sign * xy.q, c, 0xff);
     }
 }
 
@@ -288,18 +313,10 @@ void p8_gfx_sprites(int n, int x, int y, int w, int h, int flip_x, int flip_y) {
 
 void p8_gfx_sspr(int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh, int flip_x, int flip_y) {
     if (dw <= 0 || dh <= 0) return;
-    if (sw < 0 || sh < 0) { /* the rare negative source size keeps the old formula */
-        for (int y = 0; y < dh; y++)
-            for (int x = 0; x < dw; x++) {
-                const int src_x = sx + (flip_x ? sw - 1 - (x * sw) / dw : (x * sw) / dw);
-                const int src_y = sy + (flip_y ? sh - 1 - (y * sh) / dh : (y * sh) / dh);
-                if (src_x < 0 || src_y < 0 || src_x > 127 || src_y > 127) continue;
-                const unsigned color = p8g.pal_draw[sheet_pixel(src_x, src_y)];
-                if (!(color & 0xf0)) pset_world(dx + x, dy + y, color & 15u);
-            }
-        return;
-    }
-    /* Bresenham in the source: floor(x*sw/dw) without a division per pixel */
+    /* Bresenham in the source: x * sw / dw, truncated toward zero, without a
+     * division per pixel; a negative source size walks the other way */
+    const int width = sw < 0 ? -sw : sw, height = sh < 0 ? -sh : sh;
+    const int step_x = (flip_x != 0) != (sw < 0) ? -1 : 1, step_y = (flip_y != 0) != (sh < 0) ? -1 : 1;
     int src_y = flip_y ? sy + sh - 1 : sy, acc_y = 0;
     for (int y = 0; y < dh; y++) {
         int src_x = flip_x ? sx + sw - 1 : sx, acc_x = 0;
@@ -308,11 +325,11 @@ void p8_gfx_sspr(int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh,
                 const unsigned color = p8g.pal_draw[sheet_pixel(src_x, src_y)];
                 if (!(color & 0xf0)) pset_world(dx + x, dy + y, color & 15u);
             }
-            acc_x += sw;
-            while (acc_x >= dw) { acc_x -= dw; src_x += flip_x ? -1 : 1; }
+            acc_x += width;
+            while (acc_x >= dw) { acc_x -= dw; src_x += step_x; }
         }
-        acc_y += sh;
-        while (acc_y >= dh) { acc_y -= dh; src_y += flip_y ? -1 : 1; }
+        acc_y += height;
+        while (acc_y >= dh) { acc_y -= dh; src_y += step_y; }
     }
 }
 

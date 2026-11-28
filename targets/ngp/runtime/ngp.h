@@ -222,6 +222,9 @@ uint32_t ngp_code_l(unsigned r);
 void ngp_code_l_set(unsigned r, uint32_t v);
 void ngp_z80_reset(void);
 void ngp_z80_irq(void);
+/* the Z80 registers' share of the machine state (ngp_z80_state_io) */
+enum { NGP_Z80_STATE_BYTES = 48 };
+void ngp_z80_state_io(uint8_t *data, int load);
 void ngp_z80_nmi(void);
 void ngp_z80_run(uint32_t ticks);
 void ngp_psg_reset(void);
