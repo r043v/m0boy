@@ -1841,6 +1841,59 @@ static fs::path resolve_meta_dir(const char* argv0, const fs::path& explicit_dir
     return {};
 }
 
+/* A GP32 project recompiling the code deepeel found (`--coverage app.code`,
+ * with the image it wrote next to it). Self contained: it carries the runtime,
+ * the application and the map. */
+static bool write_gp32_native_project(const fs::path& gp32, const fs::path& application,
+                                      const fs::path& map, const fs::path& output, bool window,
+                                      std::string& error) {
+    std::string line;
+    std::ifstream header(map);
+    if (!std::getline(header, line) || line.rfind("# deepeel gp32 code v1", 0) != 0) {
+        error = map.string() + " is not a deepeel GP32 code map (deepeel gp32 explore --code)";
+        return false;
+    }
+    fs::path image = map;
+    image += ".image.bin";
+    if (!fs::is_regular_file(image)) {
+        error = "missing the covered image " + image.string();
+        return false;
+    }
+    std::string extension = application.extension().string();
+    for (char& c : extension) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (extension != ".fxe" && extension != ".gxb" && extension != ".zpk") extension = ".fxe";
+    try {
+        const auto overwrite = fs::copy_options::overwrite_existing;
+        fs::create_directories(output / "app");
+        fs::create_directories(output / "gp32/runtime");
+        fs::create_directories(output / "common/platform");
+        for (const auto& entry : fs::directory_iterator(gp32 / "runtime"))
+            if (entry.is_regular_file())
+                fs::copy_file(entry.path(), output / "gp32/runtime" / entry.path().filename(), overwrite);
+        for (const char* file : {"make_card.py", "sync_card.py"})
+            fs::copy_file(gp32 / file, output / "gp32" / file, overwrite);
+        fs::copy_file(gp32.parent_path() / "common/platform/m0_font.h",
+                      output / "common/platform/m0_font.h", overwrite);
+        for (const char* file : {"CMakeLists.txt", "build.sh", "run.sh"})
+            fs::copy_file(gp32 / "native" / file, output / file, overwrite);
+        fs::copy_file(application, output / "app" / ("app" + extension), overwrite);
+        fs::copy_file(map, output / "app/app.code", overwrite);
+        fs::copy_file(image, output / "app/app.image.bin", overwrite);
+        std::ofstream settings(output / "app/settings.sh");
+        settings << "app=app" << extension << "\ntargets=\"m0_gp32_bench "
+                 << (window ? "m0_gp32_sdl" : "m0_gp32_boot") << "\"\n";
+        settings.close();
+        if (!settings) {
+            error = "cannot write the project settings";
+            return false;
+        }
+    } catch (const fs::filesystem_error& e) {
+        error = e.what();
+        return false;
+    }
+    return true;
+}
+
 /* --meta-code-budget: flash bytes for generated code (0 = derived from the
  * ROM size, see MetaTargetOptions::code_budget_bytes). */
 static size_t g_meta_code_budget = 0;
@@ -2477,6 +2530,19 @@ int m0recomp_main(int argc, char* argv[]) {
         const fs::path output = output_dir.empty()
             ? fs::path("output") / (fs::path(rom_path).stem().string() + "_gp32_" + target) : fs::path(output_dir);
         const fs::path project = resolve_meta_dir(argv[0], meta_dir).parent_path() / "gp32";
+        if (!coverage_paths.empty()) {
+            if (coverage_paths.size() != 1) {
+                std::cerr << "Error: a GP32 native project takes one deepeel code map\n";
+                return 1;
+            }
+            if (!write_gp32_native_project(project, rom_path, coverage_paths.front(), output,
+                                           target == "pc", error)) {
+                std::cerr << "Error: " << error << "\n";
+                return 1;
+            }
+            std::cout << "GP32 native project: " << output << "\n";
+            return 0;
+        }
         try {
             fs::create_directories(output / "smartmedia/GAME");
             fs::create_directories(output / "smartmedia/GPMM");

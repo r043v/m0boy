@@ -14,6 +14,9 @@ void m0_watchdog_feed(void);
 
 /* Pressed buttons in m0_menu.h's M0_MB_* order: D-pad, A, B, Home, Menu. */
 uint8_t esp32_buttons(void);
+/* The shoulder keys at the time of that read. */
+enum { M0_SHOULDER_L = 1, M0_SHOULDER_R = 2 };
+uint8_t esp32_shoulders(void);
 void esp32_restart(void);
 
 /* The 320-column row path, 1:1 on the glass: compiled when the project's

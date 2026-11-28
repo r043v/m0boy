@@ -93,6 +93,9 @@ endif()
 option(BUILD_TESTS "Build the META and Pokitto target tests" OFF)
 if(BUILD_TESTS)
     enable_testing()
+endif()
+add_subdirectory(targets/gp32/runtime)
+if(BUILD_TESTS)
     add_executable(ws_uart_test targets/wonderswan/tests/ws_uart_test.c)
     target_link_libraries(ws_uart_test PRIVATE m0boy_ws_runtime)
     add_test(NAME wonderswan_uart COMMAND ws_uart_test)
@@ -249,6 +252,11 @@ if(BUILD_TESTS)
     add_test(NAME source_system_cli
         COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_source_cli.py"
                 "$<TARGET_FILE:m0recomp>")
+    if(UNIX)
+        add_test(NAME gp32_native_end_to_end
+            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_gp32_native.py"
+                    "$<TARGET_FILE:m0recomp>" "${PROJECT_SOURCE_DIR}")
+    endif()
     add_test(NAME megadrive_m68k_end_to_end
         COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_megadrive_e2e.py"
                 "$<TARGET_FILE:m0recomp>")

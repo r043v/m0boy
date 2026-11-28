@@ -9,7 +9,9 @@ import tempfile
 SECTOR_SIZE = 512
 PAGES_PER_BLOCK = 32
 PHYSICAL_BLOCKS = 2048
-LOGICAL_BLOCKS = 2000
+ZONE_BLOCKS = 1024
+ZONE_LOGICAL_BLOCKS = 1000
+LOGICAL_BLOCKS = 2 * ZONE_LOGICAL_BLOCKS
 PARTITION_START = 35
 
 
@@ -33,7 +35,7 @@ def page(data, block_address):
     return data + b"\xff" * 6 + block_address + ecc(data[256:]) + block_address + ecc(data[:256])
 
 
-def make_card(folder, destination, mkfs, mcopy, identity=None):
+def make_card(folder, destination, mkfs, mcopy, identity=None, *, prepare_directory=True):
     header = b""
     if identity is not None:
         with identity.open("rb") as source:
@@ -42,13 +44,15 @@ def make_card(folder, destination, mkfs, mcopy, identity=None):
             raise ValueError("Expected a 32 MiB Samsung SMC image with a GeePee32 UID header")
         if identity.stat().st_size != len(header) + PHYSICAL_BLOCKS * PAGES_PER_BLOCK * 528:
             raise ValueError("Invalid 32 MiB SMC image size")
-    folder.mkdir(parents=True, exist_ok=True)
+    if prepare_directory:
+        folder.mkdir(parents=True, exist_ok=True)
     for entry in folder.rglob("*"):
         if entry.is_symlink() or not (entry.is_dir() or entry.is_file()):
             raise ValueError(f"Unsupported SmartMedia entry: {entry}")
-    for name in ("GAME", "GPMM"):
-        if not any(entry.name.upper() == name and entry.is_dir() for entry in folder.iterdir()):
-            (folder / name).mkdir(exist_ok=True)
+    if prepare_directory:
+        for name in ("GAME", "GPMM"):
+            if not any(entry.name.upper() == name and entry.is_dir() for entry in folder.iterdir()):
+                (folder / name).mkdir(exist_ok=True)
 
     volume_sectors = LOGICAL_BLOCKS * PAGES_PER_BLOCK - PARTITION_START - 1
     with tempfile.TemporaryDirectory(dir=destination.parent) as workspace:
@@ -73,14 +77,19 @@ def make_card(folder, destination, mkfs, mcopy, identity=None):
             erased = b"\xff" * 528
             output.write(page(cis * 2, b"\x00\x00"))
             output.write(erased * (PAGES_PER_BLOCK - 1))
-            for block in range(LOGICAL_BLOCKS):
-                address = 0x1000 | (block << 1)
-                address |= bin(address).count("1") % 2
-                spare_address = address.to_bytes(2, "big")
-                for sector in range(block * PAGES_PER_BLOCK, (block + 1) * PAGES_PER_BLOCK):
-                    start = sector * SECTOR_SIZE
-                    output.write(page(disk[start:start + SECTOR_SIZE], spare_address))
-            output.write(erased * ((PHYSICAL_BLOCKS - LOGICAL_BLOCKS - 1) * PAGES_PER_BLOCK))
+            # Logical addresses are relative to a zone, and every zone keeps
+            # erased blocks of its own: the guest needs one for each rewrite.
+            for zone in range(PHYSICAL_BLOCKS // ZONE_BLOCKS):
+                for index in range(ZONE_LOGICAL_BLOCKS):
+                    block = zone * ZONE_LOGICAL_BLOCKS + index
+                    address = 0x1000 | (index << 1)
+                    address |= bin(address).count("1") % 2
+                    spare_address = address.to_bytes(2, "big")
+                    for sector in range(block * PAGES_PER_BLOCK, (block + 1) * PAGES_PER_BLOCK):
+                        start = sector * SECTOR_SIZE
+                        output.write(page(disk[start:start + SECTOR_SIZE], spare_address))
+                used = ZONE_LOGICAL_BLOCKS + (zone == 0)
+                output.write(erased * ((ZONE_BLOCKS - used) * PAGES_PER_BLOCK))
         card.replace(destination)
 
 

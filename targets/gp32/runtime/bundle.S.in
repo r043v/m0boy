@@ -1,0 +1,15 @@
+/* The package made by bundle.py. */
+#ifdef _WIN32
+    .section .rdata,"dr"
+#else
+    .section .rodata
+#endif
+    .global gp32_bundle_start
+    .global gp32_bundle_end
+    .balign 16
+gp32_bundle_start:
+    .incbin "@M0_GP32_BUNDLE@"
+gp32_bundle_end:
+#if defined(__ELF__)
+    .section .note.GNU-stack,"",%progbits
+#endif
