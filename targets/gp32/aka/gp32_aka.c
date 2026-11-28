@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <esp_attr.h>
 #include <esp_heap_caps.h>
 #include <esp_rom_sys.h>
 #include <esp_timer.h>
@@ -25,6 +26,8 @@ int m0_display_idle(void);
 void m0_display_post(void);
 void esp32_audio_start(unsigned hz);
 void esp32_audio_pull(uint8_t *out, unsigned count);
+/* The keys (low byte) and shoulder buttons, read by the audio core. */
+uint16_t m0_pad_state(void);
 
 /* aka_hw.h's M0_MB_* bits. */
 enum {
@@ -63,10 +66,11 @@ enum {
 #define HAVE_KERNELS 0
 #endif
 /* Frameskip.  N >= 0: one LCD frame drawn, then at least N left out.  -1
-   (automatic): the next picture waits until the display has rested twice as
-   long as the last one took, so that it uses the shared PSRAM at most a third
-   of the time; never more than 60 pictures per second, never under 10.  The
-   program itself still computes every frame. */
+   (automatic): never more than one frame left out.  The second frame in a row
+   is drawn, the machine waiting for the display if it must; the first one is
+   drawn too if the display has rested twice as long as the last picture took (and
+   16 ms), which leaves the shared PSRAM to the machine.  The program itself
+   computes every frame. */
 #ifndef M0_GP32_AKA_FRAMESKIP
 #define M0_GP32_AKA_FRAMESKIP -1
 #endif
@@ -75,17 +79,25 @@ enum {
 #ifndef M0_GP32_AKA_FAST_PAGES
 #define M0_GP32_AKA_FAST_PAGES 0, 1, 2, 3
 #endif
+#if defined(M0_GP32_FLAT_RAM) && defined(M0_GP32_PAGED_CARD)
+#error "a card needs PSRAM from the heap, which M0_GP32_FLAT_RAM takes whole"
+#endif
 
 static S3c2400 *soc;
+#ifndef M0_GP32_FLAT_RAM
 static const uint16_t fast_list[] = {M0_GP32_AKA_FAST_PAGES};
 #define FAST_PAGES (sizeof fast_list / sizeof *fast_list)
 static uint8_t fast[FAST_PAGES][GP32_RAM_PAGE_SIZE] __attribute__((aligned(32)));
+#endif
 /* One batch is converted while the other is on its way to the panel. */
 static uint16_t strip[2][BATCH * PANEL_WIDTH] __attribute__((aligned(64)));
 static uint16_t colors[256] __attribute__((aligned(16)));
 /* What the display core draws from: the bus, the LCD registers and the
    palette as they were when the frame was handed over. */
-static S3c2400 *view;
+static struct {
+    S3c2400Bus bus;
+    uint32_t lcd[21];
+} view;
 /* An LCD line which is not one run of host memory. */
 static uint32_t spare[GP32_LCD_WIDTH / 2] __attribute__((aligned(16)));
 /* A checksum of each batch on the panel, and the weights it is made with. */
@@ -93,17 +105,19 @@ static uint64_t shown_hash[BATCHES];
 static int16_t weights[PANEL_WIDTH] __attribute__((aligned(16)));
 /* The display core's copy of the palette registers. */
 static uint32_t palette[256] __attribute__((aligned(16)));
-static const uint16_t constants[3] = {0xffc0, 0x001f, 0x0001};
+static DRAM_ATTR const uint16_t constants[3] = {0xffc0, 0x001f, 0x0001};
 static bool kernels; /* the assembly routines passed their check */
 static unsigned display_us, fast_lines;
 /* Duration of the last picture, read once the display core is idle again. */
 static uint32_t last_us;
+#ifndef M0_GP32_FLAT_RAM
 static struct {
     uint8_t *at, *home;
     uint32_t used;
     int page;
 } video[VIDEO_PAGES];
 static unsigned video_pages;
+#endif
 
 static uint8_t ring[1024];
 static volatile unsigned ring_head, ring_tail;
@@ -113,6 +127,39 @@ static uint32_t phase;
 __attribute__((noinline)) uint32_t m0_micros(void) { return (uint32_t)esp_timer_get_time(); }
 void m0_watchdog_feed(void) {}
 
+#ifdef M0_GP32_FLAT_RAM
+/* The system maps the whole PSRAM at one address and would give it to its heap:
+   the linker's wrap of this function keeps it for the guest. */
+int __wrap_esp_spiram_add_to_heapalloc(void) { return 0; }
+
+/* The guest's 8 MiB are that mapping.  Returns NULL when it is not there. */
+static uint8_t *map_ram(void)
+{
+    const uint32_t base = M0_GP32_FLAT_RAM;
+    volatile uint32_t *words = (volatile uint32_t *)(uintptr_t)base;
+    /* The data cache's MMU table: one entry per 64 KiB. */
+    const volatile uint32_t *table = (const volatile uint32_t *)0x600c5000u;
+    for (uint32_t at = base; at < base + 0x800000u; at += 0x10000u) {
+        uint32_t entry = table[(at & 0x1ffffffu) >> 16];
+        if ((entry & (1u << 14)) || !(entry & (1u << 15))) {
+            esp_rom_printf("gp32: no PSRAM at %08x\n", (unsigned)at);
+            return NULL;
+        }
+    }
+    if (heap_caps_get_total_size(MALLOC_CAP_SPIRAM)) {
+        esp_rom_printf("gp32: the heap still holds PSRAM\n");
+        return NULL;
+    }
+    unsigned wrong = 0;
+    for (unsigned i = 0; i < 0x200000u; i += 1024)
+        words[i] = i * 2654435761u;
+    for (unsigned i = 0; i < 0x200000u; i += 1024)
+        wrong += words[i] != i * 2654435761u;
+    memset((void *)(uintptr_t)base, 0, 0x800000u);
+    esp_rom_printf("gp32: 8 MiB at %08x, %u wrong\n", (unsigned)base, wrong);
+    return wrong ? NULL : (uint8_t *)(uintptr_t)base;
+}
+#else
 /* Fast pages go to the internal array, the others to the PSRAM, in as many
    blocks as its heap needs: its largest free block does not hold them all.
    Returns the first PSRAM block, NULL when memory runs out. */
@@ -148,6 +195,7 @@ static uint8_t *map_ram(void)
     }
     return first;
 }
+#endif
 
 /* The machine's samples, reduced to the panel path's 11025 Hz mono bytes. */
 static void sample(void *context, int16_t left, int16_t right, unsigned rate)
@@ -308,13 +356,11 @@ static bool kernels_check(void)
     for (unsigned i = 0; i < 256; ++i)
         if (colors[i] != rgb565(palette[i]))
             return false;
-    if (FAST_PAGES >= 2) {
-        for (unsigned i = 0; i < GP32_RAM_PAGE_SIZE; ++i)
-            fast[0][i] = (uint8_t)(i * 29u + (i >> 7));
-        gp32_copy64(fast[1], fast[0], GP32_RAM_PAGE_SIZE / 64);
-        if (memcmp(fast[0], fast[1], GP32_RAM_PAGE_SIZE))
-            return false;
-    }
+    for (unsigned i = 0; i < PANEL_WIDTH * 2; ++i)
+        ((uint8_t *)strip[0])[i] = (uint8_t)(i * 29u + (i >> 7));
+    gp32_copy64(strip[1], strip[0], PANEL_WIDTH * 2 / 64);
+    if (memcmp(strip[0], strip[1], PANEL_WIDTH * 2 / 64 * 64))
+        return false;
     return true;
 }
 #endif
@@ -322,7 +368,7 @@ static bool kernels_check(void)
 static void line(uint16_t *out, unsigned x)
 {
     uint32_t header[GP32_LCD_HEADER];
-    const uint8_t *bytes = s3c2400_lcd_row(view, x, header, spare);
+    const uint8_t *bytes = s3c2400_lcd_row(&view.bus, view.lcd, x, header, spare);
     unsigned format = header[GP32_LCD_FORMAT];
     unsigned bits = format & 255u, lanes = format >> 8 & 3u;
     if (bytes && header[GP32_LCD_COUNT] >= PANEL_WIDTH) {
@@ -375,7 +421,8 @@ static GP32_HOT void present(void)
     display_us += last_us;
 }
 
-/* Whether the frame the LCD just ended is to be drawn. */
+/* Whether the frame the LCD just ended is to be drawn.  frames: LCD frames
+   ended since the last one drawn. */
 static bool wanted(uint64_t frames, uint32_t since)
 {
 #if M0_GP32_AKA_FRAMESKIP >= 0
@@ -387,10 +434,11 @@ static bool wanted(uint64_t frames, uint32_t since)
         wait = 16000;
     if (wait > 100000)
         wait = 100000;
-    return frames && since >= wait;
+    return frames > 1 || (frames && since >= wait);
 #endif
 }
 
+#ifndef M0_GP32_FLAT_RAM
 static void move_page(unsigned page, uint8_t *to)
 {
     const uint8_t *from = GP32_RAM(soc->ram, page << GP32_RAM_PAGE_BITS);
@@ -457,12 +505,38 @@ static void claim_video_pages(void)
     esp_rom_printf("gp32: %u video pages inside, %u bytes of internal memory left\n",
                    video_pages, (unsigned)heap_caps_get_free_size(internal));
 }
+#endif
+
+/* Holds the machine back to the speed of the console: sleeps while the time it
+   has emulated is ahead of the time gone by.  A machine which is late catches
+   up at most a tenth of a second, so that a few slow frames among quick ones
+   cost no speed.  Returns the microseconds emulated
+   since the last call. */
+static uint32_t pace(void)
+{
+    static uint64_t cycles;
+    static uint32_t mark;
+    static int32_t ahead;
+    uint32_t now = m0_micros();
+    /* A reset starts the cycle count again. */
+    uint32_t emulated = soc->cycles < cycles ? 0
+        : (uint32_t)((soc->cycles - cycles) * 1000000u / s3c2400_fclk(soc));
+    ahead += (int32_t)emulated - (int32_t)(now - mark);
+    cycles = soc->cycles;
+    mark = now;
+    if (ahead < -100000)
+        ahead = -100000;
+    if (ahead >= 1000)
+        delay((uint32_t)ahead / 1000);
+    return emulated;
+}
 
 /* The GP32 buttons, from bit 0: left, down, right, up, L, B, A, R, start,
    select. */
 static uint16_t buttons(void)
 {
-    uint8_t keys = esp32_buttons(), side = esp32_shoulders();
+    uint16_t pad = m0_pad_state();
+    uint8_t keys = (uint8_t)pad, side = (uint8_t)(pad >> 8);
     return (uint16_t)((keys & KEY_LEFT ? 0x001 : 0) | (keys & KEY_DOWN ? 0x002 : 0) |
                       (keys & KEY_RIGHT ? 0x004 : 0) | (keys & KEY_UP ? 0x008 : 0) |
                       (keys & KEY_B ? 0x020 : 0) | (keys & KEY_A ? 0x040 : 0) |
@@ -495,14 +569,11 @@ int m0boy_console_main(void)
                            : "gp32: assembly routines DIFFER, C used\n");
 #endif
     uint8_t *ram = map_ram();
-    view = heap_caps_calloc(1, sizeof *view, MALLOC_CAP_SPIRAM);
-    /* The processor and register state is the hottest data: internal RAM. */
-    soc = heap_caps_calloc(1, sizeof *soc, MALLOC_CAP_INTERNAL);
-    if (!soc) {
-        esp_rom_printf("gp32: no room inside for the machine state, expect it to be slow\n");
-        soc = heap_caps_calloc(1, sizeof *soc, MALLOC_CAP_SPIRAM);
-    }
-    if (!ram || !soc || !view)
+    /* The processor and register state is the hottest data: internal RAM, at
+       an address known at build time. */
+    static S3c2400 machine;
+    soc = &machine;
+    if (!ram)
         fatal("not enough memory");
     soc->ram = ram;
     const char *error = gp32_hle_boot(soc, gp32_payload, gp32_payload_size,
@@ -526,11 +597,17 @@ int m0boy_console_main(void)
     soc->cycles_per_instruction = M0_GP32_AKA_CPI;
     soc->audio = (S3c2400Audio){sample, 0};
     esp32_audio_start(AUDIO_RATE);
+#ifdef M0_GP32_FLAT_RAM
+    esp_rom_printf("gp32: %u bytes of internal memory free\n",
+                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+#else
     claim_video_pages();
+#endif
 
     uint32_t shown = 0, report = m0_micros(), machine_us = 0;
-    uint64_t seen = 0, steps = 0, frames = 0;
-    unsigned drawn = 0;
+    uint64_t seen = 0, steps = 0, frames = 0, skipped = 0, events = 0;
+    uint32_t emulated_us = 0;
+    unsigned drawn = 0, skip = 0;
     for (;;) {
         uint32_t before = m0_micros();
         S3c2400Stop stop = s3c2400_run(soc, 100000);
@@ -546,14 +623,24 @@ int m0boy_console_main(void)
             fatal("unhandled exception");
         }
         uint32_t now = m0_micros();
-        /* Never waits for the display: a busy one skips this frame. */
+        /* A busy display skips this frame. */
+#if M0_GP32_AKA_FRAMESKIP < 0
+        /* Not a second one: this wait bounds the frameskip. */
+        while (seen && soc->frames - seen > 1 && !m0_display_idle())
+            delay(1);
+        now = m0_micros();
+#endif
         if (soc->frames != seen && m0_display_idle() &&
             wanted(soc->frames - seen, now - shown)) {
+            if (seen && soc->frames - seen - 1 > skip)
+                skip = (unsigned)(soc->frames - seen - 1);
             seen = soc->frames;
             shown = now;
+#ifndef M0_GP32_FLAT_RAM
             place_video();
-            view->bus = soc->bus;
-            memcpy(view->lcd, soc->lcd, sizeof view->lcd);
+#endif
+            view.bus = soc->bus;
+            memcpy(view.lcd, soc->lcd, sizeof view.lcd);
             memcpy(palette, soc->palette, sizeof palette);
             m0_display_post();
             ++drawn;
@@ -563,13 +650,19 @@ int m0boy_console_main(void)
         gp32_aka_card_service(now);
 #endif
         m0_watchdog_feed();
+        emulated_us += pace();
         if (now - report >= 2000000) {
             /* Formatted first: some board emulators print the format only. */
-            char text[224];
-            snprintf(text, sizeof text, "gp32: %u kinst/2s, %u frames, %u drawn (%u fast lines), "
+            char text[320];
+            snprintf(text, sizeof text, "gp32: speed %u%%, worst frameskip %u, "
+                     "%u kinst (%u skipped idle), %u events, "
+                     "%u frames, %u drawn (%u fast lines), "
                      "machine %u ms, display %u ms, lcd %u bit at %07x, pc %08x, "
                      "internal %u (lowest %u)\n",
+                     (unsigned)((uint64_t)emulated_us * 100u / (now - report)), skip,
                      (unsigned)((soc->steps - steps) / 1000),
+                     (unsigned)((soc->skipped_steps - skipped) / 1000),
+                     (unsigned)(soc->events - events),
                      (unsigned)(soc->frames - frames), drawn, fast_lines,
                      (unsigned)(machine_us / 1000), (unsigned)(display_us / 1000),
                      1u << ((((soc->lcd[0] >> 1) & 15u) - 8u) & 7u),
@@ -581,8 +674,11 @@ int m0boy_console_main(void)
             machine_us = display_us = fast_lines = 0;
             report = now;
             steps = soc->steps;
+            skipped = soc->skipped_steps;
+            events = soc->events;
             frames = soc->frames;
-            drawn = 0;
+            drawn = skip = 0;
+            emulated_us = 0;
         }
     }
 }

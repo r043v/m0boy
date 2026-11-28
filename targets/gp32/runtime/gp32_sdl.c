@@ -19,6 +19,10 @@
 #include <SDL.h>
 #include <SDL_opengl.h>
 #include <ctype.h>
+#if M0_GP32_PC_TOOLS
+#include <dirent.h>
+#include <sys/stat.h>
+#endif
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -470,12 +474,13 @@ typedef struct {
     /* A shot to load, written by the display thread before it posts
        COMMAND_SHOT. */
     char shot[1100];
+    SDL_Thread *writer; /* the shot being written, if any */
 #endif
     struct { uint32_t offset, size; uint8_t bytes[8]; } freeze[16];    /* --freeze */
     unsigned freezes;
 } Emulation;
 
-enum { COMMAND_NONE, COMMAND_SAVE, COMMAND_LOAD, COMMAND_RESTART, COMMAND_SNAP, COMMAND_SHOT };
+enum { COMMAND_NONE, COMMAND_SAVE, COMMAND_LOAD, COMMAND_RESTART, COMMAND_SNAP, COMMAND_SHOT, COMMAND_LAST };
 
 static const char *const outcomes[] = {
     NULL, "Etat sauve", "Echec sauvegarde", "Etat charge", "Echec chargement",
@@ -577,6 +582,39 @@ static bool collection_path(const Emulation *emulation, char *path, size_t size)
     return false;
 }
 
+/* The shot of this program written last, slots included. */
+static bool latest_shot(const Emulation *emulation, char *path, size_t size)
+{
+    DIR *directory = opendir(emulation->folder);
+    if (!directory)
+        return false;
+    size_t prefix = strlen(emulation->name), longest = 0;
+    char found[1100], latest[300] = "";
+    time_t newest = 0;
+    for (struct dirent *entry; (entry = readdir(directory));) {
+        const char *name = entry->d_name;
+        size_t length = strlen(name);
+        if (length <= prefix + 5 || strncmp(name, emulation->name, prefix) ||
+            name[prefix] != '-' || strcmp(name + length - 4, ".png") || length >= sizeof(latest))
+            continue;
+        struct stat status;
+        int written = snprintf(found, sizeof(found), "%s/%s", emulation->folder, name);
+        if (written < 0 || (size_t)written >= sizeof(found) || stat(found, &status))
+            continue;
+        /* Within one second, the later frame has the longer or greater name. */
+        if (!latest[0] || status.st_mtime > newest ||
+            (status.st_mtime == newest &&
+             (length > longest || (length == longest && strcmp(name, latest) > 0)))) {
+            newest = status.st_mtime;
+            longest = length;
+            memcpy(latest, name, length + 1);
+        }
+    }
+    closedir(directory);
+    int written = snprintf(path, size, "%s/%s", emulation->folder, latest);
+    return latest[0] && written >= 0 && (size_t)written < size;
+}
+
 /* The card holds the player's saves and a shot brings its own: keep a copy of
    the card as it was before the first shot of a session. */
 static void keep_card(const Emulation *emulation)
@@ -600,6 +638,56 @@ static void flush_coverage(void)
 }
 #endif /* M0_GP32_PC_TOOLS */
 
+#if M0_GP32_PC_TOOLS
+/* A shot takes a third of a second to compress and write: longer than the audio
+   queued, so another thread does it. */
+typedef struct {
+    Emulation *emulation;
+    Gp32Shot *shot;
+    char path[1100];
+} ShotWrite;
+
+static int write_shot(void *context)
+{
+    ShotWrite *work = context;
+    if (gp32_shot_store(work->shot, work->path)) {
+        fprintf(stderr, "Shot: %s\n", work->path);
+    } else {
+        fprintf(stderr, "%s: unable to write the shot\n", work->path);
+        SDL_AtomicSet(&work->emulation->outcome, 8);
+    }
+    free(work);
+    return 0;
+}
+
+static void finish_shot(Emulation *emulation)
+{
+    if (emulation->writer)
+        SDL_WaitThread(emulation->writer, NULL);
+    emulation->writer = NULL;
+}
+
+/* A new shot in the collection; false when none could be started. */
+static bool snap(Emulation *emulation)
+{
+    ShotWrite *work = malloc(sizeof(*work));
+    if (!work || !collection_path(emulation, work->path, sizeof(work->path))) {
+        free(work);
+        return false;
+    }
+    work->emulation = emulation;
+    work->shot = gp32_shot_take(emulation->soc, emulation->host, emulation->program);
+    if (!work->shot) {
+        free(work);
+        return false;
+    }
+    emulation->writer = SDL_CreateThread(write_shot, "gp32-shot", work);
+    if (!emulation->writer)
+        write_shot(work);
+    return true;
+}
+#endif
+
 /* True when the machine was replaced. */
 static bool run_command(Emulation *emulation, int command)
 {
@@ -612,6 +700,10 @@ static bool run_command(Emulation *emulation, int command)
 #endif
     bool done, replaced = true;
     int outcome;
+#if M0_GP32_PC_TOOLS
+    /* Every command sees the shot folder with the last shot complete. */
+    finish_shot(emulation);
+#endif
     switch (command & 0xff) {
 #if M0_GP32_PC_TOOLS
     case COMMAND_SAVE:
@@ -635,11 +727,8 @@ static bool run_command(Emulation *emulation, int command)
         outcome = done ? 3 : 4;
         break;
     case COMMAND_SNAP:
-        done = collection_path(emulation, path, sizeof(path)) &&
-               gp32_shot_save(soc, host, emulation->program, path);
+        done = snap(emulation);
         flush_coverage();
-        if (done)
-            fprintf(stderr, "Shot: %s\n", path);
         outcome = done ? 7 : 8;
         replaced = false;
         break;
@@ -651,6 +740,17 @@ static bool run_command(Emulation *emulation, int command)
         done = gp32_shot_load(soc, host, emulation->program, path);
         if (!done)
             fprintf(stderr, "%s: not a shot of this program\n", path);
+        outcome = done ? 3 : 4;
+        break;
+    case COMMAND_LAST:
+        done = latest_shot(emulation, path, sizeof(path));
+        if (done) {
+            keep_card(emulation);
+            done = gp32_shot_load(soc, host, emulation->program, path);
+            fprintf(stderr, done ? "Shot loaded: %s\n" : "%s: not a shot of this program\n", path);
+        } else {
+            fprintf(stderr, "No shot in %s\n", emulation->folder);
+        }
         outcome = done ? 3 : 4;
         break;
 #else
@@ -931,6 +1031,8 @@ static void play(Emulation *emulation, GpuDisplay *display)
 #if M0_GP32_PC_TOOLS
                 } else if (key == SDLK_F5 && !menu.open) {
                     SDL_AtomicSet(&emulation->command, COMMAND_SNAP);
+                } else if (key == SDLK_F9 && !menu.open) {
+                    SDL_AtomicSet(&emulation->command, COMMAND_LAST);
 #endif
                 } else if (key == SDLK_p) {
                     SDL_AtomicSet(&emulation->paused, !SDL_AtomicGet(&emulation->paused));
@@ -1012,6 +1114,9 @@ static void play(Emulation *emulation, GpuDisplay *display)
     SDL_AtomicSet(&emulation->quit, 1);
     if (thread)
         SDL_WaitThread(thread, NULL);
+#if M0_GP32_PC_TOOLS
+    finish_shot(emulation);
+#endif
     if (controller)
         SDL_GameControllerClose(controller);
 }
@@ -1055,7 +1160,7 @@ static void show_usage(const char *program)
              "[--readonly] [--cpi N] [--fullscreen] [--stats] [--freeze ADDR=HEX]"
 #if M0_GP32_PC_TOOLS
              " [SHOT.png]\n"
-             "F5 takes a shot into the shots folder; a shot dropped on the window or given here resumes from it."
+             "F5 takes a shot into the shots folder, F9 resumes from the last one; a shot dropped on the window or given here resumes from it."
 #endif
              , program);
     show_error(message);

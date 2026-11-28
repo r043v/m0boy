@@ -324,7 +324,7 @@ static bool memory_full(Arm920t *cpu, S3c2400AccessKind kind, uint32_t va,
             user || (cpu->cpsr & 31) == USER};
     }
     if (!write) *data = endian(cpu, raw, width);
-    if (cpu->config.access) {
+    if (M0_OBSERVER(cpu->config.access)) {
         Arm920tAccess event = {kind, va, *physical, *data & mask, width, hit, buffered};
         cpu->config.access(cpu->config.context, &event);
     }
@@ -355,7 +355,7 @@ static inline bool memory(Arm920t *cpu, S3c2400AccessKind kind, uint32_t va,
     uint32_t cache_bits = fetch ? 0x1001u : 0x0001u;
     if (!(cpu->control & cache_bits) && offset < S3C2400_BANK_SIZE &&
         (size_t)offset + width <= bus->ram_size && !cpu->write_count &&
-        !cpu->config.access && !bus->hooks.access && bus->ram &&
+        !M0_OBSERVER(cpu->config.access) && !M0_OBSERVER(bus->hooks.access) && bus->ram &&
         (fetch || va == aligned || !(cpu->control & 2))) {
         uint8_t *memory = GP32_RAM(bus->ram, offset);
         *physical = aligned;
@@ -375,7 +375,7 @@ static inline bool memory(Arm920t *cpu, S3c2400AccessKind kind, uint32_t va,
 #endif
     /* A cache hit on a page already read under the same permissions has no
        side effect to reproduce. */
-    if (kind != S3C2400_STORE && !user && !swap && !cpu->config.access &&
+    if (kind != S3C2400_STORE && !user && !swap && !M0_OBSERVER(cpu->config.access) &&
         (fetch || va == (va & ~(uint32_t)(width - 1)) || !(cpu->control & 2))) {
         uint32_t mva = modified_address(cpu, va & ~(uint32_t)(width - 1));
         unsigned port = fetch ? 0 : 1;
@@ -405,7 +405,7 @@ static GP32_HOT __attribute__((noinline, unused)) bool fetch_opcode(Arm920t *cpu
     const Arm920tReadPage *page = &cpu->read_pages[0][(mva >> 10) & 63];
     if (page->page == (mva & ~0x3ffu) && page->generation == cpu->tlb_generation &&
         page->control == cpu->control && page->domains == cpu->domains &&
-        page->user == ((cpu->cpsr & 31) == USER) && !cpu->config.access) {
+        page->user == ((cpu->cpsr & 31) == USER) && !M0_OBSERVER(cpu->config.access)) {
         const Arm920tCacheLine *line = &cpu->cache[0]
             .lines[(mva >> 5) & 7][cpu->way_hint[0][(mva >> 5) & 1023]];
         if (line->valid && line->tag == (mva & ~31u)) {
@@ -953,9 +953,9 @@ static Arm920tStep execute(Arm920t *cpu, uint32_t pc, uint32_t physical,
     if (is_thumb && opcode >= 0xd000 && opcode < 0xde00)
         cond = (opcode >> 8) & 15;
     Arm920tTrace trace = {pc, physical, opcode, is_thumb, condition(cpu->cpsr, cond)};
-    if (cond < 14 && cpu->config.predicate)
+    if (cond < 14 && M0_OBSERVER(cpu->config.predicate))
         trace.executed = cpu->config.predicate(cpu->config.context, &trace);
-    if (cpu->config.trace) cpu->config.trace(cpu->config.context, &trace);
+    if (M0_OBSERVER(cpu->config.trace)) cpu->config.trace(cpu->config.context, &trace);
     cpu->r[15] = pc + (is_thumb ? 2 : 4);
     if (!trace.executed) return ARM920T_INSTRUCTION;
     return is_thumb ? thumb(cpu, opcode, pc) : arm(cpu, opcode, pc);

@@ -19,6 +19,12 @@ void gp32_shot_screen(S3c2400 *soc, uint8_t *rgb);
 /* Call these between two s3c2400_run calls (after s3c2400_sync for a machine
    advanced with s3c2400_step_batched). */
 bool gp32_shot_save(S3c2400 *soc, const Gp32Host *host, uint64_t program, const char *path);
+/* A save in two steps: the take copies the screen and the machine, quickly; the
+   write compresses and stores them, which may be left to another thread.  The
+   write releases the shot. */
+typedef struct Gp32Shot Gp32Shot;
+Gp32Shot *gp32_shot_take(S3c2400 *soc, const Gp32Host *host, uint64_t program);
+bool gp32_shot_store(Gp32Shot *shot, const char *path);
 /* False leaves the machine untouched. */
 bool gp32_shot_load(S3c2400 *soc, Gp32Host *host, uint64_t program, const char *path);
 

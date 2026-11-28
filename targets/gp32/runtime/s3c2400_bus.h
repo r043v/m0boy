@@ -15,6 +15,14 @@
 #define GP32_HOT
 #endif
 
+/* The callbacks watching instructions, accesses and copies (traces, coverage,
+   tests). They are tested on every guest access: a build that installs none
+   leaves the tests out, and ignores callbacks it would be given. */
+#ifndef M0_GP32_OBSERVERS
+#define M0_GP32_OBSERVERS 1
+#endif
+#define M0_OBSERVER(callback) (M0_GP32_OBSERVERS ? (callback) : 0)
+
 #if !defined(__BYTE_ORDER__) || __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #define GP32_LITTLE_HOST 1
 #else
@@ -72,8 +80,15 @@ static inline size_t gp32_ram_run(uint32_t offset, size_t length)
     return length < left ? length : left;
 }
 #else
-#define GP32_RAM(ram, offset) ((ram) + gp32_ram_used(offset))
-#define GP32_RAM_SHOWN(ram, offset) ((ram) + gp32_ram_show(offset))
+/* With M0_GP32_FLAT_RAM, the guest SDRAM is one block at that host address,
+   known at build time: the `ram` pointer is not read. */
+#ifdef M0_GP32_FLAT_RAM
+#define GP32_RAM_BASE(ram) ((void)(ram), (uint8_t *)(uintptr_t)(M0_GP32_FLAT_RAM))
+#else
+#define GP32_RAM_BASE(ram) (ram)
+#endif
+#define GP32_RAM(ram, offset) (GP32_RAM_BASE(ram) + gp32_ram_used(offset))
+#define GP32_RAM_SHOWN(ram, offset) (GP32_RAM_BASE(ram) + gp32_ram_show(offset))
 static inline bool gp32_ram_whole(uint32_t offset, uint32_t length)
 {
     (void)offset; (void)length;
@@ -226,7 +241,7 @@ static inline bool s3c2400_bus_line(const S3c2400Bus *bus, uint32_t address,
                                     uint32_t words[8])
 {
     uint32_t offset = address - S3C2400_SDRAM_BASE;
-    if (bus->hooks.access || !bus->ram || (address & 31u) ||
+    if (M0_OBSERVER(bus->hooks.access) || !bus->ram || (address & 31u) ||
         offset >= S3C2400_BANK_SIZE || bus->ram_size < 32 || offset > bus->ram_size - 32)
         return false;
     const uint8_t *at = GP32_RAM(bus->ram, offset);

@@ -6,6 +6,7 @@
    swap file, so the guest's card never changes under it. */
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,6 +16,10 @@
 #include <unistd.h>
 
 #include "gp32_vcard.h"
+
+#ifndef O_BINARY
+#define O_BINARY 0
+#endif
 
 /* Files and directories a card can hold; each costs about 80 bytes. */
 #ifndef M0_GP32_VCARD_NODES
@@ -54,8 +59,10 @@ typedef struct Guest Guest;
 static struct Vcard {
     char folder[PATH], swap_path[PATH];
     Gp32VcardReport report;
-    FILE *swap, *source;
+    FILE *swap;
+    int source; /* the file being read: its descriptor + 1, 0 when none */
     unsigned source_node;
+    uint32_t source_at; /* where the open source file stands */
     Tree layout, host; /* the card as opened; the directory as it is now */
     Guest *work;       /* reserved at opening: a sync must not run out of memory */
     unsigned header_size, slots;
@@ -67,6 +74,8 @@ static struct Vcard {
     uint32_t tag[LINES];             /* raw window + 1 */
     uint8_t modified[LINES];
     uint8_t line[LINES][SECTOR] __attribute__((aligned(4)));
+    uint32_t kept_page;              /* the page last generated + 1, 0 when none */
+    uint8_t kept[PAGE];
 } *card;
 
 static void report(const char *message, const char *path)
@@ -285,19 +294,33 @@ static void directory_sector(unsigned dir, unsigned index, uint8_t *out)
     }
 }
 
+static void close_source(void)
+{
+    if (card->source)
+        close(card->source - 1);
+    card->source = 0;
+}
+
 static void file_sector(unsigned index, uint32_t offset, uint8_t *out)
 {
     if (card->source_node != index) {
         char path[PATH];
-        if (card->source)
-            fclose(card->source);
+        close_source();
         card->source_node = index;
-        card->source = node_path(&card->layout, index, path) ? fopen(path, "rb") : NULL;
+        card->source = node_path(&card->layout, index, path)
+                           ? open(path, O_RDONLY | O_BINARY) + 1 : 0;
         if (!card->source)
             report("cannot read the file", card->layout.node[index].host);
+        card->source_at = 0;
     }
-    if (card->source && !fseek(card->source, (long)offset, SEEK_SET))
-        (void)!fread(out, 1, SECTOR, card->source); /* the rest stays zero */
+    /* No stream: the C library of a small host copies and locks a lot.  A seek
+       there walks the file's cluster chain: none for the sector which follows
+       the last one. */
+    if (card->source && (card->source_at == offset ||
+                         lseek(card->source - 1, (off_t)offset, SEEK_SET) == (off_t)offset)) {
+        int n = (int)read(card->source - 1, out, SECTOR); /* the rest stays zero */
+        card->source_at = n == (int)SECTOR ? offset + SECTOR : UINT32_MAX;
+    }
 }
 
 static void logical_sector(unsigned sector, uint8_t *out)
@@ -360,15 +383,35 @@ static void logical_sector(unsigned sector, uint8_t *out)
 }
 
 /* SmartMedia Hamming code of a 256-byte half page. */
+static inline unsigned parity(uint32_t value)
+{
+    value ^= value >> 16;
+    value ^= value >> 8;
+    value ^= value >> 4;
+    return 0x6996u >> (value & 15u) & 1u;
+}
+
 static void ecc(const uint8_t *data, uint8_t out[3])
 {
-    unsigned column = 0, row = 0;
-    for (unsigned address = 0; address < 256; ++address) {
-        unsigned value = data[address];
-        column ^= value;
-        if (__builtin_parity(value))
-            for (unsigned bit = 0; bit < 8; ++bit)
-                row ^= 1u << (2 * bit + ((address >> bit) & 1));
+    /* Row parity bit 2b+1 covers the odd bytes with address bit b set, bit 2b
+       those with it clear: the former are the XOR of the odd bytes' addresses,
+       the latter that XOR the parity of their number.  Four bytes at a time
+       (little-endian): a word gives the address bits above its own bytes, the
+       XOR of all words gives the two lowest ones and the column parities. */
+    uint32_t all = 0;
+    unsigned set = 0, row = 0;
+    for (unsigned address = 0; address < 256; address += 4) {
+        uint32_t word;
+        memcpy(&word, data + address, 4);
+        all ^= word;
+        set ^= address & -parity(word);
+    }
+    unsigned count = parity(all);
+    set |= parity(all & 0xff00ff00u) | parity(all & 0xffff0000u) << 1;
+    unsigned column = (all ^ all >> 8 ^ all >> 16 ^ all >> 24) & 0xffu;
+    for (unsigned bit = 0; bit < 8; ++bit) {
+        unsigned high = set >> bit & 1u;
+        row |= (high << 1 | (high ^ count)) << (2 * bit);
     }
     static const uint8_t mask[6] = {0x55, 0xaa, 0x33, 0xcc, 0x0f, 0xf0};
     unsigned code = 3;
@@ -420,14 +463,20 @@ static void generate_page(unsigned block, unsigned page, uint8_t out[PAGE])
 static void generate_window(unsigned block, unsigned window, uint8_t *out)
 {
     unsigned at = window * SECTOR, done = 0;
-    uint8_t page[PAGE];
     while (done < SECTOR) {
         unsigned index = (at + done) / PAGE, column = (at + done) % PAGE;
         unsigned n = PAGE - column;
         if (n > SECTOR - done)
             n = SECTOR - done;
-        generate_page(block, index, page);
-        memcpy(out + done, page + column, n);
+        /* Windows overlap pages by turns: keeping the last one reads each
+           file sector once, in order.  A generated page never changes: what
+           the guest or a sync alters is moved to the swap file first. */
+        uint32_t key = block * PAGES + index + 1;
+        if (card->kept_page != key) {
+            generate_page(block, index, card->kept);
+            card->kept_page = key;
+        }
+        memcpy(out + done, card->kept + column, n);
         done += n;
     }
 }
@@ -746,10 +795,7 @@ static bool pin_file(const char *path)
                 return false;
         }
     }
-    if (card->source) {
-        fclose(card->source);
-        card->source = NULL;
-    }
+    close_source();
     card->source_node = 0;
     return true;
 }
@@ -907,8 +953,7 @@ void gp32_vcard_close(void)
 {
     if (!card)
         return;
-    if (card->source)
-        fclose(card->source);
+    close_source();
     if (card->swap) {
         fclose(card->swap);
         remove(card->swap_path);

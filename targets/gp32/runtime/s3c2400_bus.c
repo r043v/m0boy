@@ -123,9 +123,9 @@ static GP32_HOT S3c2400Access read_bus(const S3c2400Bus *bus, S3c2400AccessKind 
     access.value = access.accepted ? access.value & width_mask(width) : 0;
     if (!inspect) {
         if (access.accepted && access.region == S3C2400_MMIO &&
-            kind == S3C2400_LOAD && bus->hooks.probe)
+            kind == S3C2400_LOAD && M0_OBSERVER(bus->hooks.probe))
             access.value = bus->hooks.probe(bus->hooks.context, &access) & width_mask(width);
-        if (bus->hooks.access)
+        if (M0_OBSERVER(bus->hooks.access))
             bus->hooks.access(bus->hooks.context, &access);
     }
     return access;
@@ -162,7 +162,7 @@ GP32_HOT S3c2400Access s3c2400_bus_write(const S3c2400Bus *bus, S3c2400AccessKin
                contains(address, width, S3C2400_BANK_SIZE)) {
         access.accepted = true;
     }
-    if (bus->hooks.access)
+    if (M0_OBSERVER(bus->hooks.access))
         bus->hooks.access(bus->hooks.context, &access);
     return access;
 }
@@ -173,7 +173,7 @@ bool s3c2400_bus_dma_unit(const S3c2400Bus *bus, uint32_t source,
     /* The audio port's path, from SDRAM to a device with no observer: the same
        two accesses without their descriptions. */
     uint32_t offset = source - S3C2400_SDRAM_BASE;
-    if (bus->ram && bus->mmio.write && !bus->hooks.access && !bus->hooks.copy &&
+    if (bus->ram && bus->mmio.write && !M0_OBSERVER(bus->hooks.access) && !M0_OBSERVER(bus->hooks.copy) &&
         (width == 2 || width == 4) &&
         contains(offset, width, S3C2400_BANK_SIZE) &&
         contains(offset, width, bus->ram_size) &&
@@ -197,7 +197,7 @@ bool s3c2400_bus_dma_unit(const S3c2400Bus *bus, uint32_t source,
 
     S3c2400Access write = s3c2400_bus_write(bus, S3C2400_DMA_STORE, destination,
                                            width, read.value);
-    if (write.accepted && bus->hooks.copy)
+    if (write.accepted && M0_OBSERVER(bus->hooks.copy))
         bus->hooks.copy(bus->hooks.context, &read, &write);
     return write.accepted;
 }

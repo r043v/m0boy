@@ -196,6 +196,33 @@ static unsigned lcd_vertical_status(const S3c2400 *s)
     return s->line < active ? 2 : s->line < front ? 3 : s->line < sync ? 0 : 1;
 }
 
+static unsigned lcd_frame_lines(const S3c2400 *s)
+{
+    return 4 + ((s->lcd[1] >> 14) & 1023u) + (s->lcd[1] & 63u) +
+           ((s->lcd[1] >> 6) & 255u) + (s->lcd[1] >> 24);
+}
+
+static unsigned lcd_active_lines(const S3c2400 *s)
+{
+    unsigned lines = ((s->lcd[1] >> 14) & 1023u) + 1;
+    return lines < GP32_LCD_HEIGHT ? lines : GP32_LCD_HEIGHT;
+}
+
+/* Clocks before the next line end which has to be an event.  Only two a frame
+   do anything but count: the first blanking line, where the picture is taken
+   and which the HLE waits for, and the last, which ends the frame. */
+static unsigned lcd_idle_clocks(const S3c2400 *s)
+{
+    unsigned period = lcd_line_period(s);
+    if (period <= s->line_ticks)
+        return 0;
+    unsigned active = lcd_active_lines(s);
+    unsigned target = s->line < active ? active : lcd_frame_lines(s);
+    unsigned lines = target > s->line ? target - s->line : 1;
+    uint64_t left = (uint64_t)lines * period - s->line_ticks - 1;
+    return left > 1u << 30 ? 1u << 30 : (unsigned)left;
+}
+
 /* What the port registers read as, from the latches and what drives the pins. */
 static inline uint32_t pin_levels(const S3c2400 *s, uint32_t aligned, uint32_t result)
 {
@@ -279,7 +306,7 @@ static bool mmio_read(void *context, uint32_t address, uint8_t width,
 
 static inline bool bus_observed(const S3c2400 *s)
 {
-    return s->bus.hooks.access || s->bus.hooks.probe;
+    return M0_OBSERVER(s->bus.hooks.access) || M0_OBSERVER(s->bus.hooks.probe);
 }
 
 uint32_t s3c2400_pin_read(S3c2400 *s, unsigned offset)
@@ -352,6 +379,8 @@ static unsigned fclk(const S3c2400 *s)
     Period divider = {((pll >> 4) & 63u) + 2u, pll & 3u};
     return periods((((pll >> 12) & 255u) + 8u) * 12000000u, divider);
 }
+
+unsigned s3c2400_fclk(const S3c2400 *s) { return fclk(s); }
 
 static void iic_stop(S3c2400 *s)
 {
@@ -477,29 +506,46 @@ static int16_t audio_pop(S3c2400 *s)
     return s->iis[1] & 8u ? (int16_t)value : (int16_t)((int8_t)value * 256);
 }
 
+static bool audio_running(const S3c2400 *s)
+{
+    return (s->iis[0] & 9u) == 1 && (s->iis[1] & 0x180u) == 0x80u;
+}
+
+/* The transmit FIFO asks DMA channel 2 for data. */
+static bool audio_wants_data(const S3c2400 *s)
+{
+    return (s->iis[0] & 32u) && (s->iis[3] & 0xa00u) == 0xa00u && s->audio_count <= 4;
+}
+
+/* Sends one pair of samples to the codec. */
+static void audio_sample(S3c2400 *s)
+{
+    int16_t left = audio_pop(s);
+    int16_t right = audio_pop(s);
+    if (s->iis[1] & 32u) {
+        int16_t first = left;
+        left = right;
+        right = first;
+    }
+    if (s->audio.sample) {
+        if (s->codec_mute)
+            left = right = 0;
+        Period scale = iis_scale(s);
+        s->audio.sample(s->audio.context, left, right,
+                        periods(fclk(s), scale));
+    }
+}
+
 static void audio_tick(S3c2400 *s)
 {
-    if ((s->iis[0] & 9u) != 1 || (s->iis[1] & 0x180u) != 0x80u)
+    if (!audio_running(s))
         return;
-    if ((s->iis[0] & 32u) && (s->iis[3] & 0xa00u) == 0xa00u && s->audio_count <= 4)
+    if (audio_wants_data(s))
         s3c2400_dma_request(s, 2, 0);
     unsigned period = iis_period(s);
     if (++s->audio_ticks >= period) {
         s->audio_ticks = 0;
-        int16_t left = audio_pop(s);
-        int16_t right = audio_pop(s);
-        if (s->iis[1] & 32u) {
-            int16_t first = left;
-            left = right;
-            right = first;
-        }
-        if (s->audio.sample) {
-            if (s->codec_mute)
-                left = right = 0;
-            Period scale = iis_scale(s);
-            s->audio.sample(s->audio.context, left, right,
-                            periods(fclk(s), scale));
-        }
+        audio_sample(s);
     }
 }
 
@@ -537,7 +583,9 @@ static bool mmio_write(void *context, uint32_t address, uint8_t width, uint32_t 
        The pins reach the codec, so the clocks already spent are applied. */
     if (aligned >= GPIO && aligned < GPIO + 0x60 && !pin_interrupts(aligned))
         apply_pending(s);
-    else if (aligned != IIS + 16 && !(aligned >= IRQ && aligned < IRQ + 24))
+    else if (aligned == IIS + 16)
+        apply_pending(s); /* the samples already due leave the FIFO first */
+    else if (!(aligned >= IRQ && aligned < IRQ + 24))
         s3c2400_sync(s);
     uint32_t old = *reg;
     uint32_t next = (old & ~mask) | value;
@@ -741,28 +789,28 @@ typedef struct {
     bool solid;
 } LcdLine;
 
-static LcdLine lcd_line(const S3c2400 *s, unsigned y)
+static LcdLine lcd_line(const uint32_t *lcd, unsigned y)
 {
     LcdLine line = {0};
-    unsigned mode = (s->lcd[0] >> 1) & 15u;
-    if (!(s->lcd[0] & 1u) || mode < 8 || mode > 12)
+    unsigned mode = (lcd[0] >> 1) & 15u;
+    if (!(lcd[0] & 1u) || mode < 8 || mode > 12)
         return line;
 
     line.bits = 1u << (mode - 8);
-    unsigned width = ((s->lcd[2] >> 8) & 2047u) + 1;
-    unsigned height = ((s->lcd[1] >> 14) & 1023u) + 1;
-    line.page_width = s->lcd[7] & 2047u;
-    unsigned stride = line.page_width + ((s->lcd[7] >> 11) & 2047u);
-    line.lanes = (s->lcd[4] & 1u ? 2u : 0u) ^ (s->lcd[4] & 2u ? 3u : 0u);
-    uint32_t base = s->lcd[5] & 0xfffffffu;
-    line.end = (base & ~0x1fffffu) | (s->lcd[6] & 0x1fffffu);
+    unsigned width = ((lcd[2] >> 8) & 2047u) + 1;
+    unsigned height = ((lcd[1] >> 14) & 1023u) + 1;
+    line.page_width = lcd[7] & 2047u;
+    unsigned stride = line.page_width + ((lcd[7] >> 11) & 2047u);
+    line.lanes = (lcd[4] & 1u ? 2u : 0u) ^ (lcd[4] & 2u ? 3u : 0u);
+    uint32_t base = lcd[5] & 0xfffffffu;
+    line.end = (base & ~0x1fffffu) | (lcd[6] & 0x1fffffu);
     if (line.end == (base & ~0x1fffffu))
         line.end += 0x200000u;
 
     if (y >= height)
         return line;
     line.row = base + y * stride;
-    line.solid = (s->lcd[20] & 0x10000u) != 0;
+    line.solid = (lcd[20] & 0x10000u) != 0;
     unsigned count = line.solid ? width : line.page_width * 16 / line.bits;
     if (count > width) count = width;
     if (count > GP32_LCD_WIDTH) count = GP32_LCD_WIDTH;
@@ -776,12 +824,12 @@ static LcdLine lcd_line(const S3c2400 *s, unsigned y)
     return line;
 }
 
-static uint32_t lcd_word(const S3c2400 *s, const LcdLine *line, unsigned word)
+static uint32_t lcd_word(const S3c2400Bus *bus, const LcdLine *line, unsigned word)
 {
     uint32_t addr = line->row + word * 2;
-    uint32_t data = s3c2400_bus_read(&s->bus, S3C2400_LCD_LOAD, addr * 2, 2).value;
+    uint32_t data = s3c2400_bus_read(bus, S3C2400_LCD_LOAD, addr * 2, 2).value;
     if (word * 2 + 1 < line->page_width && addr + 1 < line->end)
-        data |= s3c2400_bus_read(&s->bus, S3C2400_LCD_LOAD, (addr + 1) * 2, 2).value << 16;
+        data |= s3c2400_bus_read(bus, S3C2400_LCD_LOAD, (addr + 1) * 2, 2).value << 16;
     return data;
 }
 
@@ -790,12 +838,12 @@ static void lcd_scanline(const S3c2400 *s, unsigned y, uint32_t *pixels)
     for (unsigned x = 0; x < GP32_LCD_WIDTH; ++x)
         pixels[x] = 0xff000000u;
 
-    LcdLine line = lcd_line(s, y);
+    LcdLine line = lcd_line(s->lcd, y);
     uint32_t data = 0;
     for (unsigned x = 0; x < line.count; ++x) {
         unsigned offset = x * line.bits;
         if (!(offset & 31u) && !line.solid) {
-            data = lcd_word(s, &line, offset / 32);
+            data = lcd_word(&s->bus, &line, offset / 32);
             uint32_t swapped = 0;
             for (unsigned i = 0; i < 4; ++i)
                 swapped |= ((data >> ((i ^ line.lanes) * 8)) & 255u) << (i * 8);
@@ -813,24 +861,24 @@ static void lcd_scanline(const S3c2400 *s, unsigned y, uint32_t *pixels)
 }
 
 /* Copy a whole row from SDRAM when nobody observes the LCD reads. */
-static bool lcd_copy(const S3c2400 *s, const LcdLine *line, uint32_t *words, unsigned count)
+static bool lcd_copy(const S3c2400Bus *bus, const LcdLine *line, uint32_t *words, unsigned count)
 {
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
     return false;
 #endif
-    if (s->bus.hooks.access || !count)
+    if (M0_OBSERVER(bus->hooks.access) || !count)
         return false;
     unsigned halves = count * 2;
     if (halves > line->page_width) halves = line->page_width;
     if (halves > line->end - line->row) halves = line->end - line->row;
     /* Only a span held entirely by the SDRAM is copied in one piece. */
     uint32_t offset = line->row * 2 - S3C2400_SDRAM_BASE;
-    size_t held = s->bus.ram_size < S3C2400_BANK_SIZE ? s->bus.ram_size : S3C2400_BANK_SIZE;
-    if (!s->bus.ram || line->row * 2 < S3C2400_SDRAM_BASE || offset >= held ||
+    size_t held = bus->ram_size < S3C2400_BANK_SIZE ? bus->ram_size : S3C2400_BANK_SIZE;
+    if (!bus->ram || line->row * 2 < S3C2400_SDRAM_BASE || offset >= held ||
         halves * 2 > held - offset || !gp32_ram_whole(offset, halves * 2))
         return false;
     words[count - 1] = 0;
-    memcpy(words, GP32_RAM_SHOWN(s->bus.ram, offset), halves * 2);
+    memcpy(words, GP32_RAM_SHOWN(bus->ram, offset), halves * 2);
     return true;
 }
 
@@ -839,7 +887,7 @@ static void lcd_capture_line(S3c2400 *s, unsigned y)
     Gp32LcdCapture *capture = s->lcd_capture;
     Gp32LcdFrame *frame = &capture->frames[capture->back];
     uint32_t *out = frame->lines[y];
-    LcdLine line = lcd_line(s, y);
+    LcdLine line = lcd_line(s->lcd, y);
     if (!y)
         frame->palette_count = 0;
     out[GP32_LCD_FORMAT] = line.bits | line.lanes << 8 | (line.solid ? GP32_LCD_SOLID : 0);
@@ -860,20 +908,20 @@ static void lcd_capture_line(S3c2400 *s, unsigned y)
     }
     unsigned count = (line.count * line.bits + 31) / 32;
     uint32_t *words = out + GP32_LCD_HEADER;
-    if (!lcd_copy(s, &line, words, count))
+    if (!lcd_copy(&s->bus, &line, words, count))
         for (unsigned i = 0; i < count; ++i)
-            words[i] = lcd_word(s, &line, i);
+            words[i] = lcd_word(&s->bus, &line, i);
 }
 
 #ifdef M0_GP32_EXTERNAL_RAM
-const uint8_t *s3c2400_lcd_row(const S3c2400 *s, unsigned y,
+const uint8_t *s3c2400_lcd_row(const S3c2400Bus *bus, const uint32_t *lcd, unsigned y,
                                uint32_t *header, uint32_t *spare)
 {
-    LcdLine line = lcd_line(s, y);
+    LcdLine line = lcd_line(lcd, y);
     header[GP32_LCD_FORMAT] = line.bits | line.lanes << 8 | (line.solid ? GP32_LCD_SOLID : 0);
     header[GP32_LCD_COUNT] = line.count;
     header[GP32_LCD_PALETTE_ROW] = 0;
-    header[GP32_LCD_COLOR] = s->lcd[20] & 0xffffu;
+    header[GP32_LCD_COLOR] = lcd[20] & 0xffffu;
     if (!line.count || line.solid)
         return NULL;
     unsigned count = (line.count * line.bits + 31) / 32;
@@ -881,10 +929,10 @@ const uint8_t *s3c2400_lcd_row(const S3c2400 *s, unsigned y,
     if (line.row * 2 >= S3C2400_SDRAM_BASE && offset < GP32_RAM_SIZE &&
         count * 4 <= GP32_RAM_SIZE - offset && !(offset & 3u) &&
         gp32_ram_whole(offset, count * 4))
-        return GP32_RAM_SHOWN(s->bus.ram, offset);
-    if (!lcd_copy(s, &line, spare, count))
+        return GP32_RAM_SHOWN(bus->ram, offset);
+    if (!lcd_copy(bus, &line, spare, count))
         for (unsigned i = 0; i < count; ++i)
-            spare[i] = lcd_word(s, &line, i);
+            spare[i] = lcd_word(bus, &line, i);
     return (const uint8_t *)spare;
 }
 #endif
@@ -892,13 +940,13 @@ const uint8_t *s3c2400_lcd_row(const S3c2400 *s, unsigned y,
 #ifdef M0_GP32_EXTERNAL_RAM
 bool s3c2400_lcd_span(const S3c2400 *s, uint32_t *offset, uint32_t *length)
 {
-    LcdLine first = lcd_line(s, 0);
+    LcdLine first = lcd_line(s->lcd, 0);
     if (!first.count || first.solid)
         return false;
     unsigned height = ((s->lcd[1] >> 14) & 1023u) + 1;
     if (height > GP32_LCD_HEIGHT)
         height = GP32_LCD_HEIGHT;
-    LcdLine last = lcd_line(s, height - 1);
+    LcdLine last = lcd_line(s->lcd, height - 1);
     uint32_t start = first.row * 2, end = (last.row + last.page_width) * 2;
     if (start < S3C2400_SDRAM_BASE || end <= start ||
         end - S3C2400_SDRAM_BASE > GP32_RAM_SIZE)
@@ -1206,6 +1254,15 @@ static unsigned rtc_tick_period(const S3c2400 *s)
     return period ? (unsigned)period : 1;
 }
 
+/* Programs show a new picture by changing buffers, not by writing the one on
+   screen or the LCD registers while it is scanned: the panel is fetched at
+   once. */
+static void lcd_render_panel(S3c2400 *s)
+{
+    for (unsigned y = 0; y < GP32_LCD_HEIGHT; ++y)
+        lcd_render_line(s, y);
+}
+
 static void peripheral_tick(S3c2400 *s)
 {
     ++s->cycles;
@@ -1228,14 +1285,9 @@ static void peripheral_tick(S3c2400 *s)
     if (s->lcd[0] & 1u) {
         if (++s->line_ticks >= lcd_line_period(s)) {
             s->line_ticks = 0;
-            if (s->line < GP32_LCD_HEIGHT)
-                lcd_render_line(s, s->line);
-            unsigned lines = 4 + ((s->lcd[1] >> 14) & 1023u) +
-                             (s->lcd[1] & 63u) + ((s->lcd[1] >> 6) & 255u) +
-                             (s->lcd[1] >> 24);
-            if (++s->line >= lines) {
-                for (unsigned y = s->line; y < GP32_LCD_HEIGHT; ++y)
-                    lcd_render_line(s, y);
+            if (++s->line == lcd_active_lines(s))
+                lcd_render_panel(s);
+            if (s->line >= lcd_frame_lines(s)) {
                 s->line = 0;
                 ++s->frames;
                 if (s->lcd_capture) {
@@ -1263,7 +1315,11 @@ static void note_read(S3c2400 *s, const uint32_t *reg)
     ++s->quiet_reads;
     /* Only these registers move on their own; any other read stays valid. */
     bool timer = (uintptr_t)reg - (uintptr_t)s->pwm < sizeof s->pwm;
-    if (!timer && reg != &s->iis[0] && reg != &s->lcd[4] && reg != &s->watchdog[2])
+    /* The audio port and the count and addresses of its DMA channel. */
+    bool audio = reg == &s->iis[0] || reg == &s->iis[3] ||
+                 (uintptr_t)reg - (uintptr_t)&s->dma[2].regs[3] < 3 * sizeof *reg;
+    if (!timer && !audio && reg != &s->lcd[0] && reg != &s->lcd[4] &&
+        reg != &s->watchdog[2])
         return;
     uint64_t change = UINT64_MAX;
     for (unsigned i = 0; timer && i < 5; ++i) {
@@ -1272,13 +1328,21 @@ static void note_read(S3c2400 *s, const uint32_t *reg)
             continue;
         change = s->cycles + (s->timer_phase[i] < period ? period - s->timer_phase[i] : 1);
     }
-    if (reg == &s->iis[0] && s->audio_ticks < iis_period(s) / 2 &&
-        (s->iis[0] & 9u) == 1 && (s->iis[1] & 0x180u) == 0x80u)
-        change = s->cycles + (iis_period(s) / 2 - s->audio_ticks);
+    if (audio && audio_running(s)) {
+        /* The next transfer, sample or change of the half period flag. */
+        unsigned period = iis_period(s), ticks = s->audio_ticks;
+        unsigned at = reg == &s->iis[0] && ticks < period / 2 ? period / 2 : period;
+        change = s->cycles + (audio_wants_data(s) || at <= ticks ? 1 : at - ticks);
+    }
     if (reg == &s->lcd[4] && (s->lcd[0] & 1u)) {
         unsigned end;
         lcd_horizontal_status(s, &end);
         change = s->cycles + (end > s->line_ticks ? end - s->line_ticks : 1);
+    }
+    /* The line counter, which may move without an event. */
+    if (reg == &s->lcd[0] && (s->lcd[0] & 1u)) {
+        unsigned period = lcd_line_period(s);
+        change = s->cycles + (period > s->line_ticks ? period - s->line_ticks : 1);
     }
     unsigned watchdog = watchdog_period(s);
     if (reg == &s->watchdog[2] && watchdog)
@@ -1288,21 +1352,77 @@ static void note_read(S3c2400 *s, const uint32_t *reg)
         s->stable_until = change;
 }
 
+/* Samples processed without an event, at most.  Above 1, a transfer may read
+   memory the program wrote after the transfer's clock: for slow targets only. */
+#ifndef M0_GP32_AUDIO_BATCH
+#define M0_GP32_AUDIO_BATCH 1u
+#endif
+
+/* Whether the audio port is fed one transfer at a time from memory by DMA
+   channel 2, with nobody watching the accesses: the transfers and samples can
+   then be done late, in the same order, as long as the count does not run out.
+   A register access applies what is due first; only the memory a transfer reads
+   may by then hold what the program wrote after the transfer's clock. */
+static inline bool audio_fed(const S3c2400 *s)
+{
+    const S3c2400Dma *d = &s->dma[2];
+    uint32_t control = d->regs[2], size = (control >> 20) & 3u;
+    return !bus_observed(s) && !M0_OBSERVER(s->bus.hooks.copy) &&
+           (control & (1u << 23)) && !((control >> 24) & 3u) && !(control & (3u << 26)) &&
+           (size == 1 || size == 2) && (d->regs[1] & (1u << 29)) &&
+           d->regs[5] == IIS + 16 && (d->regs[6] & 2u) && !d->active;
+}
+
+/* The clocks of audio_tick() and of the transfers it requests. */
+static void audio_elapse(S3c2400 *s, unsigned clocks)
+{
+    unsigned period = iis_period(s);
+    while (clocks) {
+        unsigned run = 1;
+        bool transfer = audio_wants_data(s);
+        if (transfer) {
+            dma_start(&s->dma[2]);
+        } else {
+            run = period - s->audio_ticks;
+            if (run > clocks)
+                run = clocks;
+        }
+        clocks -= run;
+        if ((s->audio_ticks += run) >= period) {
+            s->audio_ticks = 0;
+            audio_sample(s);
+        }
+        if (transfer)
+            dma_tick(s, 2); /* after the sample, as in peripheral_tick() */
+    }
+}
+
 /* Clocks that can elapse before a peripheral does anything but count. */
 static GP32_HOT unsigned idle_clocks(const S3c2400 *s)
 {
     unsigned idle = 1u << 30;
 #define UNTIL(period, phase) do { unsigned p_ = (period), t_ = (phase), \
     left_ = p_ > t_ ? p_ - t_ - 1 : 0; if (left_ < idle) idle = left_; } while (0)
-    if (s->lcd[0] & 1u)
-        UNTIL(lcd_line_period(s), s->line_ticks);
-    if ((s->iis[0] & 9u) == 1 && (s->iis[1] & 0x180u) == 0x80u) {
-        const S3c2400Dma *d = &s->dma[2];
-        if ((s->iis[0] & 32u) && (s->iis[3] & 0xa00u) == 0xa00u && s->audio_count <= 4 &&
-            (d->regs[2] & (1u << 23)) && !((d->regs[2] >> 24) & 3u) &&
-            (d->regs[6] & 2u) && !d->active)
+    if (s->lcd[0] & 1u) {
+        unsigned left = lcd_idle_clocks(s);
+        if (left < idle)
+            idle = left;
+    }
+    if (audio_running(s)) {
+        /* A sample takes two transfers at most, and up to five may be owed:
+           while more remain, the channel's interrupt is not among them. */
+        uint32_t remaining = s->dma[2].regs[3] & DMA_COUNT, batch = 1;
+        if (remaining > 8 && audio_fed(s))
+            batch = (remaining - 8) / 2 + 1;
+        else if (audio_wants_data(s) && (s->dma[2].regs[2] & (1u << 23)) &&
+                 !((s->dma[2].regs[2] >> 24) & 3u) && (s->dma[2].regs[6] & 2u) &&
+                 !s->dma[2].active)
             return 0;
-        UNTIL(iis_period(s), s->audio_ticks);
+        if (batch > M0_GP32_AUDIO_BATCH)
+            batch = M0_GP32_AUDIO_BATCH;
+        unsigned period = iis_period(s);
+        uint64_t span = (uint64_t)period * batch;
+        UNTIL(span > 1u << 30 ? period : (unsigned)span, s->audio_ticks);
     }
     for (unsigned i = 0; i < 4; ++i)
         if (s->dma[i].active)
@@ -1342,10 +1462,18 @@ static GP32_HOT void apply_pending(S3c2400 *s)
         return;
     s->pending_clocks = 0;
     s->cycles += clocks;
-    if (s->lcd[0] & 1u)
+    if (s->lcd[0] & 1u) {
         s->line_ticks += clocks;
-    if ((s->iis[0] & 9u) == 1 && (s->iis[1] & 0x180u) == 0x80u)
-        s->audio_ticks += clocks;
+        /* Lines which ended without an event; never one of those two. */
+        for (unsigned period = lcd_line_period(s); s->line_ticks >= period; ++s->line)
+            s->line_ticks -= period;
+    }
+    if (audio_running(s)) {
+        if (audio_fed(s))
+            audio_elapse(s, clocks);
+        else
+            s->audio_ticks += clocks;
+    }
     if (s->rtc[(RTC_TICNT - RTC) / 4] & 0x80u)
         s->rtc_ticks += clocks;
     const Timers *t = timers_of(s);
@@ -1528,12 +1656,88 @@ static inline void skip_steps(S3c2400 *s, uint64_t *steps, unsigned cost, uint64
     *steps -= skip;
 }
 
+/* The HLE routine reading a byte from the card (see gp32_hle.c). */
+#define CARD_READ 0x0c7ab808u
+
+/* A guest address range, as an offset in SDRAM, or false when outside it. */
+static bool in_sdram(uint32_t address, uint32_t length, uint32_t *offset)
+{
+    *offset = address - S3C2400_SDRAM_BASE;
+    return *offset < GP32_RAM_SIZE && length <= GP32_RAM_SIZE - *offset;
+}
+
+static uint32_t ram_word(S3c2400 *s, uint32_t offset)
+{
+    uint32_t value;
+    __builtin_memcpy(&value, GP32_RAM(s->ram, offset), 4);
+    return value;
+}
+
+/* The SDK reads a card page with a loop calling the routine above for every
+   byte.  Just after such a call, do the following turns directly, as long as no
+   peripheral event falls within them: the same registers, flags, memory, card
+   state, instructions and clocks. */
+static __attribute__((noinline)) void card_stream(S3c2400 *s, uint64_t *steps, unsigned cost)
+{
+    /* mov lr, pc; ldr pc, [sl]; strb r0, [r7]; add r8, r8, #1; cmp r8, r6;
+       add r7, r7, #1; blo, back to the first */
+    static const uint32_t loop[] = {0xe1a0e00fu, 0xe59af000u, 0xe5c70000u, 0xe2888001u,
+                                    0xe1580006u, 0xe2877001u, 0x3afffff8u};
+    enum { TURN = 9 }; /* the loop, the call and the return */
+    Arm920t *cpu = &s->cpu;
+    uint32_t *r = cpu->r;
+    uint32_t code, pointer, stub, to;
+    unsigned turn = TURN * cost;
+    if (r[15] != CARD_READ + 4 || s->idle_budget < turn || *steps < TURN ||
+        r[8] + 1u >= r[6] || (cpu->control & 0x1087u) || cpu->write_count ||
+        (cpu->irq && !(cpu->cpsr & 0x80u)) || (cpu->fiq_line && !(cpu->cpsr & 0x40u)))
+        return;
+    uint32_t left = r[6] - r[8] - 1u;
+    if ((r[14] & 3u) || !in_sdram(r[14] - 8u, sizeof loop, &code) ||
+        (r[10] & 3u) || !in_sdram(r[10], 4, &pointer) || !in_sdram(CARD_READ, 8, &stub) ||
+        !in_sdram(r[7], left, &to))
+        return;
+    for (unsigned i = 0; i < sizeof loop / sizeof *loop; ++i)
+        if (ram_word(s, code + 4 * i) != loop[i])
+            return;
+    if (ram_word(s, pointer) != CARD_READ || ram_word(s, stub) != 0xef7f0011u ||
+        ram_word(s, stub + 4) != 0xe12fff1eu)
+        return;
+    /* The bytes must not change what runs the loop. */
+    if ((to < code + sizeof loop && code < to + left) || (to < stub + 8 && stub < to + left) ||
+        (to < pointer + 4 && pointer < to + left))
+        return;
+    /* The pins as the routine leaves them, selecting a card which drives the
+       data pins while its read pulse is low. */
+    if (!s->smc.image || (s->gpio[2] & 3u) || (s->gpio[12] & 0x30u) ||
+        (s->gpio[9] & 0x180u) != 0x100u || pin_interrupts(GPIO + 0x24))
+        return;
+    bool write_enable = s->smc.writable && (s->gpio[9] & 0x40u);
+    do {
+        *GP32_RAM(s->ram, to++) = (uint8_t)r[0];
+        ++r[7];
+        ++r[8];
+        s->smc_data = gp32_smc_read(&s->smc, write_enable);
+        r[0] = s->smc_data;
+        s->idle_budget -= turn;
+        s->pending_clocks += turn;
+        s->steps += TURN;
+        *steps -= TURN;
+        s->quiet_reads += 3;
+    } while (r[8] + 1u < r[6] && s->idle_budget >= turn && *steps >= TURN);
+    /* cmp r8, r6, with r8 below r6 */
+    uint32_t difference = r[8] - r[6];
+    uint32_t overflow = ((r[8] ^ r[6]) & (r[8] ^ difference)) >> 31;
+    cpu->cpsr = (cpu->cpsr & 0x0fffffffu) | (difference & 0x80000000u) | overflow << 28;
+    ++cpu->effects;
+}
+
 GP32_HOT S3c2400Stop s3c2400_run(S3c2400 *s, uint64_t steps)
 {
     Loop loop = {.valid = false};
     const Arm920tConfig *hooks = &s->cpu.config;
-    bool observed = hooks->trace || hooks->predicate || hooks->access ||
-                    s->bus.hooks.access || s->bus.hooks.probe;
+    bool observed = M0_OBSERVER(hooks->trace) || M0_OBSERVER(hooks->predicate) ||
+                    M0_OBSERVER(hooks->access) || bus_observed(s);
     unsigned cost = s->cycles_per_instruction;
 #if M0_GP32_DIVIDE
     const uint64_t inverse = 0;
@@ -1587,6 +1791,10 @@ GP32_HOT S3c2400Stop s3c2400_run(S3c2400 *s, uint64_t steps)
                 (!s->cpu.fiq_line || (s->cpu.cpsr & 0x40u)))
                 skip_steps(s, &steps, cost, inverse);
         }
+        /* Not past the end of a frame: the caller gets it without delay. */
+        if (pc == CARD_READ && result == ARM920T_INSTRUCTION && !observed && cost &&
+            s->frames == frame)
+            card_stream(s, &steps, cost);
         if (result == ARM920T_EXCEPTION) {
             stop = S3C2400_STOP_EXCEPTION;
             break;

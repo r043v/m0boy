@@ -4,6 +4,7 @@
     make_aka.py APPLICATION OUTPUT_DIRECTORY [--fast-pages N,N,... | --page-profile FILE [--fast-count N]]
                 [--aot app_aot.c]
                 [--card NAME.SMC | --card-folder PATH] [--no-iram]
+                [--flat-ram] [--iram-functions FILE]
 
 The project embeds the application: it holds ROM data and must not be
 published.  The guest's 8 MiB SDRAM is split into 16 KiB pages: --fast-pages
@@ -18,6 +19,14 @@ the SD card (root or one folder below), for applications that need one.
 --card-folder names instead a folder of the SD card to present as the card: no
 image to prepare, and what the program saves appears there as files (8.3 names,
 32 MiB at most).
+
+--flat-ram makes the whole 8 MiB PSRAM the guest's SDRAM, at the one address
+where the system maps it: no page table and no test on an access, but no page of
+the guest in internal memory and no PSRAM for anything else (so no card).
+--iram-functions links into IRAM the hot functions of the runtime and those the
+file names (one per line, * allowed: the recompiled functions a profile shows),
+and puts the verification words of the replaced loops in internal memory.  The
+linker reports when they do not fit.
 """
 import argparse
 import shutil
@@ -89,6 +98,33 @@ def name83(name):
     return stem.ljust(8) + extension.ljust(3)
 
 
+# Functions of the runtime a profile shows on the way of a running machine.
+HOT = """arm920t_aot_run mmio_write mmio_read execute$constprop$* memory_full register_at
+audio_elapse audio_sample iis_scale dma_tick dma_tick$part$* dma_start$part$* irq_update
+rtc_tick_period lcd_line_period note_read decode loop_turns run_ready cold_step$constprop$*
+s3c2400_bus_dma_unit s3c2400_bus_read endian$isra$* sample lcd_line s3c2400_lcd_row
+esp32_audio_pull _ZL10audio_taskPv lcd_start_transaction"""
+
+IRAM_SCRIPT = '''"""A copy of the system's linker script with more functions in IRAM."""
+Import("env")
+import hashlib
+from pathlib import Path
+sdk = Path(env.PioPlatform().get_package_dir("framework-arduinoespressif32")) / "tools/sdk/esp32s3"
+script = (sdk / env.BoardConfig().get("build.arduino.memory_type") / "sections.ld").read_text()
+for mark, more in (("*(.iram1 .iram1.*)", "*(@CODE@)"),
+                   ("*(.dram1 .dram1.*)", "*(.rodata.loop_code_*)")):
+    assert script.count(mark) == 1, mark
+    script = script.replace(mark, mark + "\\n    " + more)
+out = Path(env.subst("$PROJECT_DIR")) / "ld"
+out.mkdir(exist_ok=True)
+(out / "sections.ld").write_text(script)
+env.Prepend(LIBPATH=[str(out)])
+# SCons does not follow the script: its digest in the command links again.
+digest = hashlib.sha256(script.encode()).hexdigest()[:16]
+env.Append(LINKFLAGS=["-Wl,--defsym=gp32_iram_script_" + digest + "=0"])
+'''
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("application", type=Path)
@@ -97,12 +133,19 @@ def main():
     where.add_argument("--fast-pages", default="0,1,2,3")
     where.add_argument("--page-profile", type=Path)
     parser.add_argument("--fast-count", type=int, default=4)
-    parser.add_argument("--no-iram", action="store_true")
+    iram = parser.add_mutually_exclusive_group()
+    iram.add_argument("--no-iram", action="store_true")
+    iram.add_argument("--iram-functions", type=Path)
+    parser.add_argument("--flat-ram", action="store_true")
     parser.add_argument("--aot", type=Path)
     card = parser.add_mutually_exclusive_group()
     card.add_argument("--card")
     card.add_argument("--card-folder")
     args = parser.parse_args()
+    if args.flat_ram and (args.card or args.card_folder):
+        parser.error("--flat-ram leaves no PSRAM for a card")
+    if args.flat_ram and (args.page_profile or args.fast_pages != "0,1,2,3"):
+        parser.error("--flat-ram has no fast pages to choose")
     if args.page_profile:
         # "page uses shown": the pages on the screen have their own placement.
         uses = [(page, n) for page, n, shown in
@@ -193,6 +236,19 @@ def main():
         '    .incbin "payload.bin"\n1:\n    .balign 4\n'
         "    .global gp32_payload_size\ngp32_payload_size:\n    .4byte 1b - gp32_payload\n"
 )
+    if args.flat_ram:
+        memory = "-DM0_GP32_FLAT_RAM=0x3D800000u -Wl,--wrap=esp_spiram_add_to_heapalloc"
+    else:
+        memory = '-DM0_GP32_PAGED_RAM "-DM0_GP32_AKA_FAST_PAGES=%s"' % ",".join(map(str, pages))
+    scripts = "post:aka_size.py"
+    if args.iram_functions:
+        names = HOT.split() + [line.strip() for line in args.iram_functions.read_text().splitlines()
+                               if line.strip() and not line.startswith("#")]
+        if any(not all(c.isascii() and (c.isalnum() or c in "_$.*") for c in name) for name in names):
+            parser.error("--iram-functions takes one function name per line")
+        code = " ".join(".literal.%s .text.%s" % (name, name) for name in names)
+        (out / "aka_iram.py").write_text(IRAM_SCRIPT.replace("@CODE@", code))
+        scripts = "\n    pre:aka_iram.py\n    post:aka_size.py"
     (out / "platformio.ini").write_text(f"""[platformio]
 boards_dir = boards
 
@@ -206,10 +262,10 @@ board_build.partitions = aka.csv
 build_unflags = -Os
 build_flags = -O2 -Wno-unused-label -mlongcalls -Isrc
     -DCORE_DEBUG_LEVEL=0
-    -DM0_GP32_EXTERNAL_RAM -DM0_GP32_ONE_MACHINE -DM0_GP32_PC_TOOLS=0 -DM0_GP32_DIVIDE=1 {flags}
-    -DM0_GP32_PAGED_RAM "-DM0_GP32_AKA_FAST_PAGES={",".join(map(str, pages))}"
+    -DM0_GP32_EXTERNAL_RAM -DM0_GP32_ONE_MACHINE -DM0_GP32_PC_TOOLS=0 -DM0_GP32_OBSERVERS=0 -DM0_GP32_DIVIDE=1 -DM0_GP32_AUDIO_BATCH=8u {flags}
+    {memory}
 build_src_filter = {sources}
-extra_scripts = post:aka_size.py
+extra_scripts = {scripts}
 """)
     print(f"{out}: pio run")
 

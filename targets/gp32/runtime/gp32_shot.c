@@ -79,22 +79,42 @@ static uint8_t *close_chunk(uint8_t *out, const char *type, size_t size)
     return out + 12 + size;
 }
 
-bool gp32_shot_save(S3c2400 *soc, const Gp32Host *host, uint64_t program, const char *path)
+struct Gp32Shot {
+    uint8_t *state;
+    size_t state_size;
+    uint8_t rgb[GP32_SHOT_WIDTH * GP32_SHOT_HEIGHT * 3];
+};
+
+Gp32Shot *gp32_shot_take(S3c2400 *soc, const Gp32Host *host, uint64_t program)
+{
+    Gp32Shot *shot = malloc(sizeof(*shot));
+    if (!shot)
+        return NULL;
+    shot->state_size = 0;
+    shot->state = gp32_state_pack(soc, host, program, &shot->state_size);
+    if (!shot->state) {
+        free(shot);
+        return NULL;
+    }
+    gp32_shot_screen(soc, shot->rgb);
+    return shot;
+}
+
+bool gp32_shot_store(Gp32Shot *shot, const char *path)
 {
     enum { ROW = GP32_SHOT_WIDTH * 3 + 1, PIXELS = ROW * GP32_SHOT_HEIGHT };
-    size_t state_size = 0;
-    uint8_t *state = gp32_state_pack(soc, host, program, &state_size);
-    uint8_t *rgb = malloc(GP32_SHOT_WIDTH * GP32_SHOT_HEIGHT * 3);
+    if (!shot)
+        return false;
+    const uint8_t *state = shot->state;
+    size_t state_size = shot->state_size;
     uint8_t *rows = malloc(PIXELS);
     uLong image_bound = compressBound(PIXELS), state_bound = compressBound((uLong)state_size);
-    uint8_t *png = state ? malloc(sizeof(signature) + 25 + 12 + image_bound + 20 + state_bound + 12)
-                         : NULL;
+    uint8_t *png = malloc(sizeof(signature) + 25 + 12 + image_bound + 20 + state_bound + 12);
     bool saved = false;
-    if (state && rgb && rows && png) {
-        gp32_shot_screen(soc, rgb);
+    if (rows && png) {
         for (unsigned y = 0; y < GP32_SHOT_HEIGHT; ++y) {
             rows[y * ROW] = 0;
-            memcpy(rows + y * ROW + 1, rgb + y * (ROW - 1), ROW - 1);
+            memcpy(rows + y * ROW + 1, shot->rgb + y * (ROW - 1), ROW - 1);
         }
         uint8_t *out = png;
         memcpy(out, signature, sizeof(signature));
@@ -119,9 +139,14 @@ bool gp32_shot_save(S3c2400 *soc, const Gp32Host *host, uint64_t program, const 
     }
     free(png);
     free(rows);
-    free(rgb);
-    free(state);
+    free(shot->state);
+    free(shot);
     return saved;
+}
+
+bool gp32_shot_save(S3c2400 *soc, const Gp32Host *host, uint64_t program, const char *path)
+{
+    return gp32_shot_store(gp32_shot_take(soc, host, program), path);
 }
 
 bool gp32_shot_load(S3c2400 *soc, Gp32Host *host, uint64_t program, const char *path)

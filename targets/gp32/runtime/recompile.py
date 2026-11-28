@@ -492,13 +492,13 @@ static __attribute__((noinline, unused)) const void *run_ready(const Arm920t *cp
     const Arm920tAot *run, uint32_t at, unsigned count)
 {
     if (cpu->write_count || interrupted(cpu) || run->left <= count ||
-        count * run->cost > *run->budget || (cpu->control & 0x80) || cpu->config.access)
+        count * run->cost > *run->budget || (cpu->control & 0x80) || M0_OBSERVER(cpu->config.access))
         return 0;
     const S3c2400Bus *bus = cpu->config.bus;
     uint32_t offset = at - S3C2400_SDRAM_BASE;
     if (!(cpu->control & 0x1001u)) {
         if (offset >= S3C2400_BANK_SIZE || (size_t)offset + 4 * count > bus->ram_size ||
-            bus->hooks.access || !bus->ram || !gp32_ram_whole(offset, 4 * count))
+            M0_OBSERVER(bus->hooks.access) || !bus->ram || !gp32_ram_whole(offset, 4 * count))
             return 0;
         return GP32_RAM(bus->ram, offset);
     }
@@ -522,7 +522,7 @@ static __attribute__((noinline, unused)) const void *block_ready(const Arm920t *
     const Arm920tAot *run, uint32_t at, unsigned count)
 {
     if (cpu->write_count || interrupted(cpu) || run->left <= count ||
-        (cpu->control & 0x80) || cpu->config.access)
+        (cpu->control & 0x80) || M0_OBSERVER(cpu->config.access))
         return 0;
     const S3c2400Bus *bus = cpu->config.bus;
     uint32_t offset = at - S3C2400_SDRAM_BASE;
@@ -536,7 +536,7 @@ static __attribute__((noinline, unused)) const void *block_ready(const Arm920t *
         offset = (page->physical | (mva & 0x3ffu)) - S3C2400_SDRAM_BASE;
     }
     if (offset >= S3C2400_BANK_SIZE || (size_t)offset + 4 * count > bus->ram_size ||
-        bus->hooks.access || !bus->ram || !gp32_ram_whole(offset, 4 * count))
+        M0_OBSERVER(bus->hooks.access) || !bus->ram || !gp32_ram_whole(offset, 4 * count))
         return 0;
     return GP32_RAM(bus->ram, offset);
 }
@@ -597,7 +597,7 @@ static inline __attribute__((always_inline)) void account(Arm920tAot *run, unsig
 
 
 def generate_part(instructions, pages, out, miss, hot=None, entries=frozenset(), fast=False,
-                  natives={}):
+                  natives={}, hosted={}):
     """`hot` holds the (mode, address) pairs to inline, None meaning all."""
     # One function per distinct opcode, shared by all of its addresses.
     for mode in ("arm", "thumb"):
@@ -621,6 +621,8 @@ def generate_part(instructions, pages, out, miss, hot=None, entries=frozenset(),
             out.write(f"{size}static Arm920tStep {mode}_{opcode:x}(Arm920t *cpu, uint32_t pc)\n{{\n"
                       f"{guard}    return {mode}(cpu, 0x{opcode:x}u, pc);\n}}\n")
     needed = {natives[a] for (_, mode), found in pages if mode == "arm" for a in found if a in natives}
+    needed |= {hosted[a][0] for (_, mode), found in pages if mode == "arm"
+               for a in found if a in hosted}
     for name in sorted(needed):
         out.write(f"int {name}(Arm920t *cpu, Arm920tAot *run);\n")
     for (page, mode), addresses in pages:
@@ -642,8 +644,13 @@ entry:
             opcode = instructions[mode][address]
             stop = "true" if leaves(mode, opcode) else "false"
             inline = hot is None or (mode, address) in hot
-            entered = mode == "arm" and address in natives
-            if entered:
+            host = mode == "arm" and address in hosted
+            entered = mode == "arm" and (host or address in natives)
+            if host:
+                out.write(f"""    case 0x{address:08x}u:
+        if ({hosted[address][0]}(cpu, run)) return ARM920T_INSTRUCTION;
+""")
+            elif entered:
                 out.write(f"""    case 0x{address:08x}u:
         switch ({natives[address]}(cpu, run)) {{
         case 1: goto jumped;
@@ -788,7 +795,7 @@ def cold_tables(instructions, hot):
 
 
 def generate_pages(instructions, path, hot=None, inline=None, count=False, fast=False,
-                   hybrid=False):
+                   hybrid=False, image=None):
     """Write the parts for the covered pages (those in `hot` if given)."""
     entries = frozenset(targets(instructions))
     pages = {}
@@ -816,20 +823,24 @@ def generate_pages(instructions, path, hot=None, inline=None, count=False, fast=
                    if count else "#define COUNT(at) ((void)0)\n")
         return renamed + HEADER + counter + PART_HEADER
 
-    natives, total = {}, len(parts)
+    natives, hosted, total = {}, {}, len(parts)
     if hybrid:
         # The HLE routines trap on their first instruction: a native region around
         # the return alone would only add two changes of function to each call.
         stubs = hle_stubs()
         translated = {a: w for a, w in instructions["arm"].items() if a not in stubs}
-        natives, total = native.generate(translated, inline, entries, stem, total, header)
+        if image:
+            hosted = native.routines(*image)
+            hosted = {a: found for a, found in hosted.items()
+                      if inline is None or ("arm", a) in inline}
+        natives, total = native.generate(translated, inline, entries, stem, total, header, hosted)
     for index, part in enumerate(parts):
         with open(f"{stem}.part{index:03d}.c", "w", encoding="ascii") as out:
             out.write(header(index))
             generate_part(instructions, part, out,
                           "interpret(cpu, run)" if hot is None and kept is None else "MISS",
                           inline, entries,
-                          fast, natives)
+                          fast, natives, hosted)
     return pages, total
 
 
@@ -879,9 +890,10 @@ def hottest(instructions, files, share):
     return chosen
 
 
-def generate(instructions, path, inline=None, count=False, fast=False, hybrid=False):
+def generate(instructions, path, inline=None, count=False, fast=False, hybrid=False,
+             image=None):
     pages, parts = generate_pages(instructions, path, inline=inline, count=count, fast=fast,
-                                  hybrid=hybrid)
+                                  hybrid=hybrid, image=image)
     with open(path, "w", encoding="ascii") as out:
         out.write(HEADER + map_macros() + MISSES + (COUNTS if count else ""))
         if hybrid:
@@ -1112,7 +1124,9 @@ def main():
         inline |= {("arm", address) for address in hle_stubs()}
     if hybrid and count:
         sys.exit("--hybrid cannot count executions")
-    parts = generate(instructions, sys.argv[3], inline, count, fast, hybrid)
+    with open(sys.argv[2], "rb") as held:
+        image = held.read(), described[0]
+    parts = generate(instructions, sys.argv[3], inline, count, fast, hybrid, image)
     counts = {mode: len(found) for mode, found in instructions.items()}
     print(f"{counts['arm']} ARM and {counts['thumb']} Thumb instructions recompiled in {parts} parts"
           + ("" if inline is None else f", {len(inline)} inlined"))

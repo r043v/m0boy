@@ -6,7 +6,13 @@ once.  Everything else belongs to the precise machine, which runs it with the
 recompiled steps: a block only starts when no peripheral event falls inside it,
 and an instruction reaching a device, changing the mode or doing anything not
 translated here is left, with the state written back, to those steps.
+
+A few routines of the maker's SDK are also recognised by a fingerprint of their
+words and run as host code (see routines()).
 """
+
+import hashlib
+import struct
 
 # Instructions of a block at most: a nearer event is reached by precise steps.
 BLOCK = 4
@@ -31,7 +37,7 @@ static inline bool native_ready(const Arm920t *cpu)
 {
     const S3c2400Bus *bus = cpu->config.bus;
     return !(cpu->control & 0x1087u) && !cpu->write_count && !interrupted(cpu) &&
-           !cpu->config.access && !bus->hooks.access && bus->ram &&
+           !M0_OBSERVER(cpu->config.access) && !M0_OBSERVER(bus->hooks.access) && bus->ram &&
            bus->ram_size >= 0x800000u;
 }
 
@@ -183,6 +189,429 @@ def progresses(arm, at, to):
         return False
     written = [r for w in body for r in writes(w)]
     return any((r := step(w)) is not None and written.count(r) == 1 for w in body)
+
+
+# The software ECC of a SmartMedia page half: the fingerprint of its words (the
+# repository holds none of them), their number, and the two literals which follow
+# them, the addresses of a table of parities and of its complement.
+ECC_SHA256 = "88d72b7b1a8b1bfda9da8269e902b6705f4a2217019fa26f24844d302b476c0e"
+ECC_FIRST = 0xE92D4FF3
+ECC_WORDS = 349
+ECC_LITERALS = 2
+
+# Shared by the routines.
+ROUTINE_SUPPORT = """
+static bool same_words(const uint8_t *ram, uint32_t at, const uint32_t *words, unsigned count)
+{
+    uint32_t differs = 0;
+    if (gp32_ram_whole(at, 4 * count)) {
+        const uint8_t *code = GP32_RAM(ram, at);
+        for (unsigned i = 0; i < count; ++i)
+            differs |= load32(code + 4 * i) ^ words[i];
+    } else {
+        for (unsigned i = 0; i < count; ++i)
+            differs |= load32(GP32_RAM(ram, at + 4 * i)) ^ words[i];
+    }
+    return !differs;
+}
+
+/* The whole turns, of `count` instructions each, of a loop of `words` words that
+   may run now. */
+static uint32_t loop_turns(const Arm920t *cpu, const Arm920tAot *run, uint32_t at,
+                           const uint32_t *code, unsigned words, unsigned count)
+{
+    if (!native_ready(cpu) || !run->left || (cpu->cpsr & T))
+        return 0;
+    /* This instruction, and those the budget holds besides. */
+    uint32_t room = arm920t_quotient(*run->budget, run->cost, run->inverse) + 1;
+    if (room > run->left)
+        room = (uint32_t)run->left;
+    if (room < count || !same_words(cpu->config.bus->ram, at, code, words))
+        return 0;
+    return room / count;
+}
+
+static inline bool loop_span(uint32_t at, uint32_t length, uint32_t ram)
+{
+    return length <= ram && at <= ram - length;
+}
+
+static inline uint32_t loop_compare(uint32_t a, uint32_t b)
+{
+    uint32_t difference = a - b;
+    return (difference & N) | (difference ? 0 : Z) | (a >= b ? C : 0) |
+           (((a ^ b) & (a ^ difference)) >> 31 ? V : 0);
+}
+
+static inline int loop_done(Arm920t *cpu, Arm920tAot *run, uint32_t done, uint32_t last)
+{
+    ++cpu->effects; /* not an idle loop */
+    account(run, done - 1);
+    run->pc = last;
+    return 1;
+}
+"""
+
+ECC_C = """
+/* The 3 bytes of the SmartMedia ECC of 256 bytes, computed by the host.  The
+   SDK does it bit by bit in some 13000 instructions: they are all counted, up
+   to each peripheral event at a time so that events and interrupts stay on
+   time, the program counter staying on the entry until the last one: the
+   registers are untouched until then.  Left as the routine would: its result,
+   the registers it may change and the flags; not the dead stack frame below
+   sp. */
+static const uint32_t ecc_code_@A@[] = {
+@CODE@};
+static const uint32_t ecc_tables_@A@[] = {
+@TABLES@};
+
+static inline uint32_t ecc_parity(uint32_t value)
+{
+    value ^= value >> 16;
+    value ^= value >> 8;
+    value ^= value >> 4;
+    return 0x6996u >> (value & 15) & 1;
+}
+
+static void ecc_read_@A@(const uint8_t *ram, uint32_t data, uint32_t *words)
+{
+    if (gp32_ram_whole(data, 256)) {
+        __builtin_memcpy(words, GP32_RAM(ram, data), 256);
+    } else {
+        for (unsigned i = 0; i < 256; ++i)
+            ((uint8_t *)words)[i] = *GP32_RAM(ram, data + i);
+    }
+}
+
+int ecc_@A@(Arm920t *cpu, Arm920tAot *run)
+{
+    /* The call under way: instructions left, its stack and its data. */
+    static uint32_t left, frame, source;
+    if (!native_ready(cpu) || !run->left || (cpu->cpsr & T))
+        return 0;
+    uint8_t *const ram = cpu->config.bus->ram;
+    uint32_t data = cpu->r[0] - 0x@BASE@u, out = cpu->r[1] - 0x@BASE@u;
+    uint32_t words[64];
+    if (!left || frame != cpu->r[13] || source != cpu->r[0]) {
+        if (data > 0x@RAM@u - 256u || out > 0x@RAM@u - 3u ||
+            !same_words(ram, 0x@AT@u, ecc_code_@A@, @COUNT@u) ||
+            !same_words(ram, 0x@T1@u, ecc_tables_@A@, 4) ||
+            !same_words(ram, 0x@T0@u, ecc_tables_@A@ + 4, 4))
+            return 0;
+        /* A byte takes one instruction more when the parity of its high half
+           is even, except for 15. */
+        ecc_read_@A@(ram, data, words);
+        uint32_t all = 0, lanes = 0;
+        for (unsigned i = 0; i < 64; ++i) {
+            uint32_t w = words[i], odd = w ^ w >> 1, ones = w & w >> 1;
+            odd ^= odd >> 2;
+            ones &= ones >> 2;
+            lanes += (~(odd | ones) & 0x10101010u) >> 4;
+            all ^= w;
+        }
+        lanes = (lanes & 0x00ff00ffu) + (lanes >> 8 & 0x00ff00ffu);
+        left = 23 + 256 * 20 + ((lanes + (lanes >> 16)) & 0xffffu) +
+               70 + 2304 + 2 + 896 + 2 + 576 + 4935 + 3 +
+               (ecc_parity(all) ? 27 : 9) + 73;
+        frame = cpu->r[13];
+        source = cpu->r[0];
+    }
+    /* This instruction, and those the budget holds besides. */
+    uint32_t take = arm920t_quotient(*run->budget, run->cost, run->inverse) + 1;
+    if (take > left)
+        take = left;
+    if (take > run->left)
+        take = (uint32_t)run->left;
+    ++cpu->effects; /* not an idle loop */
+    account(run, take - 1);
+    left -= take;
+    if (left) {
+        run->pc = 0x@PC@u;
+        return 1;
+    }
+    ecc_read_@A@(ram, data, words);
+    /* Bit k of `set`: the parity of the bytes whose index has bit k + 2. */
+    uint32_t all = 0, set = 0;
+    for (unsigned i = 0; i < 64; ++i) {
+        all ^= words[i];
+        set ^= i & -ecc_parity(words[i]);
+    }
+    unsigned whole = ecc_parity(all);
+    /* Parities over the bytes whose index has a bit set (d) or clear (c). */
+    unsigned d = ecc_parity(all & 0xff00ff00u) | ecc_parity(all & 0xffff0000u) << 1 | set << 2;
+    unsigned c = d ^ (whole ? 0xffu : 0u);
+    uint32_t low = 0, high = 0;
+    for (unsigned k = 0; k < 4; ++k) {
+        low |= ((d >> k & 1) << 1 | (c >> k & 1)) << (2 * k);
+        high |= ((d >> (k + 4) & 1) << 1 | (c >> (k + 4) & 1)) << (2 * k);
+    }
+    uint32_t column = all ^ all >> 16;
+    column = (column ^ column >> 8) & 0xff;
+    uint32_t third = ecc_parity(column & 0xf0) << 7 | ecc_parity(column & 0x0f) << 6 |
+                     ecc_parity(column & 0xcc) << 5 | ecc_parity(column & 0x33) << 4 |
+                     ecc_parity(column & 0xaa) << 3 | ecc_parity(column & 0x55) << 2;
+    *GP32_RAM(ram, out) = (uint8_t)~low;
+    *GP32_RAM(ram, out + 1) = (uint8_t)~high;
+    *GP32_RAM(ram, out + 2) = (uint8_t)~third;
+    uint32_t back = cpu->r[14];
+    cpu->r[0] = 0;
+    cpu->r[2] = (c >> 6 & 1) << 4;
+    cpu->r[3] = (c >> 5 & 1) << 2;
+    cpu->r[12] = cpu->r[1];
+    cpu->r[14] = c >> 4 & 1;
+    cpu->cpsr = (cpu->cpsr & ~(N | Z | C | V)) | C | (!whole || (c & 1) ? Z : 0);
+    cpu->r[15] = back & ~3u;
+    run->pc = 0x@LAST@u;
+    return 1;
+}
+"""
+
+
+# Inner loops, recognised the same way: the first word, the number of words and
+# their fingerprint.  Each turns once per call of its head.
+LOOPS = {
+    # 8 pixels of 8 bits drawn over the picture, a key colour being left out
+    "blit": (0xE3550008, 49,
+             "8b7ced3dd4a0aa27eae08c8ac4b0694aad9fe072421147ad3c5788392d1ac88b"),
+    # one pixel of a 1 bit per pixel pattern, drawn where it is set
+    "mask": (0xE3190001, 12,
+             "b45dd10e37cfac74c9f38c0aaeda0dffdf12d7defdb8480df7537975f68f8fcd"),
+    # one byte copied
+    "copy": (0xE3520000, 6,
+             "3bd22466bd95918d91bc986d6d632eafcec9d820407fc1d2cf2cffcc23e97c5a"),
+    # one sample of a sound added to a stereo pair of the output; the loop holds
+    # the code which wraps the position, never run here
+    "mix": (0xE150000C, 26,
+            "4a42a0a4ebc09d434778be22bc506a74a253a1381bc186df86e99b58595dc63b"),
+}
+
+LOOP_C = """
+/* The loop at 0x@A@, run by the host for as many whole turns as fit before the
+   next peripheral event: the same registers, flags, memory and instructions.
+   Anything else is left to the recompiled steps. */
+static const uint32_t loop_code_@A@[] = {
+@CODE@};
+@BODY@"""
+
+BLIT_C = """
+/* r0 the key colour, r1 the destination, r2 the source, r5 the pixels left. */
+int blit_@A@(Arm920t *cpu, Arm920tAot *run)
+{
+    uint32_t *r = cpu->r;
+    uint32_t most = loop_turns(cpu, run, 0x@AT@u, loop_code_@A@, @COUNT@u, @COUNT@u);
+    if (!most || (int32_t)r[5] < 8)
+        return 0;
+    uint32_t turns = r[5] >> 3;
+    if (turns > most)
+        turns = most;
+    uint32_t to = r[1] - 0x@BASE@u, from = r[2] - 0x@BASE@u, bytes = 8 * turns;
+    if ((to | from) & 3u || !loop_span(to, bytes, 0x@RAM@u) || from > 0x@RAM@u - bytes ||
+        (to < 0x@AT@u + 4 * @COUNT@u && 0x@AT@u < to + bytes))
+        return 0;
+    uint8_t *const ram = cpu->config.bus->ram;
+    /* A byte of the source equals the key when it is zero in `source ^ keys`;
+       no byte equals a key above 255. */
+    const uint32_t keys = r[0] * 0x01010101u, valid = r[0] < 256 ? ~0u : 0;
+    uint32_t first = 0, second = 0, low = 0, high = 0, kept = 0, byte = 0;
+    for (unsigned turn = 0; turn < turns; ++turn, to += 8, from += 8) {
+        first = load32(GP32_RAM(ram, from));
+        second = load32(GP32_RAM(ram, from + 4));
+        byte = second & 255u; /* compared last */
+        low = load32(GP32_RAM(ram, to));
+        high = load32(GP32_RAM(ram, to + 4));
+        uint32_t x = first ^ keys;
+        uint32_t same = ~(((x & 0x7f7f7f7fu) + 0x7f7f7f7fu) | x | 0x7f7f7f7fu);
+        same = ((same >> 7) * 255u) & valid;
+        low = (low & same) | (first &= ~same);
+        x = second ^ keys;
+        same = ~(((x & 0x7f7f7f7fu) + 0x7f7f7f7fu) | x | 0x7f7f7f7fu);
+        same = ((same >> 7) * 255u) & valid;
+        high = (high & same) | (second &= ~same);
+        kept = ~same;
+        store32(GP32_RAM(ram, to), low);
+        store32(GP32_RAM(ram, to + 4), high);
+    }
+    cpu->cpsr = (cpu->cpsr & ~(N | Z | C | V)) | loop_compare(r[0], byte);
+    r[1] += bytes;
+    r[2] += bytes;
+    r[5] -= bytes;
+    r[6] = first;
+    r[7] = second;
+    r[8] = low;
+    r[9] = high;
+    r[10] = kept;
+    return loop_done(cpu, run, turns * @COUNT@u, 0x@LAST@u);
+}
+"""
+
+MASK_C = """
+/* r6 the destination, r7 the pattern, r8 its bits taken, r9 its current byte,
+   r10 the colour, r14 the pixels left.  The last pixel, which leaves the loop,
+   is not run here. */
+int mask_@A@(Arm920t *cpu, Arm920tAot *run)
+{
+    uint32_t *r = cpu->r;
+    uint32_t turns = loop_turns(cpu, run, 0x@AT@u, loop_code_@A@, @COUNT@u, @COUNT@u);
+    if (!turns || r[14] < 2 || r[14] > 0x@RAM@u)
+        return 0;
+    if (turns > r[14] - 1)
+        turns = r[14] - 1;
+    uint32_t to = r[6] - 0x@BASE@u, from = r[7] - 0x@BASE@u;
+    if (!loop_span(to, turns, 0x@RAM@u) || from > 0x@RAM@u - turns ||
+        (to < 0x@AT@u + 4 * @COUNT@u && 0x@AT@u < to + turns))
+        return 0;
+    uint8_t *const ram = cpu->config.bus->ram;
+    uint32_t bits = r[9], taken = r[8], done = 0;
+    for (uint32_t turn = 0; turn < turns; ++turn, ++to) {
+        /* One instruction less when the pixel is not drawn. */
+        done += @COUNT@u - 1;
+        if (bits & 1u) {
+            *GP32_RAM(ram, to) = (uint8_t)r[10];
+            ++done;
+        }
+        bits >>= 1;
+        if (!(++taken & 7u))
+            bits = *GP32_RAM(ram, from++);
+    }
+    cpu->cpsr = (cpu->cpsr & ~(N | Z | C | V)) | C | (taken & 7u ? 0 : Z);
+    r[6] += turns;
+    r[7] = from + 0x@BASE@u;
+    r[8] = taken;
+    r[9] = bits;
+    r[14] -= turns;
+    return loop_done(cpu, run, done, 0x@LAST@u);
+}
+"""
+
+COPY_C = """
+/* r0 the destination, r1 the source, r2 the bytes left. */
+int copy_@A@(Arm920t *cpu, Arm920tAot *run)
+{
+    uint32_t *r = cpu->r;
+    uint32_t turns = loop_turns(cpu, run, 0x@AT@u, loop_code_@A@, @COUNT@u, @COUNT@u);
+    if (!turns || !r[2])
+        return 0;
+    if (turns > r[2])
+        turns = r[2];
+    uint32_t to = r[0] - 0x@BASE@u, from = r[1] - 0x@BASE@u;
+    if (!loop_span(to, turns, 0x@RAM@u) || from > 0x@RAM@u - turns ||
+        (to < 0x@AT@u + 4 * @COUNT@u && 0x@AT@u < to + turns))
+        return 0;
+    uint8_t *const ram = cpu->config.bus->ram;
+    uint32_t last = 0;
+    for (uint32_t left = turns; left; --left) {
+        last = *GP32_RAM(ram, from++);
+        *GP32_RAM(ram, to++) = (uint8_t)last;
+    }
+    cpu->cpsr = (cpu->cpsr & ~(N | Z | C | V)) | loop_compare(r[2] - turns + 1, 0);
+    r[0] += turns;
+    r[1] += turns;
+    r[2] -= turns;
+    r[4] = last;
+    return loop_done(cpu, run, turns * @COUNT@u, 0x@LAST@u);
+}
+"""
+
+MIX_C = """
+/* r0 the position in the samples (12 bits of fraction), r9 its step, r12 their
+   length, r4 their address, r6 the pairs left, r14 the 16 bit output, the volume
+   at r11 - 64.  A turn which wraps the position, and the last one, are not run
+   here.  A turn takes 16 instructions. */
+int mix_@A@(Arm920t *cpu, Arm920tAot *run)
+{
+    uint32_t *r = cpu->r;
+    uint32_t most = loop_turns(cpu, run, 0x@AT@u, loop_code_@A@, @COUNT@u, 16u);
+    uint32_t position = r[0], end = r[12];
+    if (!most || (int32_t)r[6] < 2 || position >= end)
+        return 0;
+    if (most > r[6] - 1)
+        most = r[6] - 1;
+    if (most > 0x@RAM@u / 4)
+        most = 0x@RAM@u / 4;
+    uint32_t to = r[14] - 0x@BASE@u, level = r[11] - 64 - 0x@BASE@u;
+    if ((to & 1u) || (level & 3u) || !loop_span(level, 4, 0x@RAM@u) ||
+        !loop_span(to, 4 * most, 0x@RAM@u) ||
+        (to < 0x@AT@u + 4 * @COUNT@u && 0x@AT@u < to + 4 * most) ||
+        (to < level + 4 && level < to + 4 * most))
+        return 0;
+    uint8_t *const ram = cpu->config.bus->ram;
+    const uint32_t volume = load32(GP32_RAM(ram, level));
+    const uint32_t samples = r[4] - 0x@BASE@u, step = r[9];
+    uint32_t turns = 0, added = 0, right = 0;
+    for (; turns < most && position < end; ++turns, to += 4, position += step) {
+        uint32_t from = samples + (position >> 12);
+        if (from >= 0x@RAM@u)
+            break;
+        added = volume * (uint32_t)(int8_t)*GP32_RAM(ram, from);
+        uint8_t *left = GP32_RAM(ram, to);
+        (void)store16(left, load16(left) + added);
+        right = load16(GP32_RAM(ram, to + 2));
+        (void)store16(GP32_RAM(ram, to + 2), right + added);
+    }
+    if (!turns)
+        return 0;
+    r[6] -= turns;
+    cpu->cpsr = (cpu->cpsr & ~(N | Z | C | V)) | loop_compare(r[6], 0);
+    r[0] = position;
+    r[1] = added;
+    r[2] = right + added;
+    r[3] = right;
+    r[14] += 4 * turns;
+    return loop_done(cpu, run, 16 * turns, 0x@LAST@u);
+}
+"""
+
+
+def routines(image, base):
+    """{entry address: (function name, C source)} of the recognised routines."""
+    found = {}
+    first = struct.pack("<I", ECC_FIRST)
+    size = 4 * (ECC_WORDS + ECC_LITERALS)
+    at = image.find(first)
+    while at >= 0:
+        body = image[at:at + 4 * ECC_WORDS]
+        if at % 4 == 0 and at + size <= len(image) and hashlib.sha256(body).hexdigest() == ECC_SHA256:
+            words = struct.unpack_from(f"<{ECC_WORDS + ECC_LITERALS}I", image, at)
+            t1, t0 = (address - base for address in words[ECC_WORDS:])
+            parity = [bin(i).count("1") & 1 for i in range(16)]
+            if all(0 <= t <= len(image) - 16 and not t & 3 for t in (t1, t0)) and \
+                    list(image[t1:t1 + 16]) == parity and \
+                    list(image[t0:t0 + 16]) == [1 - p for p in parity]:
+                address = base + at
+                tables = struct.unpack("<8I", image[t1:t1 + 16] + image[t0:t0 + 16])
+                values = {
+                    "A": f"{address:08x}", "BASE": f"{BASE:08x}", "RAM": f"{RAM:x}",
+                    "AT": f"{address - BASE:x}", "T1": f"{base + t1 - BASE:x}",
+                    "T0": f"{base + t0 - BASE:x}", "COUNT": str(len(words)),
+                    "PC": f"{address:08x}", "LAST": f"{address + 4 * (ECC_WORDS - 1):08x}",
+                    "CODE": "".join(f"    0x{w:08x}u,\n" for w in words),
+                    "TABLES": "".join(f"    0x{w:08x}u,\n" for w in tables),
+                }
+                source = ECC_C
+                for key, value in values.items():
+                    source = source.replace(f"@{key}@", value)
+                found[address] = (f"ecc_{address:08x}", source)
+        at = image.find(first, at + 1)
+    for name, (head, count, fingerprint) in LOOPS.items():
+        first = struct.pack("<I", head)
+        at = image.find(first)
+        while at >= 0:
+            body = image[at:at + 4 * count]
+            if at % 4 == 0 and hashlib.sha256(body).hexdigest() == fingerprint:
+                address = base + at
+                values = {
+                    "A": f"{address:08x}", "BASE": f"{BASE:08x}", "RAM": f"{RAM:x}",
+                    "AT": f"{address - BASE:x}", "COUNT": str(count),
+                    "LAST": f"{address + 4 * (count - 1):08x}",
+                    "CODE": "".join(f"    0x{w:08x}u,\n"
+                                    for w in struct.unpack(f"<{count}I", body)),
+                }
+                source = LOOP_C.replace("@BODY@", {"blit": BLIT_C, "copy": COPY_C, "mask": MASK_C, "mix": MIX_C}[name])
+                for key, value in values.items():
+                    source = source.replace(f"@{key}@", value)
+                found[address] = (f"{name}_{address:08x}", source)
+            at = image.find(first, at + 1)
+    return found
 
 
 class Region:
@@ -570,14 +999,16 @@ def split(arm, hot, entries):
     return found
 
 
-def generate(arm, hot, entries, stem, index, header):
+def generate(arm, hot, entries, stem, index, header, hosted):
     """Write the region functions to the parts numbered from `index`.  Returns
     ({block address: function name}, the number of the next part)."""
     # returns from a call are entered too
     called = {a + 4 for a, w in arm.items() if w >> 28 != 15 and w & 0x0F000000 == 0x0B000000}
     # as is what follows an instruction left to the precise steps
     resumed = {a + 4 for a, w in arm.items() if kind(w) is None}
-    blocks = split(arm, hot, entries | called | resumed)
+    # A routine the host runs is no part of any block.
+    blocks = split({a: w for a, w in arm.items() if a not in hosted}, hot,
+                   entries | called | resumed)
     regions = {}
     for first, words in blocks.items():
         regions.setdefault(first // REGION, {})[first] = words
@@ -598,5 +1029,11 @@ def generate(arm, hot, entries, stem, index, header):
                 name = f"native_{number * REGION:08x}"
                 Region(held, arm).write(name, out)
                 names.update(dict.fromkeys(held, name))
+        index += 1
+    if hosted:
+        with open(f"{stem}.part{index:03d}.c", "w", encoding="ascii") as out:
+            out.write(header(index) + SUPPORT + ROUTINE_SUPPORT)
+            for _, (_, source) in sorted(hosted.items()):
+                out.write(source)
         index += 1
     return names, index

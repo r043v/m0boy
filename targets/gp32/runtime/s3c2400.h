@@ -170,6 +170,8 @@ typedef enum {
    visiting the peripherals between their events. Returns early on a new LCD
    frame, an unhandled exception entry or an HLE exit. */
 S3c2400Stop s3c2400_run(S3c2400 *soc, uint64_t steps);
+/* The CPU clock the program has set, in Hz: what soc->cycles counts. */
+unsigned s3c2400_fclk(const S3c2400 *soc);
 /* A callback running inside s3c2400_run calls this before reading cycles or
    peripheral phases, or before changing peripheral state directly. */
 void s3c2400_sync(S3c2400 *soc);
@@ -188,7 +190,7 @@ void s3c2400_dma_request(S3c2400 *soc, unsigned channel, unsigned source);
    receives the GP32_LCD_HEADER words; returns the pixel words, in guest
    memory or copied into `spare` (GP32_LCD_WIDTH / 2 words), or NULL when the
    line has none. */
-const uint8_t *s3c2400_lcd_row(const S3c2400 *s, unsigned y,
+const uint8_t *s3c2400_lcd_row(const S3c2400Bus *bus, const uint32_t *lcd, unsigned y,
                                uint32_t *header, uint32_t *spare);
 /* The guest SDRAM bytes the running LCD fetches: false when it shows none. */
 bool s3c2400_lcd_span(const S3c2400 *s, uint32_t *offset, uint32_t *length);

@@ -315,6 +315,12 @@ extern "C" void m0_lcd_fill(uint16_t color) {
 extern "C" void esp32_audio_pull(uint8_t *, unsigned);
 static TaskHandle_t audio_task_handle;
 static volatile bool audio_enabled;
+#if __has_include("gp32_config.h")
+/* The buttons are read over I2C, which waits: the audio core does it, once per
+ * block of samples (11.6 ms), so that the machine core never does. */
+static volatile uint16_t pad; /* keys, shoulders << 8 */
+extern "C" uint16_t m0_pad_state(void) { return pad; }
+#endif
 static void audio_task(void *) {
     uint8_t source[128];
     int16_t wire[512];
@@ -326,6 +332,10 @@ static void audio_task(void *) {
                 wire[4*i+j] = audio_enabled ? int16_t((int(source[i]) - 128) * 256) : 0;
         size_t written;
         ESP_ERROR_CHECK(i2s_write(I2S_NUM_0, wire, sizeof wire, &written, portMAX_DELAY));
+#if __has_include("gp32_config.h")
+        uint8_t keys = esp32_buttons();
+        pad = uint16_t(keys | shoulders << 8);
+#endif
     }
 }
 extern "C" void esp32_audio_start(unsigned hz) {
